@@ -1,0 +1,84 @@
+name: Docker production build
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-prod-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build production image
+    runs-on: [self-hosted, Windows, docker]
+    env:
+      IMAGE_NAME: education-api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Docker Desktop
+        shell: pwsh
+        run: |
+          docker version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker Desktop khong chay. Mo Docker Desktop roi chay lai workflow."
+          }
+
+      - name: Compute version tags
+        shell: pwsh
+        run: |
+          $sha = $env:GITHUB_SHA.Substring(0, 7)
+          $run = $env:GITHUB_RUN_NUMBER
+          $pom = Select-Xml -Path pom.xml -XPath "/*[local-name()='project']/*[local-name()='version']"
+          $pomVersion = if ($pom) { $pom.Node.InnerText.Trim() } else { "0.0.0" }
+          $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $buildVersion = "$pomVersion+b$run.$sha"
+
+          $tags = [System.Collections.Generic.List[string]]::new()
+          $tags.Add("$($env:IMAGE_NAME):prod")
+          $tags.Add("$($env:IMAGE_NAME):prod-build-$run")
+          $tags.Add("$($env:IMAGE_NAME):sha-$sha")
+
+          if ($env:GITHUB_EVENT_NAME -eq "pull_request") {
+            $pr = "${{ github.event.pull_request.number }}"
+            $tags.Add("$($env:IMAGE_NAME):prod-pr-$pr")
+            $tags.Add("$($env:IMAGE_NAME):prod-pr-$pr-$sha")
+            $buildVersion = "$pomVersion-pr.$pr+b$run.$sha"
+          }
+
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $ver = $env:GITHUB_REF_NAME
+            $tags.Add("$($env:IMAGE_NAME):$ver")
+            $tags.Add("$($env:IMAGE_NAME):prod-$ver")
+            $buildVersion = $ver.TrimStart("v")
+          }
+
+          $unique = $tags | Select-Object -Unique
+          $unique | Set-Content -Path "ci-image-tags.txt" -Encoding ascii
+          "BUILD_VERSION=$buildVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "GIT_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "BUILD_DATE=$date" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Production image version: $buildVersion"
+          $unique | ForEach-Object { Write-Host "  tag $_" }
+
+      - name: Build production image
+        shell: pwsh
+        run: |
+          $tagArgs = @()
+          Get-Content "ci-image-tags.txt" | ForEach-Object {
+            $tag = $_.Trim()
+            if ($tag) { $tagArgs += "-t"; $tagArgs += $tag }
+          }
+          docker build --target production `
+            --build-arg "BUILD_VERSION=$env:BUILD_VERSION" `
+            --build-arg "GIT_SHA=$env:GIT_SHA" `
+            --build-arg "BUILD_DATE=$env:BUILD_DATE" `
+            @tagArgs `
+            .
+          if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
+          docker images $env:IMAGE_NAME

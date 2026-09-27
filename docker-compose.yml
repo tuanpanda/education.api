@@ -1,0 +1,30 @@
+name: education-api
+
+services:
+  api:
+    image: education-api:${IMAGE_TAG:-prod}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        BUILD_VERSION: ${BUILD_VERSION:-local}
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    ports:
+      - "${SERVER_PORT:-8090}:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: "8080"
+      DB_URL: ${DB_URL:-jdbc:oracle:thin:@//host.docker.internal:1521/ORCL}
+      DB_USERNAME: ${DB_USERNAME:-EDUCATION}
+      DB_PASSWORD: ${DB_PASSWORD:-EDUCATION}
+      APP_STORAGE_DIR: /app/outputs
+    volumes:
+      - education-outputs:/app/outputs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  education-outputs:
