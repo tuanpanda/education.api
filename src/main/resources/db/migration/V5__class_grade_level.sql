@@ -1,0 +1,267 @@
+-- =============================================================================
+-- EDUCATION - MIGRATION V5: KHOI LOP (GRADE_LEVEL) GAN VAO MA LOP
+--
+-- Cot EDU_CLASSES.GRADE_LEVEL (1-12). Token {GRADE} trong SYS_CODE_RULES.
+-- Vi du PREFIX=LH, GRADE=9, PATTERN={PREFIX}{GRADE}{YYYY}{SEQ}
+--   => LH920260001
+--
+-- FN_NEXT_BIZ_CODE(P_RULE_CODE, P_GRADE DEFAULT NULL)
+--   Trigger hoc sinh van goi 1 tham so.
+--   Trigger lop: FN_NEXT_BIZ_CODE('CLASS', TO_CHAR(:NEW.GRADE_LEVEL))
+--
+--   sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @V5__class_grade_level.sql
+-- =============================================================================
+
+SET DEFINE OFF
+SET SERVEROUTPUT ON SIZE UNLIMITED
+
+PROMPT ============ V5.1 Cot GRADE_LEVEL ============
+
+BEGIN
+    EXECUTE IMMEDIATE 'ALTER TABLE EDU_CLASSES ADD GRADE_LEVEL NUMBER(2)';
+    DBMS_OUTPUT.PUT_LINE('EDU_CLASSES.GRADE_LEVEL: added');
+EXCEPTION
+    WHEN OTHERS THEN
+        IF SQLCODE IN (-1430, -01430) THEN
+            DBMS_OUTPUT.PUT_LINE('EDU_CLASSES.GRADE_LEVEL: already exists');
+        ELSE
+            RAISE;
+        END IF;
+END;
+/
+
+BEGIN
+    EXECUTE IMMEDIATE q'[
+        ALTER TABLE EDU_CLASSES ADD CONSTRAINT CK_CLASSES_GRADE
+            CHECK (GRADE_LEVEL IS NULL OR GRADE_LEVEL BETWEEN 1 AND 12)
+    ]';
+    DBMS_OUTPUT.PUT_LINE('CK_CLASSES_GRADE: OK');
+EXCEPTION
+    WHEN OTHERS THEN
+        IF SQLCODE IN (-2260, -2275, -02260, -02275) THEN
+            DBMS_OUTPUT.PUT_LINE('CK_CLASSES_GRADE: already exists');
+        ELSE
+            RAISE;
+        END IF;
+END;
+/
+
+PROMPT ============ V5.2 Function FN_NEXT_BIZ_CODE + token {GRADE} ============
+
+CREATE OR REPLACE FUNCTION FN_NEXT_BIZ_CODE(
+    P_RULE_CODE IN VARCHAR2,
+    P_GRADE     IN VARCHAR2 DEFAULT NULL
+)
+    RETURN VARCHAR2
+IS
+    V_PREFIX     VARCHAR2(10);
+    V_PATTERN    VARCHAR2(80);
+    V_SEQ_LEN    NUMBER(2);
+    V_CYCLE      VARCHAR2(10);
+    V_RESET_KEY  VARCHAR2(8);
+    V_LAST_KEY   VARCHAR2(8);
+    V_SEQ        NUMBER(10);
+    V_MAX_SEQ    NUMBER(10);
+    V_NOW        TIMESTAMP := SYSTIMESTAMP;
+    V_CODE       VARCHAR2(30);
+    V_GRADE      VARCHAR2(2);
+BEGIN
+    IF P_RULE_CODE IS NULL OR TRIM(P_RULE_CODE) IS NULL THEN
+        RAISE_APPLICATION_ERROR(-20011, 'Thieu RULE_CODE khi sinh ma nghiep vu.');
+    END IF;
+
+    V_GRADE := SUBSTR(REGEXP_REPLACE(NVL(TRIM(P_GRADE), ''), '[^0-9]', ''), 1, 2);
+
+    BEGIN
+        SELECT PREFIX, PATTERN, SEQ_LENGTH, RESET_CYCLE, LAST_RESET_KEY, LAST_SEQ
+          INTO V_PREFIX, V_PATTERN, V_SEQ_LEN, V_CYCLE, V_LAST_KEY, V_SEQ
+          FROM SYS_CODE_RULES
+         WHERE RULE_CODE = UPPER(TRIM(P_RULE_CODE))
+           AND IS_DELETED = 0
+           AND IS_ACTIVE = 1
+           FOR UPDATE;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE_APPLICATION_ERROR(
+                -20012,
+                'Khong tim thay quy luat sinh ma active cho RULE_CODE=' || UPPER(TRIM(P_RULE_CODE)));
+    END;
+
+    V_RESET_KEY := CASE V_CYCLE
+                       WHEN 'YEAR'  THEN TO_CHAR(V_NOW, 'YYYY')
+                       WHEN 'MONTH' THEN TO_CHAR(V_NOW, 'YYYYMM')
+                       WHEN 'DAY'   THEN TO_CHAR(V_NOW, 'YYYYMMDD')
+                       ELSE '*'
+                   END;
+
+    IF V_LAST_KEY IS NULL OR V_LAST_KEY <> V_RESET_KEY THEN
+        V_SEQ := 0;
+    END IF;
+
+    V_SEQ := V_SEQ + 1;
+    V_MAX_SEQ := POWER(10, V_SEQ_LEN) - 1;
+    IF V_SEQ > V_MAX_SEQ THEN
+        RAISE_APPLICATION_ERROR(
+            -20013,
+            'Da vuot so thu tu toi da ' || V_MAX_SEQ || ' cua quy luat ' || UPPER(TRIM(P_RULE_CODE)));
+    END IF;
+
+    V_CODE := V_PATTERN;
+    V_CODE := REPLACE(V_CODE, '{PREFIX}', NVL(V_PREFIX, ''));
+    V_CODE := REPLACE(V_CODE, '{GRADE}', NVL(V_GRADE, ''));
+    V_CODE := REPLACE(V_CODE, '{YYYY}', TO_CHAR(V_NOW, 'YYYY'));
+    V_CODE := REPLACE(V_CODE, '{YY}', TO_CHAR(V_NOW, 'YY'));
+    V_CODE := REPLACE(V_CODE, '{MM}', TO_CHAR(V_NOW, 'MM'));
+    V_CODE := REPLACE(V_CODE, '{DD}', TO_CHAR(V_NOW, 'DD'));
+    V_CODE := REPLACE(V_CODE, '{SEQ}', LPAD(TO_CHAR(V_SEQ), V_SEQ_LEN, '0'));
+
+    IF LENGTH(V_CODE) > 30 THEN
+        RAISE_APPLICATION_ERROR(-20014, 'Ma sinh ra vuot 30 ky tu: ' || V_CODE);
+    END IF;
+
+    UPDATE SYS_CODE_RULES
+       SET LAST_SEQ       = V_SEQ,
+           LAST_RESET_KEY = V_RESET_KEY,
+           UPDATED_AT     = V_NOW
+     WHERE RULE_CODE = UPPER(TRIM(P_RULE_CODE))
+       AND IS_DELETED = 0
+       AND IS_ACTIVE = 1;
+
+    RETURN V_CODE;
+END FN_NEXT_BIZ_CODE;
+/
+
+PROMPT FN_NEXT_BIZ_CODE: OK
+
+PROMPT ============ V5.3 Cap nhat PATTERN CLASS ============
+
+UPDATE SYS_CODE_RULES
+   SET PATTERN    = '{PREFIX}{GRADE}{YYYY}{SEQ}',
+       UPDATED_AT = SYSTIMESTAMP
+ WHERE RULE_CODE = 'CLASS'
+   AND IS_DELETED = 0;
+
+PROMPT CLASS PATTERN={PREFIX}{GRADE}{YYYY}{SEQ}
+
+PROMPT ============ V5.4 Trigger ma lop truyen GRADE_LEVEL ============
+
+CREATE OR REPLACE TRIGGER TRG_EDU_CLASSES_BI_CODE
+BEFORE INSERT ON EDU_CLASSES
+FOR EACH ROW
+FOLLOWS TRG_EDU_CLASSES_BI_ID
+BEGIN
+    :NEW.CLASS_CODE := FN_NEXT_BIZ_CODE('CLASS', TO_CHAR(:NEW.GRADE_LEVEL));
+END;
+/
+
+PROMPT Trigger TRG_EDU_CLASSES_BI_CODE: OK
+
+PROMPT ============ V5.5 Procedure tim lop co GRADE_LEVEL ============
+
+CREATE OR REPLACE PROCEDURE PRC_SEARCH_CLASSES_PAGING(
+    P_KEYWORD     IN  VARCHAR2,
+    P_STATUS      IN  VARCHAR2,
+    P_TEACHER_ID  IN  NUMBER,
+    P_PAGE_NO     IN  NUMBER,
+    P_PAGE_SIZE   IN  NUMBER,
+    O_DATA_CURSOR OUT SYS_REFCURSOR,
+    O_TOTAL_ROWS  OUT NUMBER,
+    O_ERR_CODE    OUT VARCHAR2,
+    O_ERR_MSG     OUT VARCHAR2
+) AS
+    C_DEFAULT_PAGE_SIZE CONSTANT NUMBER := 20;
+    C_MAX_PAGE_SIZE     CONSTANT NUMBER := 200;
+
+    V_KEYWORD   VARCHAR2(4000);
+    V_STATUS    VARCHAR2(20);
+    V_PAGE_NO   NUMBER;
+    V_PAGE_SIZE NUMBER;
+    V_OFFSET    NUMBER;
+BEGIN
+    V_KEYWORD := LOWER(TRIM(P_KEYWORD));
+    IF V_KEYWORD IS NOT NULL THEN
+        V_KEYWORD := REPLACE(V_KEYWORD, '\', '\\');
+        V_KEYWORD := REPLACE(V_KEYWORD, '%', '\%');
+        V_KEYWORD := REPLACE(V_KEYWORD, '_', '\_');
+    END IF;
+
+    V_STATUS := UPPER(TRIM(P_STATUS));
+
+    V_PAGE_NO := NVL(P_PAGE_NO, 1);
+    IF V_PAGE_NO < 1 THEN V_PAGE_NO := 1; END IF;
+
+    V_PAGE_SIZE := NVL(P_PAGE_SIZE, C_DEFAULT_PAGE_SIZE);
+    IF V_PAGE_SIZE < 1 THEN
+        V_PAGE_SIZE := C_DEFAULT_PAGE_SIZE;
+    ELSIF V_PAGE_SIZE > C_MAX_PAGE_SIZE THEN
+        V_PAGE_SIZE := C_MAX_PAGE_SIZE;
+    END IF;
+    V_OFFSET := (V_PAGE_NO - 1) * V_PAGE_SIZE;
+
+    SELECT COUNT(*)
+      INTO O_TOTAL_ROWS
+      FROM EDU_CLASSES c
+     WHERE c.IS_DELETED = 0
+       AND (V_KEYWORD IS NULL
+            OR LOWER(c.CLASS_CODE)   LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+            OR LOWER(c.CLASS_NAME)   LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+            OR LOWER(c.SUBJECT_NAME) LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+            OR TO_CHAR(c.GRADE_LEVEL) LIKE '%' || V_KEYWORD || '%' ESCAPE '\')
+       AND (V_STATUS IS NULL OR c.STATUS = V_STATUS)
+       AND (P_TEACHER_ID IS NULL OR c.TEACHER_ID = P_TEACHER_ID);
+
+    OPEN O_DATA_CURSOR FOR
+        SELECT c.ID,
+               c.CLASS_CODE,
+               c.CLASS_NAME,
+               c.SUBJECT_NAME,
+               c.GRADE_LEVEL,
+               c.TEACHER_ID,
+               u.FULL_NAME AS TEACHER_NAME,
+               c.ROOM_NAME,
+               c.START_DATE,
+               c.END_DATE,
+               c.CAPACITY,
+               (SELECT COUNT(*)
+                  FROM EDU_CLASS_STUDENTS cs
+                 WHERE cs.CLASS_ID = c.ID
+                   AND cs.IS_DELETED = 0
+                   AND cs.STATUS = 'ENROLLED') AS ENROLLED_COUNT,
+               c.TUITION_AMOUNT,
+               c.STATUS,
+               c.CREATED_AT,
+               c.UPDATED_AT
+          FROM EDU_CLASSES c
+          LEFT JOIN SYS_USERS u ON u.ID = c.TEACHER_ID
+         WHERE c.IS_DELETED = 0
+           AND (V_KEYWORD IS NULL
+                OR LOWER(c.CLASS_CODE)   LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+                OR LOWER(c.CLASS_NAME)   LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+                OR LOWER(c.SUBJECT_NAME) LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+                OR TO_CHAR(c.GRADE_LEVEL) LIKE '%' || V_KEYWORD || '%' ESCAPE '\')
+           AND (V_STATUS IS NULL OR c.STATUS = V_STATUS)
+           AND (P_TEACHER_ID IS NULL OR c.TEACHER_ID = P_TEACHER_ID)
+         ORDER BY c.ID DESC
+        OFFSET V_OFFSET ROWS FETCH NEXT V_PAGE_SIZE ROWS ONLY;
+
+    O_ERR_CODE := '0';
+    O_ERR_MSG  := 'SUCCESS';
+EXCEPTION
+    WHEN OTHERS THEN
+        IF O_DATA_CURSOR IS NOT NULL AND O_DATA_CURSOR%ISOPEN THEN CLOSE O_DATA_CURSOR; END IF;
+        O_TOTAL_ROWS := 0;
+        O_ERR_CODE   := TO_CHAR(SQLCODE);
+        O_ERR_MSG    := SUBSTR(SQLERRM, 1, 255);
+END PRC_SEARCH_CLASSES_PAGING;
+/
+
+PROMPT PRC_SEARCH_CLASSES_PAGING: OK
+
+SELECT RULE_CODE, PREFIX, PATTERN, SEQ_LENGTH, RESET_CYCLE, LAST_SEQ
+  FROM SYS_CODE_RULES
+ WHERE RULE_CODE = 'CLASS';
+
+PROMPT ============ V5 HOAN TAT ============
+PROMPT Lop 9 => CLASS_CODE vi du: LH920260001 (PREFIX + GRADE + YYYY + SEQ).
+
+EXIT;

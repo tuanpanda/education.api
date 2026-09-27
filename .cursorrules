@@ -1,0 +1,140 @@
+# EDUCATION PROJECT - CURSOR RULES (Enterprise Architecture Standard)
+
+## 1. Technology Stack
+- Ngôn ngữ: Java 21 (sử dụng record, switch pattern matching, var khi phù hợp nhưng ưu tiên rõ nghĩa).
+- Framework: Spring Boot 3.x (Spring Web MVC, Spring Data JPA, Spring JDBC, Spring Validation).
+- Database: Oracle Database (tương thích 19c / 21c / 23c). Driver chính thức `ojdbc11` + `orai18n` cho charset NLS.
+- Build tool: Maven.
+
+## 2. Kiến trúc Persistence Hybrid (BẮT BUỘC)
+Dự án sử dụng mô hình lai (Hybrid) giữa hai cách truy cập dữ liệu, KHÔNG được trộn lẫn tùy ý trong cùng một luồng nghiệp vụ:
+
+### 2.1. Spring Data JPA (DB-First)
+- Database là nguồn chân lý (Source of Truth). Toàn bộ bảng, sequence, constraint được tạo trước bằng script SQL (`db/schema_init.sql`), KHÔNG để Hibernate tự sinh schema.
+- `spring.jpa.hibernate.ddl-auto` LUÔN LUÔN là `none`.
+- Toàn bộ Entity ánh xạ (`@Table`, `@Column`) phải khớp 100% với tên bảng/cột đã tồn tại trong Database.
+- Tên bảng và tên cột trong Database và trong annotation JPA LUÔN LUÔN viết HOA (UPPERCASE), ví dụ: `@Table(name = "EDU_STUDENTS")`, `@Column(name = "STUDENT_CODE")`.
+- Khóa chính sử dụng Oracle Sequence thông qua `@SequenceGenerator`, và `allocationSize` LUÔN LUÔN bằng `1` (không dùng cache/allocation batching của Hibernate để tránh lệch số ID so với sequence thật trên Oracle).
+- Dùng cho các nghiệp vụ CRUD đơn giản, tra cứu theo khóa chính, các entity chuẩn hóa.
+
+### 2.2. Spring JDBC (Gọi Oracle Package/Procedure)
+- Dùng `SimpleJdbcCall` để gọi trực tiếp Package/Procedure/Function đã được viết sẵn trong Oracle (PL/SQL).
+- Áp dụng cho các nghiệp vụ phức tạp: tìm kiếm động nhiều điều kiện, xử lý transaction nhiều bước, báo cáo, tổng hợp dữ liệu.
+- Bọc thống nhất qua bean `repository.base.OracleProcExecutor`. Mọi Repository Custom Impl PHẢI dùng bean này để tạo `SimpleJdbcCall` (`createCall(packageName, procName)`) và validate kết quả trả về (`validateResult`).
+- Convention tham số Out của Procedure: `O_ERR_CODE` (VARCHAR2, '0' = thành công, khác '0' = lỗi) và `O_ERR_MSG` (VARCHAR2, mô tả lỗi). Convention Cursor trả về: `O_CURSOR` (SYS_REFCURSOR).
+- Khi `O_ERR_CODE` khác `'0'`, PHẢI ném `exception.OracleBusinessException(errorCode, message)`.
+
+## 3. Package Root
+- Toàn bộ mã nguồn Java nằm dưới package root: `com.education.base`.
+- Cấu trúc con chuẩn theo layer: `common`, `config`, `controller`, `dto.request`, `dto.response`, `entity`, `exception`, `mapper`, `repository`, `repository.base`, `repository.custom`, `service`.
+
+## 4. Quản lý File & Lưu trữ
+- Toàn bộ file vật lý (upload/attachment) được lưu trong thư mục cấu hình bởi `app.storage.base-dir` (mặc định `./outputs`), tổ chức theo cấu trúc `{baseDir}/{MODULE}/{YYYY}/{MM}/{UUID}_{tenfile}`.
+- Trong Database, cột lưu đường dẫn file (ví dụ `FILE_PATH`) CHỈ LƯU đường dẫn TƯƠNG ĐỐI (Relative Path) so với `base-dir`, KHÔNG BAO GIỜ lưu đường dẫn tuyệt đối của hệ thống (để đảm bảo tính di động khi deploy sang server/môi trường khác).
+- Mọi hành vi đọc file từ đường dẫn tương đối PHẢI kiểm tra chống Path Traversal (đường dẫn thực tế sau khi resolve phải nằm trong `base-dir`).
+
+## 5. Chuẩn hóa API Response
+- Mọi Controller trả dữ liệu ra ngoài PHẢI bọc qua `common.ApiResponse<T>` (gồm `code`, `message`, `data`, `timestamp`), trừ các endpoint trả file nhị phân trực tiếp (`ResponseEntity<Resource>` cho view/download).
+- Exception nghiệp vụ (`OracleBusinessException`), lỗi validate (`MethodArgumentNotValidException`) và lỗi hệ thống chung PHẢI được xử lý tập trung tại `exception.GlobalExceptionHandler` (`@RestControllerAdvice`), không try-catch rải rác trong Controller.
+
+## 6. Coding Convention
+- Dùng Lombok (`@Getter`, `@Setter`, `@Builder`, `@RequiredArgsConstructor`...) để giảm boilerplate, hạn chế viết constructor/getter/setter tay.
+- Dùng MapStruct (`@Mapper(componentModel = "spring")`) để chuyển đổi Entity <-> DTO khi cần mapping phức tạp/nhiều field.
+- Không viết code giả lập (mock/stub) hoặc để lại comment TODO trong nhánh chính; code phải build và chạy được ngay.
+- Toàn bộ input từ client vào Controller (request DTO) áp dụng Jakarta Validation (`@Valid`, `@NotBlank`, `@NotNull`...).
+
+Cơ sở dữ liệu Oracle đã được khởi tạo xong các bảng và Standalone Procedures. Bây giờ hãy sinh toàn bộ mã nguồn Java cho dự án EDUCATION theo chuẩn Spring Boot 3.x, Java 21, Hybrid JPA DB-First + Standalone Procedures:
+
+### 1. File cấu hình & Maven
+- `pom.xml`:
+  - `spring-boot-starter-web`, `spring-boot-starter-data-jpa`, `spring-boot-starter-jdbc`, `spring-boot-starter-validation`
+  - `com.oracle.database.jdbc:ojdbc11`, `orai18n`
+  - `org.projectlombok:lombok`, `org.mapstruct:mapstruct:1.5.5.Final`, `mapstruct-processor`
+  - `com.google.zxing:core:3.5.3`, `com.google.zxing:javase:3.5.3`
+  - `org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0`
+- `src/main/resources/application.yml`:
+  - HikariCP kết nối Oracle đọc từ biến môi trường (`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`), mặc định: `jdbc:oracle:thin:@//localhost:1521/ORCLPDB1`.
+  - JPA: `hibernate.ddl-auto: none`, dialect: `org.hibernate.dialect.OracleDialect`, `show-sql: true`.
+  - Storage: `app.storage.base-dir: ${APP_STORAGE_DIR:./outputs}`.
+  - Multipart upload: max-file-size 50MB, max-request-size 55MB.
+
+### 2. Core & Common Components (`com.education.base`)
+- `common/ApiResponse.java`: Generic wrapper (`code`, `message`, `data`, `timestamp`) kèm method helper `success(T data)` và `error(String code, String message)`.
+- `exception/OracleBusinessException.java`: Runtime exception nhận `errorCode` và `message`.
+- `exception/GlobalExceptionHandler.java`: `@RestControllerAdvice` bắt `OracleBusinessException`, `MethodArgumentNotValidException`, và `Exception`.
+- `repository/base/OracleProcExecutor.java`:
+  - Dùng `SimpleJdbcCall`.
+  - Method `createCall(String procedureName)`: chỉ định procedure name, gọi `.withoutProcedureColumnMetaDataAccess()` (KHÔNG dùng withCatalogName vì DB dùng Standalone Procedure).
+  - Method `validateResult(Map<String, Object> out)`: ném `OracleBusinessException` nếu `O_ERR_CODE` khác '0'.
+
+### 3. JPA Entities (DB-First, Sequence allocationSize = 1, tên bảng/cột viết HOA)
+- `entity/StudentEntity.java`: Map `EDU_STUDENTS`, `@SequenceGenerator(name = "seq_student", sequenceName = "SEQ_EDU_STUDENTS", allocationSize = 1)`.
+- `entity/FileEntity.java`: Map `SYS_ATTACHED_FILES`, `@SequenceGenerator(name = "seq_file", sequenceName = "SEQ_SYS_ATTACHED_FILES", allocationSize = 1)`.
+- `entity/UserEntity.java`: Map `SYS_USERS`, `@SequenceGenerator(name = "seq_user", sequenceName = "SEQ_SYS_USERS", allocationSize = 1)`.
+- `entity/RoleEntity.java`: Map `SYS_ROLES`, `@SequenceGenerator(name = "seq_role", sequenceName = "SEQ_SYS_ROLES", allocationSize = 1)`.
+- `entity/MenuEntity.java`: Map `SYS_MENUS`, `@SequenceGenerator(name = "seq_menu", sequenceName = "SEQ_SYS_MENUS", allocationSize = 1)`.
+- `entity/FunctionEntity.java`: Map `SYS_FUNCTIONS`, `@SequenceGenerator(name = "seq_func", sequenceName = "SEQ_SYS_FUNCTIONS", allocationSize = 1)`.
+- `entity/RoleMenuPermissionEntity.java`: Map `SYS_ROLE_MENU_PERMISSIONS`, `@SequenceGenerator(name = "seq_role_menu_perm", sequenceName = "SEQ_SYS_ROLE_MENU_PERM", allocationSize = 1)`.
+
+### 4. Module 1: Quản lý Học sinh (Student Management Hybrid)
+- `dto/response/StudentReportDto.java`: `id`, `studentCode`, `fullName`, `email`, `status`.
+- `repository/custom/StudentRepositoryCustom.java` & `impl/StudentRepositoryCustomImpl.java`:
+  - Gọi procedure `PRC_SEARCH_STUDENTS(P_KEYWORD, O_CURSOR, O_ERR_CODE, O_ERR_MSG)` bằng `OracleProcExecutor`.
+- `repository/StudentRepository.java`: Kế thừa `JpaRepository<StudentEntity, Long>` và `StudentRepositoryCustom`.
+- `controller/StudentController.java`: Endpoint `GET /api/v1/students/search` gọi procedure tìm kiếm.
+
+### 5. Module 2: Quản lý File & Xem File (File Management & Viewer)
+- `config/FileStorageProperties.java`: `@ConfigurationProperties(prefix = "app.storage")` chứa `baseDir`.
+- `dto/response/FileResponseDto.java`: metadata file kèm viewUrl và downloadUrl.
+- `repository/custom/FileRepositoryCustom.java` & `impl/FileRepositoryCustomImpl.java`:
+  - Gọi procedure `PRC_GET_FILES_BY_REF(P_MODULE_NAME, P_REFERENCE_ID, O_CURSOR, O_ERR_CODE, O_ERR_MSG)`.
+- `repository/FileRepository.java`: Kế thừa `JpaRepository<FileEntity, Long>` và `FileRepositoryCustom`.
+- `service/FileStorageService.java` & `impl/FileStorageServiceImpl.java`:
+  - Lưu file vật lý vào `{baseDir}/{MODULE}/{YYYY}/{MM}/{UUID}_{cleanName}`.
+  - Cột `FILE_PATH` trong DB CHỈ lưu đường dẫn tương đối (ví dụ: `STUDENT/2026/09/uuid_file.pdf`).
+  - `loadFileAsResource(Long fileId)`: Ghép đường dẫn tương đối với `baseDir`, kiểm tra an toàn chống Directory Traversal, trả về `Resource`.
+- `controller/FileController.java`:
+  - `POST /api/v1/files/upload`: Nhận `MultipartFile`, `moduleName`, `referenceId`.
+  - `GET /api/v1/files/view/{id}`: Trả về `ResponseEntity<Resource>` với header `Content-Disposition: inline` để mở xem trực tiếp PDF/ảnh trên trình duyệt.
+  - `GET /api/v1/files/download/{id}`: Trả về `ResponseEntity<Resource>` với header `Content-Disposition: attachment`.
+  - `GET /api/v1/files/by-ref`: Gọi procedure lấy danh sách file theo `moduleName` và `referenceId`.
+
+### 6. Module 3: Menu Đa Cấp & Quyền Người Dùng (Sidebar Navigation)
+- `dto/response/MenuItemResponseDto.java`: `id`, `parentId`, `menuCode`, `menuName`, `menuType`, `path`, `icon`, `sortOrder`, `allowedFunctions` (List<String>), `children` (List<MenuItemResponseDto>).
+- `dto/response/UserNavigationResponseDto.java`: Chứa danh sách menu dạng cây đệ quy (`menus`) và danh sách quyền phẳng (`permissions` dạng set string `MENU_CODE:ACTION`).
+- `repository/custom/MenuRepositoryCustom.java` & `impl/MenuRepositoryCustomImpl.java`:
+  - Gọi procedure `PRC_GET_USER_SIDEBAR_MENU(P_USER_ID, O_MENU_CURSOR, O_PERMISSIONS_CURSOR, O_ERR_CODE, O_ERR_MSG)`.
+  - Đọc 2 Ref Cursors qua `OracleProcExecutor`. Tự động gom danh sách menu phẳng thành cây phân cấp đa tầng qua trường `parentId`.
+- `repository/MenuRepository.java`: Kế thừa `JpaRepository<MenuEntity, Long>` và `MenuRepositoryCustom`.
+- `controller/MenuController.java`: Endpoint `GET /api/v1/menus/user-navigation` nhận `userId` trả về `ApiResponse<UserNavigationResponseDto>`.
+
+### 7. Module 4: Sinh mã VietQR Thanh toán Học phí
+- `common/VietQrHelper.java`:
+  - `buildVietQrPayload(String bankBin, String accountNo, Long amount, String description)`: Tự sinh chuỗi TLV chuẩn EMVCo (Tags: 00, 01, 38, 53, 54, 58, 62) và tính CRC16 checksum (Tag 63).
+  - `generateQrBase64(String content, int width, int height)`: Dùng ZXing vẽ mã QR trả về Base64 PNG data URL.
+  - `buildQuickUrl(String bankBin, String accountNo, Long amount, String description, String accountName)`: Sinh link nhanh `https://img.vietqr.io/image/...`.
+- `dto/request/GenerateQrRequest.java` & `dto/response/QrPaymentResponseDto.java`.
+- `controller/QrPaymentController.java`: Endpoint `POST /api/v1/payments/generate-qr` trả về cả `quickUrl`, `qrPayload`, và `base64Image`.
+
+Yêu cầu sinh code hoàn chỉnh 100%, không dùng comment TODO, không mock placeholder, đảm bảo chạy `mvn clean compile` thành công ngay.
+
+# ==============================================================================
+# MULTI-AGENT PERSONAS & WORKFLOW PROTOCOL
+# ==============================================================================
+
+You can be triggered into specific Sub-Agent roles using prefixes. Follow the strict boundary of each role:
+
+## Role 1: [@ARCHITECT]
+- Responsibility: Analyze requirements, design APIs, plan database schemas, and output a step-by-step task checklist.
+- Output rule: DO NOT write full implementation code. Only output markdown design, interface contracts, and task breakdown.
+
+## Role 2: [@CODER]
+- Responsibility: Implement business logic, write Spring Boot Java code, repositories, and Oracle PL/SQL.
+- Output rule: Strictly follow .cursorrules standards. Implement exactly ONE task from the checklist at a time.
+
+## Role 3: [@REVIEWER]
+- Responsibility: Inspect code for security vulnerabilities, memory leaks, unclosed resources, SQL injection, and architectural compliance.
+- Output rule: List bugs/warnings in bullet points with suggested fixes. Do not rewrite the entire file unless asked.
+
+## Role 4: [@TESTER]
+- Responsibility: Write JUnit 5, Mockito, and SpringBootTest suites. Generate edge-case test vectors.

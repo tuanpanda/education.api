@@ -1,0 +1,13 @@
+# Profile dùng cho unit/slice test. Không kết nối Oracle.
+# Các test hiện tại dùng Mockito / @WebMvcTest nên không load DataSource.
+spring:
+  application:
+    name: education-base-test
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+
+app:
+  storage:
+    base-dir: ${java.io.tmpdir}/education-test-outputs

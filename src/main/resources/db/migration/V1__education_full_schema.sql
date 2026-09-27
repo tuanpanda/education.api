@@ -1,0 +1,1189 @@
+-- ============================================================================
+-- EDUCATION - BASELINE SCHEMA V1 (6 phan he)
+--
+-- Chuan: Oracle Database-First. Hibernate KHONG sinh schema (ddl-auto = none).
+-- Script nay IDEMPOTENT: chay lai nhieu lan khong loi, khong xoa du lieu dang co.
+--   - Sequence/Table/Index: chi tao khi chua ton tai (bo qua ORA-00955...).
+--   - Procedure: CREATE OR REPLACE.
+--   - Seed data: MERGE theo khoa nghiep vu (MENU_CODE, ROLE_CODE, USERNAME...).
+--
+-- Cach chay:
+--   sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @V1__education_full_schema.sql
+--
+-- LUU Y: 8 bang da ton tai truoc (EDU_STUDENTS, SYS_ATTACHED_FILES, SYS_USERS,
+-- SYS_ROLES, SYS_USER_ROLES, SYS_MENUS, SYS_FUNCTIONS, SYS_ROLE_MENU_PERMISSIONS)
+-- duoc dinh nghia lai y nguyen cau truc dang chay de khong pha vo mapping Entity.
+-- ============================================================================
+
+SET DEFINE OFF
+SET SERVEROUTPUT ON SIZE UNLIMITED
+SET FEEDBACK OFF
+
+PROMPT ============ SECTION 1: SEQUENCES (INCREMENT BY 1, NOCACHE) ============
+
+DECLARE
+    -- Bo qua loi "object da ton tai" de script chay lai duoc nhieu lan.
+    PROCEDURE DDL(P_SQL VARCHAR2) IS
+    BEGIN
+        EXECUTE IMMEDIATE P_SQL;
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE IN (-955, -1408, -2260, -2261, -2264, -2275, -1442, -1430, -2431) THEN
+                NULL;
+            ELSE
+                RAISE;
+            END IF;
+    END DDL;
+
+    PROCEDURE SEQ(P_NAME VARCHAR2) IS
+    BEGIN
+        DDL('CREATE SEQUENCE ' || P_NAME || ' START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE');
+    END SEQ;
+BEGIN
+    -- Phan he Dao tao
+    SEQ('SEQ_EDU_STUDENTS');
+    SEQ('SEQ_EDU_CLASSES');
+    SEQ('SEQ_EDU_CLASS_STUDENTS');
+    SEQ('SEQ_EDU_ATTENDANCE');
+    SEQ('SEQ_EDU_GRADES');
+    -- Phan he Tuyen sinh
+    SEQ('SEQ_EDU_LEADS');
+    -- Phan he Tai chinh
+    SEQ('SEQ_FIN_TUITION_FEES');
+    SEQ('SEQ_FIN_PAYMENT_TRANS');
+    -- Phan he Quan ly File
+    SEQ('SEQ_SYS_ATTACHED_FILES');
+    -- Phan he Phan quyen & Menu
+    SEQ('SEQ_SYS_USERS');
+    SEQ('SEQ_SYS_ROLES');
+    SEQ('SEQ_SYS_MENUS');
+    SEQ('SEQ_SYS_FUNCTIONS');
+    SEQ('SEQ_SYS_ROLE_MENU_PERM');
+
+    DBMS_OUTPUT.PUT_LINE('Sequences: OK');
+END;
+/
+
+PROMPT ============ SECTION 2: TABLES ============
+
+DECLARE
+    PROCEDURE DDL(P_SQL VARCHAR2) IS
+    BEGIN
+        EXECUTE IMMEDIATE P_SQL;
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE IN (-955, -1408, -2260, -2261, -2264, -2275, -1442, -1430, -2431) THEN
+                NULL;
+            ELSE
+                RAISE;
+            END IF;
+    END DDL;
+BEGIN
+    -- ---------------- PHAN QUYEN & MENU (tao truoc vi cac bang khac tham chieu) --
+    DDL(q'[CREATE TABLE SYS_USERS (
+        ID              NUMBER(19)    NOT NULL,
+        USERNAME        VARCHAR2(50)  NOT NULL,
+        PASSWORD_HASH   VARCHAR2(255) NOT NULL,
+        FULL_NAME       VARCHAR2(100) NOT NULL,
+        EMAIL           VARCHAR2(100),
+        PHONE           VARCHAR2(20),
+        STATUS          VARCHAR2(20)  DEFAULT 'ACTIVE' NOT NULL,
+        IS_DELETED      NUMBER(1)     DEFAULT 0 NOT NULL,
+        CREATED_AT      TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT      TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP,
+        CREATED_BY      VARCHAR2(50),
+        UPDATED_BY      VARCHAR2(50),
+        CONSTRAINT PK_SYS_USERS PRIMARY KEY (ID),
+        CONSTRAINT UQ_SYS_USERS_USERNAME UNIQUE (USERNAME),
+        CONSTRAINT CK_USERS_DELETED CHECK (IS_DELETED IN (0, 1))
+    )]');
+
+    DDL(q'[CREATE TABLE SYS_ROLES (
+        ID              NUMBER(19)    NOT NULL,
+        ROLE_CODE       VARCHAR2(50)  NOT NULL,
+        ROLE_NAME       VARCHAR2(100) NOT NULL,
+        DESCRIPTION     VARCHAR2(255),
+        STATUS          VARCHAR2(20)  DEFAULT 'ACTIVE' NOT NULL,
+        IS_DELETED      NUMBER(1)     DEFAULT 0 NOT NULL,
+        CREATED_AT      TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT      TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP,
+        CREATED_BY      VARCHAR2(50),
+        UPDATED_BY      VARCHAR2(50),
+        CONSTRAINT PK_SYS_ROLES PRIMARY KEY (ID),
+        CONSTRAINT UQ_SYS_ROLES_CODE UNIQUE (ROLE_CODE),
+        CONSTRAINT CK_ROLES_DELETED CHECK (IS_DELETED IN (0, 1))
+    )]');
+
+    DDL(q'[CREATE TABLE SYS_USER_ROLES (
+        USER_ID     NUMBER(19)   NOT NULL,
+        ROLE_ID     NUMBER(19)   NOT NULL,
+        ASSIGNED_AT TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        ASSIGNED_BY VARCHAR2(50),
+        CONSTRAINT PK_SYS_USER_ROLES PRIMARY KEY (USER_ID, ROLE_ID),
+        CONSTRAINT FK_USER_ROLES_USER FOREIGN KEY (USER_ID) REFERENCES SYS_USERS (ID),
+        CONSTRAINT FK_USER_ROLES_ROLE FOREIGN KEY (ROLE_ID) REFERENCES SYS_ROLES (ID)
+    )]');
+
+    DDL(q'[CREATE TABLE SYS_MENUS (
+        ID          NUMBER(19)    NOT NULL,
+        PARENT_ID   NUMBER(19),
+        MENU_CODE   VARCHAR2(50)  NOT NULL,
+        MENU_NAME   VARCHAR2(100) NOT NULL,
+        MENU_TYPE   VARCHAR2(20)  NOT NULL,
+        PATH        VARCHAR2(255),
+        ICON        VARCHAR2(50),
+        SORT_ORDER  NUMBER(5)     DEFAULT 0 NOT NULL,
+        IS_HIDDEN   NUMBER(1)     DEFAULT 0 NOT NULL,
+        STATUS      VARCHAR2(20)  DEFAULT 'ACTIVE' NOT NULL,
+        IS_DELETED  NUMBER(1)     DEFAULT 0 NOT NULL,
+        CREATED_AT  TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT  TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP,
+        CREATED_BY  VARCHAR2(50),
+        UPDATED_BY  VARCHAR2(50),
+        CONSTRAINT PK_SYS_MENUS PRIMARY KEY (ID),
+        CONSTRAINT UQ_SYS_MENUS_CODE UNIQUE (MENU_CODE),
+        CONSTRAINT FK_SYS_MENUS_PARENT FOREIGN KEY (PARENT_ID) REFERENCES SYS_MENUS (ID),
+        CONSTRAINT CK_MENUS_TYPE CHECK (MENU_TYPE IN ('DIR', 'MENU')),
+        CONSTRAINT CK_MENUS_DELETED CHECK (IS_DELETED IN (0, 1)),
+        CONSTRAINT CK_MENUS_HIDDEN CHECK (IS_HIDDEN IN (0, 1))
+    )]');
+
+    DDL(q'[CREATE TABLE SYS_FUNCTIONS (
+        ID            NUMBER(19)    NOT NULL,
+        MENU_ID       NUMBER(19)    NOT NULL,
+        FUNCTION_CODE VARCHAR2(50)  NOT NULL,
+        FUNCTION_NAME VARCHAR2(100) NOT NULL,
+        IS_DELETED    NUMBER(1)     DEFAULT 0 NOT NULL,
+        CREATED_AT    TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT    TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT PK_SYS_FUNCTIONS PRIMARY KEY (ID),
+        CONSTRAINT UQ_SYS_FUNC_MENU UNIQUE (MENU_ID, FUNCTION_CODE),
+        CONSTRAINT FK_SYS_FUNCTIONS_MENU FOREIGN KEY (MENU_ID) REFERENCES SYS_MENUS (ID),
+        CONSTRAINT CK_FUNCTIONS_DELETED CHECK (IS_DELETED IN (0, 1))
+    )]');
+
+    DDL(q'[CREATE TABLE SYS_ROLE_MENU_PERMISSIONS (
+        ID                NUMBER(19)   NOT NULL,
+        ROLE_ID           NUMBER(19)   NOT NULL,
+        MENU_ID           NUMBER(19)   NOT NULL,
+        ALLOWED_FUNCTIONS VARCHAR2(500),
+        CREATED_AT        TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT        TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP,
+        CREATED_BY        VARCHAR2(50),
+        UPDATED_BY        VARCHAR2(50),
+        CONSTRAINT PK_SYS_ROLE_MENU_PERM PRIMARY KEY (ID),
+        CONSTRAINT UQ_ROLE_MENU_PERM UNIQUE (ROLE_ID, MENU_ID),
+        CONSTRAINT FK_ROLE_PERM_ROLE FOREIGN KEY (ROLE_ID) REFERENCES SYS_ROLES (ID),
+        CONSTRAINT FK_ROLE_PERM_MENU FOREIGN KEY (MENU_ID) REFERENCES SYS_MENUS (ID)
+    )]');
+
+    -- ---------------- QUAN LY FILE ------------------------------------------
+    DDL(q'[CREATE TABLE SYS_ATTACHED_FILES (
+        ID            NUMBER(19)    NOT NULL,
+        ORIGINAL_NAME VARCHAR2(255) NOT NULL,
+        STORED_NAME   VARCHAR2(255) NOT NULL,
+        FILE_PATH     VARCHAR2(500) NOT NULL,
+        CONTENT_TYPE  VARCHAR2(100) NOT NULL,
+        FILE_SIZE     NUMBER(19)    NOT NULL,
+        MODULE_NAME   VARCHAR2(50)  NOT NULL,
+        REFERENCE_ID  NUMBER(19),
+        IS_DELETED    NUMBER(1)     DEFAULT 0 NOT NULL,
+        CREATED_AT    TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT    TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP,
+        CREATED_BY    VARCHAR2(50),
+        UPDATED_BY    VARCHAR2(50),
+        CONSTRAINT PK_SYS_ATTACHED_FILES PRIMARY KEY (ID),
+        CONSTRAINT CK_FILES_DELETED CHECK (IS_DELETED IN (0, 1))
+    )]');
+
+    -- ---------------- DAO TAO -----------------------------------------------
+    DDL(q'[CREATE TABLE EDU_STUDENTS (
+        ID           NUMBER(19)    NOT NULL,
+        STUDENT_CODE VARCHAR2(30)  NOT NULL,
+        FULL_NAME    VARCHAR2(150) NOT NULL,
+        EMAIL        VARCHAR2(100),
+        STATUS       VARCHAR2(20)  DEFAULT 'ACTIVE' NOT NULL,
+        IS_DELETED   NUMBER(1)     DEFAULT 0 NOT NULL,
+        CREATED_AT   TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT   TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP,
+        CREATED_BY   VARCHAR2(50),
+        UPDATED_BY   VARCHAR2(50),
+        CONSTRAINT PK_EDU_STUDENTS PRIMARY KEY (ID),
+        CONSTRAINT UQ_EDU_STUDENTS_CODE UNIQUE (STUDENT_CODE),
+        CONSTRAINT CK_STUDENTS_DELETED CHECK (IS_DELETED IN (0, 1))
+    )]');
+
+    DDL(q'[CREATE TABLE EDU_CLASSES (
+        ID             NUMBER(19)     NOT NULL,
+        CLASS_CODE     VARCHAR2(30)   NOT NULL,
+        CLASS_NAME     VARCHAR2(150)  NOT NULL,
+        SUBJECT_NAME   VARCHAR2(150),
+        TEACHER_ID     NUMBER(19),
+        ROOM_NAME      VARCHAR2(50),
+        START_DATE     DATE,
+        END_DATE       DATE,
+        CAPACITY       NUMBER(5)      DEFAULT 0 NOT NULL,
+        TUITION_AMOUNT NUMBER(15,2)   DEFAULT 0 NOT NULL,
+        STATUS         VARCHAR2(20)   DEFAULT 'PLANNED' NOT NULL,
+        IS_DELETED     NUMBER(1)      DEFAULT 0 NOT NULL,
+        CREATED_AT     TIMESTAMP(6)   DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT     TIMESTAMP(6)   DEFAULT CURRENT_TIMESTAMP,
+        CREATED_BY     VARCHAR2(50),
+        UPDATED_BY     VARCHAR2(50),
+        CONSTRAINT PK_EDU_CLASSES PRIMARY KEY (ID),
+        CONSTRAINT UQ_EDU_CLASSES_CODE UNIQUE (CLASS_CODE),
+        CONSTRAINT FK_CLASSES_TEACHER FOREIGN KEY (TEACHER_ID) REFERENCES SYS_USERS (ID),
+        CONSTRAINT CK_CLASSES_DELETED CHECK (IS_DELETED IN (0, 1)),
+        CONSTRAINT CK_CLASSES_STATUS CHECK (STATUS IN ('PLANNED', 'OPEN', 'ONGOING', 'CLOSED', 'CANCELLED')),
+        CONSTRAINT CK_CLASSES_PERIOD CHECK (END_DATE IS NULL OR START_DATE IS NULL OR END_DATE >= START_DATE),
+        CONSTRAINT CK_CLASSES_CAPACITY CHECK (CAPACITY >= 0),
+        CONSTRAINT CK_CLASSES_TUITION CHECK (TUITION_AMOUNT >= 0)
+    )]');
+
+    DDL(q'[CREATE TABLE EDU_CLASS_STUDENTS (
+        ID          NUMBER(19)   NOT NULL,
+        CLASS_ID    NUMBER(19)   NOT NULL,
+        STUDENT_ID  NUMBER(19)   NOT NULL,
+        ENROLLED_AT TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        STATUS      VARCHAR2(20) DEFAULT 'ENROLLED' NOT NULL,
+        IS_DELETED  NUMBER(1)    DEFAULT 0 NOT NULL,
+        CREATED_AT  TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT  TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP,
+        CREATED_BY  VARCHAR2(50),
+        UPDATED_BY  VARCHAR2(50),
+        CONSTRAINT PK_EDU_CLASS_STUDENTS PRIMARY KEY (ID),
+        CONSTRAINT UQ_CLASS_STUDENT UNIQUE (CLASS_ID, STUDENT_ID),
+        CONSTRAINT FK_CLASS_STUDENTS_CLASS FOREIGN KEY (CLASS_ID) REFERENCES EDU_CLASSES (ID),
+        CONSTRAINT FK_CLASS_STUDENTS_STUDENT FOREIGN KEY (STUDENT_ID) REFERENCES EDU_STUDENTS (ID),
+        CONSTRAINT CK_CLASS_STUDENTS_DELETED CHECK (IS_DELETED IN (0, 1)),
+        CONSTRAINT CK_CLASS_STUDENTS_STATUS CHECK (STATUS IN ('ENROLLED', 'COMPLETED', 'DROPPED'))
+    )]');
+
+    DDL(q'[CREATE TABLE EDU_ATTENDANCE (
+        ID              NUMBER(19)   NOT NULL,
+        CLASS_ID        NUMBER(19)   NOT NULL,
+        STUDENT_ID      NUMBER(19)   NOT NULL,
+        ATTENDANCE_DATE DATE         NOT NULL,
+        STATUS          VARCHAR2(20) NOT NULL,
+        NOTE            VARCHAR2(255),
+        RECORDED_BY_ID  NUMBER(19),
+        IS_DELETED      NUMBER(1)    DEFAULT 0 NOT NULL,
+        CREATED_AT      TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT      TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP,
+        CREATED_BY      VARCHAR2(50),
+        UPDATED_BY      VARCHAR2(50),
+        CONSTRAINT PK_EDU_ATTENDANCE PRIMARY KEY (ID),
+        CONSTRAINT UQ_ATTENDANCE_PER_DAY UNIQUE (CLASS_ID, STUDENT_ID, ATTENDANCE_DATE),
+        CONSTRAINT FK_ATTENDANCE_CLASS FOREIGN KEY (CLASS_ID) REFERENCES EDU_CLASSES (ID),
+        CONSTRAINT FK_ATTENDANCE_STUDENT FOREIGN KEY (STUDENT_ID) REFERENCES EDU_STUDENTS (ID),
+        CONSTRAINT FK_ATTENDANCE_RECORDER FOREIGN KEY (RECORDED_BY_ID) REFERENCES SYS_USERS (ID),
+        CONSTRAINT CK_ATTENDANCE_DELETED CHECK (IS_DELETED IN (0, 1)),
+        CONSTRAINT CK_ATTENDANCE_STATUS CHECK (STATUS IN ('PRESENT', 'ABSENT', 'LATE', 'EXCUSED'))
+    )]');
+
+    DDL(q'[CREATE TABLE EDU_GRADES (
+        ID         NUMBER(19)   NOT NULL,
+        CLASS_ID   NUMBER(19)   NOT NULL,
+        STUDENT_ID NUMBER(19)   NOT NULL,
+        GRADE_TYPE VARCHAR2(20) NOT NULL,
+        SCORE      NUMBER(5,2)  NOT NULL,
+        WEIGHT     NUMBER(5,2)  DEFAULT 1 NOT NULL,
+        EXAM_DATE  DATE,
+        NOTE       VARCHAR2(255),
+        IS_DELETED NUMBER(1)    DEFAULT 0 NOT NULL,
+        CREATED_AT TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP,
+        CREATED_BY VARCHAR2(50),
+        UPDATED_BY VARCHAR2(50),
+        CONSTRAINT PK_EDU_GRADES PRIMARY KEY (ID),
+        CONSTRAINT FK_GRADES_CLASS FOREIGN KEY (CLASS_ID) REFERENCES EDU_CLASSES (ID),
+        CONSTRAINT FK_GRADES_STUDENT FOREIGN KEY (STUDENT_ID) REFERENCES EDU_STUDENTS (ID),
+        CONSTRAINT CK_GRADES_DELETED CHECK (IS_DELETED IN (0, 1)),
+        CONSTRAINT CK_GRADES_TYPE CHECK (GRADE_TYPE IN ('ASSIGNMENT', 'QUIZ', 'MIDTERM', 'FINAL')),
+        CONSTRAINT CK_GRADES_SCORE CHECK (SCORE BETWEEN 0 AND 10),
+        CONSTRAINT CK_GRADES_WEIGHT CHECK (WEIGHT > 0)
+    )]');
+
+    -- ---------------- TUYEN SINH --------------------------------------------
+    DDL(q'[CREATE TABLE EDU_LEADS (
+        ID                   NUMBER(19)    NOT NULL,
+        LEAD_CODE            VARCHAR2(30)  NOT NULL,
+        FULL_NAME            VARCHAR2(150) NOT NULL,
+        PHONE                VARCHAR2(20),
+        EMAIL                VARCHAR2(100),
+        SOURCE               VARCHAR2(30)  DEFAULT 'OTHER' NOT NULL,
+        INTERESTED_SUBJECT   VARCHAR2(150),
+        STATUS               VARCHAR2(20)  DEFAULT 'NEW' NOT NULL,
+        ASSIGNED_TO_ID       NUMBER(19),
+        CONVERTED_STUDENT_ID NUMBER(19),
+        NEXT_FOLLOW_UP_DATE  DATE,
+        NOTE                 VARCHAR2(500),
+        IS_DELETED           NUMBER(1)     DEFAULT 0 NOT NULL,
+        CREATED_AT           TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT           TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP,
+        CREATED_BY           VARCHAR2(50),
+        UPDATED_BY           VARCHAR2(50),
+        CONSTRAINT PK_EDU_LEADS PRIMARY KEY (ID),
+        CONSTRAINT UQ_EDU_LEADS_CODE UNIQUE (LEAD_CODE),
+        CONSTRAINT FK_LEADS_ASSIGNEE FOREIGN KEY (ASSIGNED_TO_ID) REFERENCES SYS_USERS (ID),
+        CONSTRAINT FK_LEADS_STUDENT FOREIGN KEY (CONVERTED_STUDENT_ID) REFERENCES EDU_STUDENTS (ID),
+        CONSTRAINT CK_LEADS_DELETED CHECK (IS_DELETED IN (0, 1)),
+        CONSTRAINT CK_LEADS_SOURCE CHECK (SOURCE IN ('WEBSITE', 'FACEBOOK', 'ZALO', 'REFERRAL', 'WALK_IN', 'HOTLINE', 'OTHER')),
+        CONSTRAINT CK_LEADS_STATUS CHECK (STATUS IN ('NEW', 'CONTACTED', 'QUALIFIED', 'CONVERTED', 'LOST')),
+        CONSTRAINT CK_LEADS_CONVERTED CHECK (STATUS <> 'CONVERTED' OR CONVERTED_STUDENT_ID IS NOT NULL)
+    )]');
+
+    -- ---------------- TAI CHINH ---------------------------------------------
+    DDL(q'[CREATE TABLE FIN_TUITION_FEES (
+        ID              NUMBER(19)   NOT NULL,
+        FEE_CODE        VARCHAR2(30) NOT NULL,
+        STUDENT_ID      NUMBER(19)   NOT NULL,
+        CLASS_ID        NUMBER(19),
+        TOTAL_AMOUNT    NUMBER(15,2) NOT NULL,
+        DISCOUNT_AMOUNT NUMBER(15,2) DEFAULT 0 NOT NULL,
+        PAID_AMOUNT     NUMBER(15,2) DEFAULT 0 NOT NULL,
+        DUE_DATE        DATE,
+        STATUS          VARCHAR2(20) DEFAULT 'UNPAID' NOT NULL,
+        NOTE            VARCHAR2(255),
+        IS_DELETED      NUMBER(1)    DEFAULT 0 NOT NULL,
+        CREATED_AT      TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT      TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP,
+        CREATED_BY      VARCHAR2(50),
+        UPDATED_BY      VARCHAR2(50),
+        CONSTRAINT PK_FIN_TUITION_FEES PRIMARY KEY (ID),
+        CONSTRAINT UQ_FIN_FEES_CODE UNIQUE (FEE_CODE),
+        CONSTRAINT FK_FEES_STUDENT FOREIGN KEY (STUDENT_ID) REFERENCES EDU_STUDENTS (ID),
+        CONSTRAINT FK_FEES_CLASS FOREIGN KEY (CLASS_ID) REFERENCES EDU_CLASSES (ID),
+        CONSTRAINT CK_FEES_DELETED CHECK (IS_DELETED IN (0, 1)),
+        CONSTRAINT CK_FEES_STATUS CHECK (STATUS IN ('UNPAID', 'PARTIAL', 'PAID', 'OVERDUE', 'CANCELLED')),
+        CONSTRAINT CK_FEES_TOTAL CHECK (TOTAL_AMOUNT >= 0),
+        CONSTRAINT CK_FEES_DISCOUNT CHECK (DISCOUNT_AMOUNT >= 0 AND DISCOUNT_AMOUNT <= TOTAL_AMOUNT),
+        CONSTRAINT CK_FEES_PAID CHECK (PAID_AMOUNT >= 0)
+    )]');
+
+    DDL(q'[CREATE TABLE FIN_PAYMENT_TRANSACTIONS (
+        ID                NUMBER(19)   NOT NULL,
+        TRANSACTION_CODE  VARCHAR2(50) NOT NULL,
+        TUITION_FEE_ID    NUMBER(19)   NOT NULL,
+        AMOUNT            NUMBER(15,2) NOT NULL,
+        PAYMENT_METHOD    VARCHAR2(20) NOT NULL,
+        PAYMENT_DATE      TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        BANK_BIN          VARCHAR2(20),
+        ACCOUNT_NO        VARCHAR2(30),
+        BANK_REFERENCE_NO VARCHAR2(100),
+        STATUS            VARCHAR2(20) DEFAULT 'PENDING' NOT NULL,
+        NOTE              VARCHAR2(255),
+        IS_DELETED        NUMBER(1)    DEFAULT 0 NOT NULL,
+        CREATED_AT        TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        UPDATED_AT        TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP,
+        CREATED_BY        VARCHAR2(50),
+        UPDATED_BY        VARCHAR2(50),
+        CONSTRAINT PK_FIN_PAYMENT_TRANS PRIMARY KEY (ID),
+        CONSTRAINT UQ_FIN_TRANS_CODE UNIQUE (TRANSACTION_CODE),
+        CONSTRAINT FK_TRANS_FEE FOREIGN KEY (TUITION_FEE_ID) REFERENCES FIN_TUITION_FEES (ID),
+        CONSTRAINT CK_TRANS_DELETED CHECK (IS_DELETED IN (0, 1)),
+        CONSTRAINT CK_TRANS_METHOD CHECK (PAYMENT_METHOD IN ('CASH', 'BANK_TRANSFER', 'VIETQR', 'CARD', 'EWALLET')),
+        CONSTRAINT CK_TRANS_STATUS CHECK (STATUS IN ('PENDING', 'SUCCESS', 'FAILED', 'REFUNDED')),
+        CONSTRAINT CK_TRANS_AMOUNT CHECK (AMOUNT > 0)
+    )]');
+
+    DBMS_OUTPUT.PUT_LINE('Tables: OK');
+END;
+/
+
+PROMPT ============ SECTION 3: INDEXES ============
+
+DECLARE
+    PROCEDURE DDL(P_SQL VARCHAR2) IS
+    BEGIN
+        EXECUTE IMMEDIATE P_SQL;
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE IN (-955, -1408, -1430, -2431) THEN
+                NULL;
+            ELSE
+                RAISE;
+            END IF;
+    END DDL;
+BEGIN
+    DDL('CREATE INDEX IDX_STUDENTS_DELETED_STATUS ON EDU_STUDENTS (IS_DELETED, STATUS)');
+    DDL('CREATE INDEX IDX_FILES_MODULE_REF ON SYS_ATTACHED_FILES (MODULE_NAME, REFERENCE_ID, IS_DELETED)');
+    DDL('CREATE INDEX IDX_CLASSES_DELETED_STATUS ON EDU_CLASSES (IS_DELETED, STATUS)');
+    DDL('CREATE INDEX IDX_CLASSES_TEACHER ON EDU_CLASSES (TEACHER_ID)');
+    DDL('CREATE INDEX IDX_CLASS_STUDENTS_STUDENT ON EDU_CLASS_STUDENTS (STUDENT_ID, IS_DELETED)');
+    DDL('CREATE INDEX IDX_ATTENDANCE_CLASS_DATE ON EDU_ATTENDANCE (CLASS_ID, ATTENDANCE_DATE)');
+    DDL('CREATE INDEX IDX_ATTENDANCE_STUDENT ON EDU_ATTENDANCE (STUDENT_ID, ATTENDANCE_DATE)');
+    DDL('CREATE INDEX IDX_GRADES_CLASS_STUDENT ON EDU_GRADES (CLASS_ID, STUDENT_ID, IS_DELETED)');
+    DDL('CREATE INDEX IDX_LEADS_DELETED_STATUS ON EDU_LEADS (IS_DELETED, STATUS)');
+    DDL('CREATE INDEX IDX_LEADS_ASSIGNEE ON EDU_LEADS (ASSIGNED_TO_ID)');
+    DDL('CREATE INDEX IDX_FEES_STUDENT ON FIN_TUITION_FEES (STUDENT_ID, IS_DELETED)');
+    DDL('CREATE INDEX IDX_FEES_STATUS_DUE ON FIN_TUITION_FEES (STATUS, DUE_DATE)');
+    DDL('CREATE INDEX IDX_TRANS_FEE ON FIN_PAYMENT_TRANSACTIONS (TUITION_FEE_ID, IS_DELETED)');
+    DDL('CREATE INDEX IDX_TRANS_DATE ON FIN_PAYMENT_TRANSACTIONS (PAYMENT_DATE)');
+
+    DBMS_OUTPUT.PUT_LINE('Indexes: OK');
+END;
+/
+
+PROMPT ============ SECTION 4: STANDALONE PROCEDURES ============
+
+-- ----------------------------------------------------------------------------
+-- 4.1 PRC_SEARCH_STUDENTS_PAGING - Dao tao: tim kiem hoc sinh co phan trang
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE PRC_SEARCH_STUDENTS_PAGING(
+    P_KEYWORD     IN  VARCHAR2,
+    P_STATUS      IN  VARCHAR2,
+    P_PAGE_NO     IN  NUMBER,
+    P_PAGE_SIZE   IN  NUMBER,
+    O_DATA_CURSOR OUT SYS_REFCURSOR,
+    O_TOTAL_ROWS  OUT NUMBER,
+    O_ERR_CODE    OUT VARCHAR2,
+    O_ERR_MSG     OUT VARCHAR2
+) AS
+    C_DEFAULT_PAGE_SIZE CONSTANT NUMBER := 20;
+    C_MAX_PAGE_SIZE     CONSTANT NUMBER := 200;
+
+    V_KEYWORD   VARCHAR2(4000);
+    V_STATUS    VARCHAR2(20);
+    V_PAGE_NO   NUMBER;
+    V_PAGE_SIZE NUMBER;
+    V_OFFSET    NUMBER;
+BEGIN
+    V_KEYWORD := LOWER(TRIM(P_KEYWORD));
+    -- Escape wildcard cua LIKE de tu khoa '100%' hay 'A_B' duoc tim dung nghia van ban
+    IF V_KEYWORD IS NOT NULL THEN
+        V_KEYWORD := REPLACE(V_KEYWORD, '\', '\\');
+        V_KEYWORD := REPLACE(V_KEYWORD, '%', '\%');
+        V_KEYWORD := REPLACE(V_KEYWORD, '_', '\_');
+    END IF;
+
+    V_STATUS := UPPER(TRIM(P_STATUS));
+
+    V_PAGE_NO := NVL(P_PAGE_NO, 1);
+    IF V_PAGE_NO < 1 THEN V_PAGE_NO := 1; END IF;
+
+    V_PAGE_SIZE := NVL(P_PAGE_SIZE, C_DEFAULT_PAGE_SIZE);
+    IF V_PAGE_SIZE < 1 THEN
+        V_PAGE_SIZE := C_DEFAULT_PAGE_SIZE;
+    ELSIF V_PAGE_SIZE > C_MAX_PAGE_SIZE THEN
+        V_PAGE_SIZE := C_MAX_PAGE_SIZE;
+    END IF;
+    V_OFFSET := (V_PAGE_NO - 1) * V_PAGE_SIZE;
+
+    SELECT COUNT(*)
+      INTO O_TOTAL_ROWS
+      FROM EDU_STUDENTS
+     WHERE IS_DELETED = 0
+       AND (V_KEYWORD IS NULL
+            OR LOWER(STUDENT_CODE) LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+            OR LOWER(FULL_NAME)    LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+            OR LOWER(EMAIL)        LIKE '%' || V_KEYWORD || '%' ESCAPE '\')
+       AND (V_STATUS IS NULL OR STATUS = V_STATUS);
+
+    OPEN O_DATA_CURSOR FOR
+        SELECT ID, STUDENT_CODE, FULL_NAME, EMAIL, STATUS, CREATED_AT, UPDATED_AT
+          FROM EDU_STUDENTS
+         WHERE IS_DELETED = 0
+           AND (V_KEYWORD IS NULL
+                OR LOWER(STUDENT_CODE) LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+                OR LOWER(FULL_NAME)    LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+                OR LOWER(EMAIL)        LIKE '%' || V_KEYWORD || '%' ESCAPE '\')
+           AND (V_STATUS IS NULL OR STATUS = V_STATUS)
+         ORDER BY ID DESC
+        OFFSET V_OFFSET ROWS FETCH NEXT V_PAGE_SIZE ROWS ONLY;
+
+    O_ERR_CODE := '0';
+    O_ERR_MSG  := 'SUCCESS';
+EXCEPTION
+    WHEN OTHERS THEN
+        IF O_DATA_CURSOR IS NOT NULL AND O_DATA_CURSOR%ISOPEN THEN CLOSE O_DATA_CURSOR; END IF;
+        O_TOTAL_ROWS := 0;
+        O_ERR_CODE   := TO_CHAR(SQLCODE);
+        O_ERR_MSG    := SUBSTR(SQLERRM, 1, 255);
+END PRC_SEARCH_STUDENTS_PAGING;
+/
+
+-- ----------------------------------------------------------------------------
+-- 4.2 PRC_SEARCH_CLASSES_PAGING - Dao tao: tim kiem lop hoc co phan trang
+--     Tra ve kem ten giao vien va so hoc sinh dang theo hoc cua tung lop.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE PRC_SEARCH_CLASSES_PAGING(
+    P_KEYWORD     IN  VARCHAR2,
+    P_STATUS      IN  VARCHAR2,
+    P_TEACHER_ID  IN  NUMBER,
+    P_PAGE_NO     IN  NUMBER,
+    P_PAGE_SIZE   IN  NUMBER,
+    O_DATA_CURSOR OUT SYS_REFCURSOR,
+    O_TOTAL_ROWS  OUT NUMBER,
+    O_ERR_CODE    OUT VARCHAR2,
+    O_ERR_MSG     OUT VARCHAR2
+) AS
+    C_DEFAULT_PAGE_SIZE CONSTANT NUMBER := 20;
+    C_MAX_PAGE_SIZE     CONSTANT NUMBER := 200;
+
+    V_KEYWORD   VARCHAR2(4000);
+    V_STATUS    VARCHAR2(20);
+    V_PAGE_NO   NUMBER;
+    V_PAGE_SIZE NUMBER;
+    V_OFFSET    NUMBER;
+BEGIN
+    V_KEYWORD := LOWER(TRIM(P_KEYWORD));
+    IF V_KEYWORD IS NOT NULL THEN
+        V_KEYWORD := REPLACE(V_KEYWORD, '\', '\\');
+        V_KEYWORD := REPLACE(V_KEYWORD, '%', '\%');
+        V_KEYWORD := REPLACE(V_KEYWORD, '_', '\_');
+    END IF;
+
+    V_STATUS := UPPER(TRIM(P_STATUS));
+
+    V_PAGE_NO := NVL(P_PAGE_NO, 1);
+    IF V_PAGE_NO < 1 THEN V_PAGE_NO := 1; END IF;
+
+    V_PAGE_SIZE := NVL(P_PAGE_SIZE, C_DEFAULT_PAGE_SIZE);
+    IF V_PAGE_SIZE < 1 THEN
+        V_PAGE_SIZE := C_DEFAULT_PAGE_SIZE;
+    ELSIF V_PAGE_SIZE > C_MAX_PAGE_SIZE THEN
+        V_PAGE_SIZE := C_MAX_PAGE_SIZE;
+    END IF;
+    V_OFFSET := (V_PAGE_NO - 1) * V_PAGE_SIZE;
+
+    SELECT COUNT(*)
+      INTO O_TOTAL_ROWS
+      FROM EDU_CLASSES c
+     WHERE c.IS_DELETED = 0
+       AND (V_KEYWORD IS NULL
+            OR LOWER(c.CLASS_CODE)   LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+            OR LOWER(c.CLASS_NAME)   LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+            OR LOWER(c.SUBJECT_NAME) LIKE '%' || V_KEYWORD || '%' ESCAPE '\')
+       AND (V_STATUS IS NULL OR c.STATUS = V_STATUS)
+       AND (P_TEACHER_ID IS NULL OR c.TEACHER_ID = P_TEACHER_ID);
+
+    OPEN O_DATA_CURSOR FOR
+        SELECT c.ID,
+               c.CLASS_CODE,
+               c.CLASS_NAME,
+               c.SUBJECT_NAME,
+               c.TEACHER_ID,
+               u.FULL_NAME AS TEACHER_NAME,
+               c.ROOM_NAME,
+               c.START_DATE,
+               c.END_DATE,
+               c.CAPACITY,
+               (SELECT COUNT(*)
+                  FROM EDU_CLASS_STUDENTS cs
+                 WHERE cs.CLASS_ID = c.ID
+                   AND cs.IS_DELETED = 0
+                   AND cs.STATUS = 'ENROLLED') AS ENROLLED_COUNT,
+               c.TUITION_AMOUNT,
+               c.STATUS,
+               c.CREATED_AT,
+               c.UPDATED_AT
+          FROM EDU_CLASSES c
+          LEFT JOIN SYS_USERS u ON u.ID = c.TEACHER_ID
+         WHERE c.IS_DELETED = 0
+           AND (V_KEYWORD IS NULL
+                OR LOWER(c.CLASS_CODE)   LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+                OR LOWER(c.CLASS_NAME)   LIKE '%' || V_KEYWORD || '%' ESCAPE '\'
+                OR LOWER(c.SUBJECT_NAME) LIKE '%' || V_KEYWORD || '%' ESCAPE '\')
+           AND (V_STATUS IS NULL OR c.STATUS = V_STATUS)
+           AND (P_TEACHER_ID IS NULL OR c.TEACHER_ID = P_TEACHER_ID)
+         ORDER BY c.ID DESC
+        OFFSET V_OFFSET ROWS FETCH NEXT V_PAGE_SIZE ROWS ONLY;
+
+    O_ERR_CODE := '0';
+    O_ERR_MSG  := 'SUCCESS';
+EXCEPTION
+    WHEN OTHERS THEN
+        IF O_DATA_CURSOR IS NOT NULL AND O_DATA_CURSOR%ISOPEN THEN CLOSE O_DATA_CURSOR; END IF;
+        O_TOTAL_ROWS := 0;
+        O_ERR_CODE   := TO_CHAR(SQLCODE);
+        O_ERR_MSG    := SUBSTR(SQLERRM, 1, 255);
+END PRC_SEARCH_CLASSES_PAGING;
+/
+
+-- ----------------------------------------------------------------------------
+-- 4.3 PRC_GET_TUITION_FEE_DETAIL - Tai chinh: chi tiet mot khoan hoc phi
+--     O_FEE_CURSOR        : 1 dong thong tin hoc phi + hoc sinh + lop
+--     O_TRANSACTION_CURSOR: lich su giao dich thanh toan cua khoan hoc phi do
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE PRC_GET_TUITION_FEE_DETAIL(
+    P_TUITION_FEE_ID     IN  NUMBER,
+    O_FEE_CURSOR         OUT SYS_REFCURSOR,
+    O_TRANSACTION_CURSOR OUT SYS_REFCURSOR,
+    O_ERR_CODE           OUT VARCHAR2,
+    O_ERR_MSG            OUT VARCHAR2
+) AS
+    V_EXISTS NUMBER;
+BEGIN
+    IF P_TUITION_FEE_ID IS NULL THEN
+        O_ERR_CODE := 'FEE_ID_REQUIRED';
+        O_ERR_MSG  := 'Thieu ID khoan hoc phi.';
+        RETURN;
+    END IF;
+
+    SELECT COUNT(*)
+      INTO V_EXISTS
+      FROM FIN_TUITION_FEES
+     WHERE ID = P_TUITION_FEE_ID
+       AND IS_DELETED = 0;
+
+    IF V_EXISTS = 0 THEN
+        O_ERR_CODE := 'FEE_NOT_FOUND';
+        O_ERR_MSG  := 'Khong tim thay khoan hoc phi ID: ' || P_TUITION_FEE_ID;
+        RETURN;
+    END IF;
+
+    OPEN O_FEE_CURSOR FOR
+        SELECT f.ID,
+               f.FEE_CODE,
+               f.STUDENT_ID,
+               s.STUDENT_CODE,
+               s.FULL_NAME AS STUDENT_NAME,
+               f.CLASS_ID,
+               c.CLASS_CODE,
+               c.CLASS_NAME,
+               f.TOTAL_AMOUNT,
+               f.DISCOUNT_AMOUNT,
+               f.PAID_AMOUNT,
+               (f.TOTAL_AMOUNT - f.DISCOUNT_AMOUNT - f.PAID_AMOUNT) AS REMAINING_AMOUNT,
+               f.DUE_DATE,
+               f.STATUS,
+               f.NOTE,
+               f.CREATED_AT,
+               f.UPDATED_AT
+          FROM FIN_TUITION_FEES f
+          JOIN EDU_STUDENTS s ON s.ID = f.STUDENT_ID
+          LEFT JOIN EDU_CLASSES c ON c.ID = f.CLASS_ID
+         WHERE f.ID = P_TUITION_FEE_ID
+           AND f.IS_DELETED = 0;
+
+    OPEN O_TRANSACTION_CURSOR FOR
+        SELECT t.ID,
+               t.TRANSACTION_CODE,
+               t.TUITION_FEE_ID,
+               t.AMOUNT,
+               t.PAYMENT_METHOD,
+               t.PAYMENT_DATE,
+               t.BANK_BIN,
+               t.ACCOUNT_NO,
+               t.BANK_REFERENCE_NO,
+               t.STATUS,
+               t.NOTE
+          FROM FIN_PAYMENT_TRANSACTIONS t
+         WHERE t.TUITION_FEE_ID = P_TUITION_FEE_ID
+           AND t.IS_DELETED = 0
+         ORDER BY t.PAYMENT_DATE DESC, t.ID DESC;
+
+    O_ERR_CODE := '0';
+    O_ERR_MSG  := 'SUCCESS';
+EXCEPTION
+    WHEN OTHERS THEN
+        IF O_FEE_CURSOR IS NOT NULL AND O_FEE_CURSOR%ISOPEN THEN CLOSE O_FEE_CURSOR; END IF;
+        IF O_TRANSACTION_CURSOR IS NOT NULL AND O_TRANSACTION_CURSOR%ISOPEN THEN CLOSE O_TRANSACTION_CURSOR; END IF;
+        O_ERR_CODE := TO_CHAR(SQLCODE);
+        O_ERR_MSG  := SUBSTR(SQLERRM, 1, 255);
+END PRC_GET_TUITION_FEE_DETAIL;
+/
+
+-- ----------------------------------------------------------------------------
+-- 4.4 PRC_GET_FILES_BY_REF - Quan ly File: danh sach file theo module + ban ghi
+--
+-- CANH BAO: cac alias khong dau gach duoi (originalName, contentType...) la CO Y.
+-- Oracle tra ve nhan cot dang ORIGINALNAME, CONTENTTYPE va
+-- FileRepositoryCustomImpl dang doc theo dung nhan do. Doi alias se lam vo mapping.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE PRC_GET_FILES_BY_REF(
+    P_MODULE_NAME  IN  VARCHAR2,
+    P_REFERENCE_ID IN  NUMBER,
+    O_CURSOR       OUT SYS_REFCURSOR,
+    O_ERR_CODE     OUT VARCHAR2,
+    O_ERR_MSG      OUT VARCHAR2
+) AS
+BEGIN
+    OPEN O_CURSOR FOR
+        SELECT ID, ORIGINAL_NAME AS originalName, CONTENT_TYPE AS contentType,
+               FILE_SIZE AS fileSize, MODULE_NAME AS moduleName,
+               REFERENCE_ID AS referenceId, CREATED_AT AS createdAt
+        FROM SYS_ATTACHED_FILES
+        WHERE MODULE_NAME = P_MODULE_NAME
+          AND REFERENCE_ID = P_REFERENCE_ID
+          AND IS_DELETED = 0
+        ORDER BY CREATED_AT DESC;
+
+    O_ERR_CODE := '0';
+    O_ERR_MSG  := 'SUCCESS';
+EXCEPTION
+    WHEN OTHERS THEN
+        O_ERR_CODE := TO_CHAR(SQLCODE);
+        O_ERR_MSG  := SUBSTR(SQLERRM, 1, 255);
+END PRC_GET_FILES_BY_REF;
+/
+
+-- ----------------------------------------------------------------------------
+-- 4.5 PRC_GET_USER_SIDEBAR_MENU - Phan quyen & Menu: cay menu + quyen phang
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE PRC_GET_USER_SIDEBAR_MENU(
+    P_USER_ID            IN  NUMBER,
+    O_MENU_CURSOR        OUT SYS_REFCURSOR,
+    O_PERMISSIONS_CURSOR OUT SYS_REFCURSOR,
+    O_ERR_CODE           OUT VARCHAR2,
+    O_ERR_MSG            OUT VARCHAR2
+) AS
+BEGIN
+    -- 1. Danh sach Menu duoc phep xem
+    OPEN O_MENU_CURSOR FOR
+        WITH USER_PERMITTED_MENUS AS (
+            SELECT DISTINCT m.ID, m.PARENT_ID, m.MENU_CODE, m.MENU_NAME,
+                            m.MENU_TYPE, m.PATH, m.ICON, m.SORT_ORDER,
+                            rmp.ALLOWED_FUNCTIONS
+            FROM SYS_MENUS m
+            JOIN SYS_ROLE_MENU_PERMISSIONS rmp ON m.ID = rmp.MENU_ID
+            JOIN SYS_USER_ROLES ur ON rmp.ROLE_ID = ur.ROLE_ID
+            WHERE ur.USER_ID = P_USER_ID
+              AND m.IS_DELETED = 0
+              AND m.IS_HIDDEN = 0
+              AND m.STATUS = 'ACTIVE'
+        )
+        SELECT ID, PARENT_ID, MENU_CODE, MENU_NAME, MENU_TYPE, PATH, ICON, SORT_ORDER, ALLOWED_FUNCTIONS
+        FROM USER_PERMITTED_MENUS
+        ORDER BY SORT_ORDER ASC;
+
+    -- 2. Danh sach quyen phang dang MENU_CODE:ACTION
+    OPEN O_PERMISSIONS_CURSOR FOR
+        SELECT DISTINCT m.MENU_CODE || ':' || f.FUNCTION_CODE AS PERMISSION_KEY
+        FROM SYS_ROLE_MENU_PERMISSIONS rmp
+        JOIN SYS_USER_ROLES ur ON rmp.ROLE_ID = ur.ROLE_ID
+        JOIN SYS_MENUS m ON rmp.MENU_ID = m.ID
+        JOIN SYS_FUNCTIONS f ON m.ID = f.MENU_ID
+        WHERE ur.USER_ID = P_USER_ID
+          AND INSTR(',' || rmp.ALLOWED_FUNCTIONS || ',', ',' || f.FUNCTION_CODE || ',') > 0;
+
+    O_ERR_CODE := '0';
+    O_ERR_MSG  := 'SUCCESS';
+EXCEPTION
+    WHEN OTHERS THEN
+        O_ERR_CODE := TO_CHAR(SQLCODE);
+        O_ERR_MSG  := SUBSTR(SQLERRM, 1, 255);
+END PRC_GET_USER_SIDEBAR_MENU;
+/
+
+-- ----------------------------------------------------------------------------
+-- 4.6 PRC_RPT_DASHBOARD_METRICS - Bao cao & Thong ke
+--     O_SUMMARY_CURSOR: 1 dong cac chi so tong hop
+--     O_REVENUE_CURSOR: doanh thu thuc thu theo thang trong khoang loc
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE PRC_RPT_DASHBOARD_METRICS(
+    P_FROM_DATE      IN  DATE,
+    P_TO_DATE        IN  DATE,
+    O_SUMMARY_CURSOR OUT SYS_REFCURSOR,
+    O_REVENUE_CURSOR OUT SYS_REFCURSOR,
+    O_ERR_CODE       OUT VARCHAR2,
+    O_ERR_MSG        OUT VARCHAR2
+) AS
+    V_FROM DATE;
+    V_TO   DATE;
+BEGIN
+    -- Mac dinh 12 thang gan nhat neu client khong truyen khoang thoi gian
+    V_FROM := NVL(TRUNC(P_FROM_DATE), ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -11));
+    V_TO   := NVL(TRUNC(P_TO_DATE), TRUNC(SYSDATE));
+
+    IF V_TO < V_FROM THEN
+        O_ERR_CODE := 'INVALID_DATE_RANGE';
+        O_ERR_MSG  := 'Tu ngay phai nho hon hoac bang den ngay.';
+        RETURN;
+    END IF;
+
+    OPEN O_SUMMARY_CURSOR FOR
+        SELECT
+            (SELECT COUNT(*) FROM EDU_STUDENTS WHERE IS_DELETED = 0)                        AS TOTAL_STUDENTS,
+            (SELECT COUNT(*) FROM EDU_STUDENTS WHERE IS_DELETED = 0 AND STATUS = 'ACTIVE')  AS ACTIVE_STUDENTS,
+            (SELECT COUNT(*) FROM EDU_CLASSES  WHERE IS_DELETED = 0)                        AS TOTAL_CLASSES,
+            (SELECT COUNT(*) FROM EDU_CLASSES  WHERE IS_DELETED = 0
+                                                AND STATUS IN ('OPEN', 'ONGOING'))          AS ACTIVE_CLASSES,
+            (SELECT COUNT(*) FROM EDU_LEADS    WHERE IS_DELETED = 0
+                                                AND TRUNC(CREATED_AT) BETWEEN V_FROM AND V_TO) AS NEW_LEADS,
+            (SELECT COUNT(*) FROM EDU_LEADS    WHERE IS_DELETED = 0
+                                                AND STATUS = 'CONVERTED'
+                                                AND TRUNC(UPDATED_AT) BETWEEN V_FROM AND V_TO) AS CONVERTED_LEADS,
+            (SELECT NVL(SUM(TOTAL_AMOUNT - DISCOUNT_AMOUNT), 0) FROM FIN_TUITION_FEES
+              WHERE IS_DELETED = 0 AND STATUS <> 'CANCELLED')                               AS TOTAL_RECEIVABLE,
+            (SELECT NVL(SUM(AMOUNT), 0) FROM FIN_PAYMENT_TRANSACTIONS
+              WHERE IS_DELETED = 0 AND STATUS = 'SUCCESS'
+                AND TRUNC(PAYMENT_DATE) BETWEEN V_FROM AND V_TO)                            AS TOTAL_COLLECTED,
+            (SELECT COUNT(*) FROM FIN_TUITION_FEES
+              WHERE IS_DELETED = 0 AND STATUS IN ('UNPAID', 'PARTIAL')
+                AND DUE_DATE IS NOT NULL AND DUE_DATE < TRUNC(SYSDATE))                     AS OVERDUE_FEES,
+            V_FROM AS FROM_DATE,
+            V_TO   AS TO_DATE
+          FROM DUAL;
+
+    OPEN O_REVENUE_CURSOR FOR
+        SELECT TO_CHAR(t.PAYMENT_DATE, 'YYYY-MM') AS REVENUE_MONTH,
+               SUM(t.AMOUNT)                      AS COLLECTED_AMOUNT,
+               COUNT(*)                           AS TRANSACTION_COUNT
+          FROM FIN_PAYMENT_TRANSACTIONS t
+         WHERE t.IS_DELETED = 0
+           AND t.STATUS = 'SUCCESS'
+           AND TRUNC(t.PAYMENT_DATE) BETWEEN V_FROM AND V_TO
+         GROUP BY TO_CHAR(t.PAYMENT_DATE, 'YYYY-MM')
+         ORDER BY 1;
+
+    O_ERR_CODE := '0';
+    O_ERR_MSG  := 'SUCCESS';
+EXCEPTION
+    WHEN OTHERS THEN
+        IF O_SUMMARY_CURSOR IS NOT NULL AND O_SUMMARY_CURSOR%ISOPEN THEN CLOSE O_SUMMARY_CURSOR; END IF;
+        IF O_REVENUE_CURSOR IS NOT NULL AND O_REVENUE_CURSOR%ISOPEN THEN CLOSE O_REVENUE_CURSOR; END IF;
+        O_ERR_CODE := TO_CHAR(SQLCODE);
+        O_ERR_MSG  := SUBSTR(SQLERRM, 1, 255);
+END PRC_RPT_DASHBOARD_METRICS;
+/
+
+PROMPT ============ SECTION 5: SEED DATA (MERGE theo khoa nghiep vu) ============
+
+-- LUU Y ENCODING: file nay chua tieng Viet. Khi chay bang sqlplus phai dat
+--   set NLS_LANG=AMERICAN_AMERICA.AL32UTF8
+-- neu khong dau tieng Viet se bi luu thanh dau '?'.
+
+-- ---------------------------------------------------------------------------
+-- 5.1 VAI TRO
+-- ---------------------------------------------------------------------------
+MERGE INTO SYS_ROLES t
+USING (
+    SELECT 1 ID, 'ROLE_ADMIN'      ROLE_CODE, 'Quản trị viên tối cao' ROLE_NAME, 'Toàn quyền trên mọi phân hệ'        DESCRIPTION FROM DUAL UNION ALL
+    SELECT 2   , 'ROLE_TEACHER'             , 'Giảng viên'                     , 'Giảng dạy, điểm danh và nhập điểm'              FROM DUAL UNION ALL
+    SELECT 3   , 'ROLE_ACCOUNTANT'          , 'Kế toán'                        , 'Quản lý học phí và giao dịch thanh toán'        FROM DUAL UNION ALL
+    SELECT 4   , 'ROLE_ADMISSION'           , 'Chuyên viên Tuyển sinh'         , 'Quản lý nguồn tuyển sinh và chuyển đổi học sinh' FROM DUAL
+) s ON (t.ROLE_CODE = s.ROLE_CODE)
+WHEN MATCHED THEN UPDATE SET t.ROLE_NAME = s.ROLE_NAME, t.DESCRIPTION = s.DESCRIPTION
+WHEN NOT MATCHED THEN INSERT (ID, ROLE_CODE, ROLE_NAME, DESCRIPTION, STATUS, IS_DELETED, CREATED_BY)
+                      VALUES (s.ID, s.ROLE_CODE, s.ROLE_NAME, s.DESCRIPTION, 'ACTIVE', 0, 'V1_MIGRATION');
+
+-- ---------------------------------------------------------------------------
+-- 5.2 TAI KHOAN
+--
+-- BAO MAT: khong bao gio ghi de PASSWORD_HASH cua tai khoan da ton tai
+-- (menh de WHEN MATCHED khong chua PASSWORD_HASH).
+-- Tai khoan demo moi dung mat khau 'Education@123' bam SHA-256 bang
+-- STANDARD_HASH cua Oracle - KHONG dung cho production, phai doi mat khau va
+-- chuyen sang BCrypt khi trien khai module xac thuc.
+-- ---------------------------------------------------------------------------
+MERGE INTO SYS_USERS t
+USING (
+    SELECT 1 ID, 'admin'       USERNAME, 'Administrator'         FULL_NAME, 'admin@education.vn'      EMAIL FROM DUAL UNION ALL
+    SELECT 2   , 'teacher1'            , 'Giáo Viên A'                    , 'teacher1@education.vn'         FROM DUAL UNION ALL
+    SELECT 3   , 'accountant1'         , 'Nguyễn Kế Toán'                 , 'accountant1@education.vn'      FROM DUAL UNION ALL
+    SELECT 4   , 'admission1'          , 'Trần Tuyển Sinh'                , 'admission1@education.vn'       FROM DUAL
+) s ON (t.USERNAME = s.USERNAME)
+WHEN MATCHED THEN UPDATE SET t.FULL_NAME = s.FULL_NAME
+WHEN NOT MATCHED THEN INSERT (ID, USERNAME, PASSWORD_HASH, FULL_NAME, EMAIL, STATUS, IS_DELETED, CREATED_BY)
+                      VALUES (s.ID, s.USERNAME,
+                              LOWER(RAWTOHEX(STANDARD_HASH('Education@123', 'SHA256'))),
+                              s.FULL_NAME, s.EMAIL, 'ACTIVE', 0, 'V1_MIGRATION');
+
+-- ---------------------------------------------------------------------------
+-- 5.3 GAN VAI TRO CHO TAI KHOAN
+-- ---------------------------------------------------------------------------
+MERGE INTO SYS_USER_ROLES t
+USING (
+    SELECT u.ID USER_ID, r.ID ROLE_ID
+      FROM SYS_USERS u
+      JOIN SYS_ROLES r ON 1 = 1
+     WHERE (u.USERNAME = 'admin'       AND r.ROLE_CODE = 'ROLE_ADMIN')
+        OR (u.USERNAME = 'teacher1'    AND r.ROLE_CODE = 'ROLE_TEACHER')
+        OR (u.USERNAME = 'accountant1' AND r.ROLE_CODE = 'ROLE_ACCOUNTANT')
+        OR (u.USERNAME = 'admission1'  AND r.ROLE_CODE = 'ROLE_ADMISSION')
+) s ON (t.USER_ID = s.USER_ID AND t.ROLE_ID = s.ROLE_ID)
+WHEN NOT MATCHED THEN INSERT (USER_ID, ROLE_ID, ASSIGNED_BY) VALUES (s.USER_ID, s.ROLE_ID, 'V1_MIGRATION');
+
+-- ---------------------------------------------------------------------------
+-- 5.4 CAY MENU - 6 PHAN HE (thu muc cap 1 truoc, de thoa rang buoc FK PARENT_ID)
+--
+-- ID cua 6 menu da ton tai truoc duoc giu nguyen (100/101/200/201/300/301)
+-- de khong xung dot khoa chinh khi MERGE.
+-- ---------------------------------------------------------------------------
+MERGE INTO SYS_MENUS t
+USING (
+    SELECT 100 ID, 'DIR_ACADEMIC'  MENU_CODE, 'Quản lý Đào tạo'     MENU_NAME, 'graduation-cap' ICON, 1 SORT_ORDER FROM DUAL UNION ALL
+    SELECT 150   , 'DIR_ADMISSION'          , 'Tuyển sinh'                    , 'user-plus'          , 2            FROM DUAL UNION ALL
+    SELECT 200   , 'DIR_FINANCE'            , 'Tài chính & Học phí'           , 'wallet'             , 3            FROM DUAL UNION ALL
+    SELECT 250   , 'DIR_DOCUMENT'           , 'Quản lý Tài liệu'              , 'folder'             , 4            FROM DUAL UNION ALL
+    SELECT 280   , 'DIR_REPORT'             , 'Báo cáo & Thống kê'            , 'chart-line'         , 5            FROM DUAL UNION ALL
+    SELECT 300   , 'DIR_SYSTEM'             , 'Cấu hình Hệ thống'             , 'gear'               , 6            FROM DUAL
+) s ON (t.MENU_CODE = s.MENU_CODE)
+WHEN MATCHED THEN UPDATE SET t.MENU_NAME = s.MENU_NAME, t.ICON = s.ICON, t.SORT_ORDER = s.SORT_ORDER,
+                             t.MENU_TYPE = 'DIR', t.PARENT_ID = NULL
+WHEN NOT MATCHED THEN INSERT (ID, PARENT_ID, MENU_CODE, MENU_NAME, MENU_TYPE, PATH, ICON, SORT_ORDER,
+                              IS_HIDDEN, STATUS, IS_DELETED, CREATED_BY)
+                      VALUES (s.ID, NULL, s.MENU_CODE, s.MENU_NAME, 'DIR', NULL, s.ICON, s.SORT_ORDER,
+                              0, 'ACTIVE', 0, 'V1_MIGRATION');
+
+MERGE INTO SYS_MENUS t
+USING (
+    SELECT 101 ID, 100 PARENT_ID, 'MENU_STUDENT_LIST'    MENU_CODE, 'Hồ sơ Học sinh'        MENU_NAME, '/students/list'         PATH, 'users'     ICON, 1 SORT_ORDER FROM DUAL UNION ALL
+    SELECT 102   , 100          , 'MENU_CLASS_LIST'               , 'Lớp học'                         , '/academic/classes'          , 'chalkboard'    , 2            FROM DUAL UNION ALL
+    SELECT 103   , 100          , 'MENU_ATTENDANCE'               , 'Điểm danh'                       , '/academic/attendance'       , 'clipboard'     , 3            FROM DUAL UNION ALL
+    SELECT 104   , 100          , 'MENU_GRADE'                    , 'Quản lý Điểm'                    , '/academic/grades'           , 'star'          , 4            FROM DUAL UNION ALL
+    SELECT 151   , 150          , 'MENU_LEAD_LIST'                , 'Nguồn Tuyển sinh'                , '/admission/leads'           , 'address-book'  , 1            FROM DUAL UNION ALL
+    SELECT 201   , 200          , 'MENU_TUITION_PAYMENT'          , 'Thu học phí VietQR'              , '/finance/vietqr'            , 'qrcode'        , 1            FROM DUAL UNION ALL
+    SELECT 202   , 200          , 'MENU_TUITION_FEE'              , 'Khoản Học phí'                   , '/finance/fees'              , 'file-invoice'  , 2            FROM DUAL UNION ALL
+    SELECT 203   , 200          , 'MENU_PAYMENT_HISTORY'          , 'Lịch sử Giao dịch'               , '/finance/transactions'      , 'receipt'       , 3            FROM DUAL UNION ALL
+    SELECT 251   , 250          , 'MENU_FILE_EXPLORER'            , 'Kho Tài liệu'                    , '/documents/files'           , 'file'          , 1            FROM DUAL UNION ALL
+    SELECT 281   , 280          , 'MENU_DASHBOARD'                , 'Bảng điều khiển'                 , '/reports/dashboard'         , 'gauge'         , 1            FROM DUAL UNION ALL
+    SELECT 301   , 300          , 'MENU_USER_PERM'                , 'Phân quyền & Menu'               , '/system/permissions'        , 'shield'        , 1            FROM DUAL UNION ALL
+    SELECT 302   , 300          , 'MENU_ROLE_LIST'                , 'Vai trò'                         , '/system/roles'              , 'user-shield'   , 2            FROM DUAL UNION ALL
+    SELECT 303   , 300          , 'MENU_USER_LIST'                , 'Người dùng'                      , '/system/users'              , 'user-gear'     , 3            FROM DUAL UNION ALL
+    SELECT 304   , 300          , 'MENU_MENU_CONFIG'              , 'Cấu hình Menu'                   , '/system/menus'              , 'bars'          , 4            FROM DUAL
+) s ON (t.MENU_CODE = s.MENU_CODE)
+WHEN MATCHED THEN UPDATE SET t.PARENT_ID = s.PARENT_ID, t.MENU_NAME = s.MENU_NAME, t.PATH = s.PATH,
+                             t.ICON = s.ICON, t.SORT_ORDER = s.SORT_ORDER, t.MENU_TYPE = 'MENU'
+WHEN NOT MATCHED THEN INSERT (ID, PARENT_ID, MENU_CODE, MENU_NAME, MENU_TYPE, PATH, ICON, SORT_ORDER,
+                              IS_HIDDEN, STATUS, IS_DELETED, CREATED_BY)
+                      VALUES (s.ID, s.PARENT_ID, s.MENU_CODE, s.MENU_NAME, 'MENU', s.PATH, s.ICON, s.SORT_ORDER,
+                              0, 'ACTIVE', 0, 'V1_MIGRATION');
+
+-- ---------------------------------------------------------------------------
+-- 5.5 CHUC NANG (ACTION) CUA TUNG MENU
+--     FUNCTION_NAME suy ra tu FUNCTION_CODE de khong phai lap lai tung dong.
+-- ---------------------------------------------------------------------------
+MERGE INTO SYS_FUNCTIONS t
+USING (
+    SELECT m.ID AS MENU_ID,
+           x.FUNCTION_CODE,
+           CASE x.FUNCTION_CODE
+               WHEN 'VIEW'     THEN 'Xem danh sách'
+               WHEN 'CREATE'   THEN 'Thêm mới'
+               WHEN 'UPDATE'   THEN 'Cập nhật'
+               WHEN 'DELETE'   THEN 'Xóa'
+               WHEN 'EXPORT'   THEN 'Xuất dữ liệu'
+               WHEN 'IMPORT'   THEN 'Nhập dữ liệu'
+               WHEN 'GEN_QR'   THEN 'Sinh mã VietQR'
+               WHEN 'CONVERT'  THEN 'Chuyển thành học sinh'
+               WHEN 'APPROVE'  THEN 'Xác nhận giao dịch'
+               WHEN 'UPLOAD'   THEN 'Tải tài liệu lên'
+               WHEN 'DOWNLOAD' THEN 'Tải tài liệu về'
+               ELSE x.FUNCTION_CODE
+           END AS FUNCTION_NAME
+      FROM SYS_MENUS m
+      JOIN (
+            SELECT 'DIR_ACADEMIC'         MENU_CODE, 'VIEW'     FUNCTION_CODE FROM DUAL UNION ALL
+            SELECT 'DIR_ADMISSION'                 , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'DIR_FINANCE'                   , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'DIR_DOCUMENT'                  , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'DIR_REPORT'                    , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'DIR_SYSTEM'                    , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_STUDENT_LIST'             , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_STUDENT_LIST'             , 'CREATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_STUDENT_LIST'             , 'UPDATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_STUDENT_LIST'             , 'DELETE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_STUDENT_LIST'             , 'EXPORT'                 FROM DUAL UNION ALL
+            SELECT 'MENU_CLASS_LIST'               , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_CLASS_LIST'               , 'CREATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_CLASS_LIST'               , 'UPDATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_CLASS_LIST'               , 'DELETE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_CLASS_LIST'               , 'EXPORT'                 FROM DUAL UNION ALL
+            SELECT 'MENU_ATTENDANCE'               , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_ATTENDANCE'               , 'CREATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_ATTENDANCE'               , 'UPDATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_ATTENDANCE'               , 'EXPORT'                 FROM DUAL UNION ALL
+            SELECT 'MENU_GRADE'                    , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_GRADE'                    , 'CREATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_GRADE'                    , 'UPDATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_GRADE'                    , 'DELETE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_GRADE'                    , 'EXPORT'                 FROM DUAL UNION ALL
+            SELECT 'MENU_LEAD_LIST'                , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_LEAD_LIST'                , 'CREATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_LEAD_LIST'                , 'UPDATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_LEAD_LIST'                , 'DELETE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_LEAD_LIST'                , 'CONVERT'                FROM DUAL UNION ALL
+            SELECT 'MENU_LEAD_LIST'                , 'EXPORT'                 FROM DUAL UNION ALL
+            SELECT 'MENU_TUITION_PAYMENT'          , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_TUITION_PAYMENT'          , 'GEN_QR'                 FROM DUAL UNION ALL
+            SELECT 'MENU_TUITION_FEE'              , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_TUITION_FEE'              , 'CREATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_TUITION_FEE'              , 'UPDATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_TUITION_FEE'              , 'DELETE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_TUITION_FEE'              , 'EXPORT'                 FROM DUAL UNION ALL
+            SELECT 'MENU_PAYMENT_HISTORY'          , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_PAYMENT_HISTORY'          , 'CREATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_PAYMENT_HISTORY'          , 'APPROVE'                FROM DUAL UNION ALL
+            SELECT 'MENU_PAYMENT_HISTORY'          , 'EXPORT'                 FROM DUAL UNION ALL
+            SELECT 'MENU_FILE_EXPLORER'            , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_FILE_EXPLORER'            , 'UPLOAD'                 FROM DUAL UNION ALL
+            SELECT 'MENU_FILE_EXPLORER'            , 'DOWNLOAD'               FROM DUAL UNION ALL
+            SELECT 'MENU_FILE_EXPLORER'            , 'DELETE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_DASHBOARD'                , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_DASHBOARD'                , 'EXPORT'                 FROM DUAL UNION ALL
+            SELECT 'MENU_USER_PERM'                , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_USER_PERM'                , 'CREATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_USER_PERM'                , 'UPDATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_USER_PERM'                , 'DELETE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_ROLE_LIST'                , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_ROLE_LIST'                , 'CREATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_ROLE_LIST'                , 'UPDATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_ROLE_LIST'                , 'DELETE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_USER_LIST'                , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_USER_LIST'                , 'CREATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_USER_LIST'                , 'UPDATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_USER_LIST'                , 'DELETE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_MENU_CONFIG'              , 'VIEW'                   FROM DUAL UNION ALL
+            SELECT 'MENU_MENU_CONFIG'              , 'CREATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_MENU_CONFIG'              , 'UPDATE'                 FROM DUAL UNION ALL
+            SELECT 'MENU_MENU_CONFIG'              , 'DELETE'                 FROM DUAL
+           ) x ON x.MENU_CODE = m.MENU_CODE
+) s ON (t.MENU_ID = s.MENU_ID AND t.FUNCTION_CODE = s.FUNCTION_CODE)
+WHEN MATCHED THEN UPDATE SET t.FUNCTION_NAME = s.FUNCTION_NAME
+WHEN NOT MATCHED THEN INSERT (ID, MENU_ID, FUNCTION_CODE, FUNCTION_NAME, IS_DELETED)
+                      VALUES (SEQ_SYS_FUNCTIONS.NEXTVAL, s.MENU_ID, s.FUNCTION_CODE, s.FUNCTION_NAME, 0);
+
+-- ---------------------------------------------------------------------------
+-- 5.6 PHAN QUYEN: ROLE_ADMIN duoc TAT CA function cua MOI menu.
+--     Sinh tu dong tu SYS_FUNCTIONS nen khong bao gio lech khi them menu moi.
+-- ---------------------------------------------------------------------------
+MERGE INTO SYS_ROLE_MENU_PERMISSIONS t
+USING (
+    SELECT r.ID AS ROLE_ID,
+           f.MENU_ID,
+           LISTAGG(f.FUNCTION_CODE, ',') WITHIN GROUP (ORDER BY f.ID) AS ALLOWED_FUNCTIONS
+      FROM SYS_FUNCTIONS f
+      CROSS JOIN SYS_ROLES r
+     WHERE r.ROLE_CODE = 'ROLE_ADMIN'
+       AND f.IS_DELETED = 0
+     GROUP BY r.ID, f.MENU_ID
+) s ON (t.ROLE_ID = s.ROLE_ID AND t.MENU_ID = s.MENU_ID)
+WHEN MATCHED THEN UPDATE SET t.ALLOWED_FUNCTIONS = s.ALLOWED_FUNCTIONS
+WHEN NOT MATCHED THEN INSERT (ID, ROLE_ID, MENU_ID, ALLOWED_FUNCTIONS, CREATED_BY)
+                      VALUES (SEQ_SYS_ROLE_MENU_PERM.NEXTVAL, s.ROLE_ID, s.MENU_ID, s.ALLOWED_FUNCTIONS, 'V1_MIGRATION');
+
+-- ---------------------------------------------------------------------------
+-- 5.7 PHAN QUYEN: cac vai tro nghiep vu (liet ke tuong minh)
+-- ---------------------------------------------------------------------------
+MERGE INTO SYS_ROLE_MENU_PERMISSIONS t
+USING (
+    SELECT r.ID AS ROLE_ID, m.ID AS MENU_ID, x.ALLOWED_FUNCTIONS
+      FROM (
+            -- Giang vien
+            SELECT 'ROLE_TEACHER' ROLE_CODE, 'DIR_ACADEMIC'       MENU_CODE, 'VIEW'                     ALLOWED_FUNCTIONS FROM DUAL UNION ALL
+            SELECT 'ROLE_TEACHER'          , 'MENU_STUDENT_LIST'            , 'VIEW,EXPORT'                                FROM DUAL UNION ALL
+            SELECT 'ROLE_TEACHER'          , 'MENU_CLASS_LIST'              , 'VIEW,EXPORT'                                FROM DUAL UNION ALL
+            SELECT 'ROLE_TEACHER'          , 'MENU_ATTENDANCE'              , 'VIEW,CREATE,UPDATE,EXPORT'                  FROM DUAL UNION ALL
+            SELECT 'ROLE_TEACHER'          , 'MENU_GRADE'                   , 'VIEW,CREATE,UPDATE,EXPORT'                  FROM DUAL UNION ALL
+            SELECT 'ROLE_TEACHER'          , 'DIR_DOCUMENT'                 , 'VIEW'                                       FROM DUAL UNION ALL
+            SELECT 'ROLE_TEACHER'          , 'MENU_FILE_EXPLORER'           , 'VIEW,UPLOAD,DOWNLOAD'                       FROM DUAL UNION ALL
+            -- Ke toan
+            SELECT 'ROLE_ACCOUNTANT'       , 'DIR_FINANCE'                  , 'VIEW'                                       FROM DUAL UNION ALL
+            SELECT 'ROLE_ACCOUNTANT'       , 'MENU_TUITION_PAYMENT'         , 'VIEW,GEN_QR'                                FROM DUAL UNION ALL
+            SELECT 'ROLE_ACCOUNTANT'       , 'MENU_TUITION_FEE'             , 'VIEW,CREATE,UPDATE,DELETE,EXPORT'           FROM DUAL UNION ALL
+            SELECT 'ROLE_ACCOUNTANT'       , 'MENU_PAYMENT_HISTORY'         , 'VIEW,CREATE,APPROVE,EXPORT'                 FROM DUAL UNION ALL
+            SELECT 'ROLE_ACCOUNTANT'       , 'DIR_DOCUMENT'                 , 'VIEW'                                       FROM DUAL UNION ALL
+            SELECT 'ROLE_ACCOUNTANT'       , 'MENU_FILE_EXPLORER'           , 'VIEW,UPLOAD,DOWNLOAD'                       FROM DUAL UNION ALL
+            SELECT 'ROLE_ACCOUNTANT'       , 'DIR_REPORT'                   , 'VIEW'                                       FROM DUAL UNION ALL
+            SELECT 'ROLE_ACCOUNTANT'       , 'MENU_DASHBOARD'               , 'VIEW,EXPORT'                                FROM DUAL UNION ALL
+            -- Chuyen vien tuyen sinh
+            SELECT 'ROLE_ADMISSION'        , 'DIR_ADMISSION'                , 'VIEW'                                       FROM DUAL UNION ALL
+            SELECT 'ROLE_ADMISSION'        , 'MENU_LEAD_LIST'               , 'VIEW,CREATE,UPDATE,DELETE,CONVERT,EXPORT'   FROM DUAL UNION ALL
+            SELECT 'ROLE_ADMISSION'        , 'DIR_ACADEMIC'                 , 'VIEW'                                       FROM DUAL UNION ALL
+            SELECT 'ROLE_ADMISSION'        , 'MENU_STUDENT_LIST'            , 'VIEW,CREATE'                                FROM DUAL UNION ALL
+            SELECT 'ROLE_ADMISSION'        , 'DIR_REPORT'                   , 'VIEW'                                       FROM DUAL UNION ALL
+            SELECT 'ROLE_ADMISSION'        , 'MENU_DASHBOARD'               , 'VIEW'                                       FROM DUAL
+           ) x
+      JOIN SYS_ROLES r ON r.ROLE_CODE = x.ROLE_CODE
+      JOIN SYS_MENUS m ON m.MENU_CODE = x.MENU_CODE
+) s ON (t.ROLE_ID = s.ROLE_ID AND t.MENU_ID = s.MENU_ID)
+WHEN MATCHED THEN UPDATE SET t.ALLOWED_FUNCTIONS = s.ALLOWED_FUNCTIONS
+WHEN NOT MATCHED THEN INSERT (ID, ROLE_ID, MENU_ID, ALLOWED_FUNCTIONS, CREATED_BY)
+                      VALUES (SEQ_SYS_ROLE_MENU_PERM.NEXTVAL, s.ROLE_ID, s.MENU_ID, s.ALLOWED_FUNCTIONS, 'V1_MIGRATION');
+
+COMMIT;
+
+PROMPT ============ SECTION 6: DONG BO SEQUENCE VE MAX(ID) + 1 ============
+
+-- Seed dung ID tuong minh (menu 100..304, user/role 1..4) trong khi sequence van
+-- dang o gia tri thap. Neu khong dong bo, lan INSERT dau tien qua JPA se sinh ID
+-- trung khoa chinh. Buoc nay dua moi sequence len qua gia tri lon nhat dang dung.
+DECLARE
+    TYPE T_MAP IS RECORD (SEQ_NAME VARCHAR2(30), TABLE_NAME VARCHAR2(30));
+    TYPE T_LIST IS TABLE OF T_MAP;
+
+    V_LIST T_LIST := T_LIST(
+        T_MAP('SEQ_EDU_STUDENTS',       'EDU_STUDENTS'),
+        T_MAP('SEQ_EDU_CLASSES',        'EDU_CLASSES'),
+        T_MAP('SEQ_EDU_CLASS_STUDENTS', 'EDU_CLASS_STUDENTS'),
+        T_MAP('SEQ_EDU_ATTENDANCE',     'EDU_ATTENDANCE'),
+        T_MAP('SEQ_EDU_GRADES',         'EDU_GRADES'),
+        T_MAP('SEQ_EDU_LEADS',          'EDU_LEADS'),
+        T_MAP('SEQ_FIN_TUITION_FEES',   'FIN_TUITION_FEES'),
+        T_MAP('SEQ_FIN_PAYMENT_TRANS',  'FIN_PAYMENT_TRANSACTIONS'),
+        T_MAP('SEQ_SYS_ATTACHED_FILES', 'SYS_ATTACHED_FILES'),
+        T_MAP('SEQ_SYS_USERS',          'SYS_USERS'),
+        T_MAP('SEQ_SYS_ROLES',          'SYS_ROLES'),
+        T_MAP('SEQ_SYS_MENUS',          'SYS_MENUS'),
+        T_MAP('SEQ_SYS_FUNCTIONS',      'SYS_FUNCTIONS'),
+        T_MAP('SEQ_SYS_ROLE_MENU_PERM', 'SYS_ROLE_MENU_PERMISSIONS')
+    );
+
+    V_MAX_ID  NUMBER;
+    V_NEXT_ID NUMBER;
+BEGIN
+    FOR i IN 1 .. V_LIST.COUNT LOOP
+        EXECUTE IMMEDIATE 'SELECT NVL(MAX(ID), 0) FROM ' || V_LIST(i).TABLE_NAME INTO V_MAX_ID;
+        EXECUTE IMMEDIATE 'SELECT ' || V_LIST(i).SEQ_NAME || '.NEXTVAL FROM DUAL' INTO V_NEXT_ID;
+
+        IF V_NEXT_ID <= V_MAX_ID THEN
+            EXECUTE IMMEDIATE 'ALTER SEQUENCE ' || V_LIST(i).SEQ_NAME
+                           || ' RESTART START WITH ' || (V_MAX_ID + 1);
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(V_LIST(i).SEQ_NAME, 24)
+                              || ' -> restart tai ' || (V_MAX_ID + 1));
+        END IF;
+    END LOOP;
+
+    DBMS_OUTPUT.PUT_LINE('Sequences da dong bo voi MAX(ID).');
+END;
+/
+
+PROMPT ============ SECTION 7: BAO CAO KET QUA ============
+
+DECLARE
+    V_INVALID NUMBER;
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('--- Doi tuong theo loai ---');
+    FOR r IN (SELECT OBJECT_TYPE, COUNT(*) SL,
+                     SUM(CASE WHEN STATUS = 'VALID' THEN 1 ELSE 0 END) HOP_LE
+                FROM USER_OBJECTS
+               GROUP BY OBJECT_TYPE
+               ORDER BY OBJECT_TYPE) LOOP
+        DBMS_OUTPUT.PUT_LINE('  ' || RPAD(r.OBJECT_TYPE, 12) || ' tong=' || r.SL || '  valid=' || r.HOP_LE);
+    END LOOP;
+
+    DBMS_OUTPUT.PUT_LINE('--- 6 Standalone Procedure ---');
+    FOR r IN (SELECT OBJECT_NAME, STATUS
+                FROM USER_OBJECTS
+               WHERE OBJECT_TYPE = 'PROCEDURE'
+                 AND OBJECT_NAME IN ('PRC_SEARCH_STUDENTS_PAGING', 'PRC_SEARCH_CLASSES_PAGING',
+                                     'PRC_GET_TUITION_FEE_DETAIL', 'PRC_GET_FILES_BY_REF',
+                                     'PRC_GET_USER_SIDEBAR_MENU', 'PRC_RPT_DASHBOARD_METRICS')
+               ORDER BY OBJECT_NAME) LOOP
+        DBMS_OUTPUT.PUT_LINE('  ' || RPAD(r.OBJECT_NAME, 28) || r.STATUS);
+    END LOOP;
+
+    DBMS_OUTPUT.PUT_LINE('--- Seed data ---');
+    FOR r IN (SELECT 'SYS_ROLES' T, COUNT(*) C FROM SYS_ROLES UNION ALL
+              SELECT 'SYS_USERS', COUNT(*) FROM SYS_USERS UNION ALL
+              SELECT 'SYS_USER_ROLES', COUNT(*) FROM SYS_USER_ROLES UNION ALL
+              SELECT 'SYS_MENUS (DIR)', COUNT(*) FROM SYS_MENUS WHERE MENU_TYPE = 'DIR' UNION ALL
+              SELECT 'SYS_MENUS (MENU)', COUNT(*) FROM SYS_MENUS WHERE MENU_TYPE = 'MENU' UNION ALL
+              SELECT 'SYS_FUNCTIONS', COUNT(*) FROM SYS_FUNCTIONS UNION ALL
+              SELECT 'SYS_ROLE_MENU_PERMISSIONS', COUNT(*) FROM SYS_ROLE_MENU_PERMISSIONS) LOOP
+        DBMS_OUTPUT.PUT_LINE('  ' || RPAD(r.T, 28) || r.C || ' dong');
+    END LOOP;
+
+    SELECT COUNT(*) INTO V_INVALID FROM USER_OBJECTS WHERE STATUS <> 'VALID';
+    IF V_INVALID > 0 THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Con ' || V_INVALID || ' doi tuong khong VALID.');
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('=== V1 BASELINE HOAN TAT: toan bo doi tuong VALID ===');
+END;
+/
+
+SET FEEDBACK ON
