@@ -2,12 +2,14 @@ package com.education.base.repository.custom.impl;
 
 import com.education.base.dto.response.PaymentTransactionDto;
 import com.education.base.dto.response.TuitionFeeDetailResponse;
+import com.education.base.dto.response.TuitionSlipResponseDto;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.repository.base.OracleProcExecutor;
 import com.education.base.repository.custom.TuitionFeeRepositoryCustom;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import oracle.jdbc.OracleTypes;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.SqlOutParameter;
 import org.springframework.jdbc.core.SqlParameter;
@@ -15,13 +17,16 @@ import org.springframework.jdbc.core.simple.SimpleJdbcCall;
 import org.springframework.stereotype.Repository;
 
 import java.sql.Types;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
  * Triển khai {@link TuitionFeeRepositoryCustom} bằng Standalone Procedure
- * {@code PRC_GET_TUITION_FEE_DETAIL}.
+ * {@code PRC_GET_TUITION_FEE_DETAIL} và {@code PRC_GET_TUITION_SLIP_DATA}.
  */
 @Slf4j
 @Repository
@@ -29,6 +34,8 @@ import java.util.Map;
 public class TuitionFeeRepositoryCustomImpl implements TuitionFeeRepositoryCustom {
 
     private static final String PROC_NAME = "PRC_GET_TUITION_FEE_DETAIL";
+    private static final String SLIP_PROC = "PRC_GET_TUITION_SLIP_DATA";
+    private static final DateTimeFormatter DAY_MONTH = DateTimeFormatter.ofPattern("dd/MM");
 
     private static final RowMapper<TuitionFeeDetailResponse> FEE_ROW_MAPPER = (rs, rowNum) ->
             TuitionFeeDetailResponse.builder()
@@ -66,7 +73,30 @@ public class TuitionFeeRepositoryCustomImpl implements TuitionFeeRepositoryCusto
                     .note(rs.getString("NOTE"))
                     .build();
 
+    private static final RowMapper<TuitionSlipResponseDto> SLIP_INFO_ROW_MAPPER = (rs, rowNum) ->
+            TuitionSlipResponseDto.builder()
+                    .invoiceId(rs.getLong("ID"))
+                    .invoiceCode(rs.getString("FEE_CODE"))
+                    .month(JdbcValueReaders.getInteger(rs, "FEE_MONTH"))
+                    .year(JdbcValueReaders.getInteger(rs, "FEE_YEAR"))
+                    .classCode(rs.getString("CLASS_CODE"))
+                    .className(rs.getString("CLASS_NAME"))
+                    .studentCode(rs.getString("STUDENT_CODE"))
+                    .studentName(rs.getString("STUDENT_NAME"))
+                    .pricePerSession(JdbcValueReaders.getBigDecimal(rs, "PRICE_PER_SESSION"))
+                    .totalSessions(JdbcValueReaders.getInteger(rs, "TOTAL_SESSIONS"))
+                    .totalAmount(JdbcValueReaders.getBigDecimal(rs, "TOTAL_AMOUNT"))
+                    .teacherComment(rs.getString("TEACHER_COMMENT"))
+                    .footerWish(rs.getString("FOOTER_WISH"))
+                    .slipLabel(rs.getString("SLIP_LABEL"))
+                    .attendedDates(new ArrayList<>())
+                    .build();
+
+    private static final RowMapper<LocalDate> ATTENDANCE_DATE_ROW_MAPPER =
+            (rs, rowNum) -> JdbcValueReaders.getLocalDate(rs, "ATTENDANCE_DATE");
+
     private final OracleProcExecutor oracleProcExecutor;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     public TuitionFeeDetailResponse getFeeDetail(Long tuitionFeeId) {
@@ -102,5 +132,52 @@ public class TuitionFeeRepositoryCustomImpl implements TuitionFeeRepositoryCusto
         log.debug("{} trả về khoản phí {} với {} giao dịch",
                 PROC_NAME, detail.getFeeCode(), detail.getTransactions().size());
         return detail;
+    }
+
+    @Override
+    public TuitionSlipResponseDto getTuitionSlipData(Long invoiceId) {
+        if (invoiceId == null) {
+            throw new OracleBusinessException("FEE_ID_REQUIRED", "Thiếu ID khoản học phí.");
+        }
+
+        SimpleJdbcCall call = oracleProcExecutor.createCall(SLIP_PROC)
+                .declareParameters(
+                        new SqlParameter("P_INVOICE_ID", Types.NUMERIC),
+                        new SqlOutParameter("O_INFO_CURSOR", OracleTypes.CURSOR, SLIP_INFO_ROW_MAPPER),
+                        new SqlOutParameter("O_ATTENDANCE_CURSOR", OracleTypes.CURSOR, ATTENDANCE_DATE_ROW_MAPPER),
+                        new SqlOutParameter("O_ERR_CODE", Types.VARCHAR),
+                        new SqlOutParameter("O_ERR_MSG", Types.VARCHAR));
+
+        Map<String, Object> out = call.execute(Map.of("P_INVOICE_ID", invoiceId));
+        oracleProcExecutor.validateResult(out);
+
+        List<TuitionSlipResponseDto> infos =
+                ProcCursorReader.readCursor(out, "O_INFO_CURSOR", TuitionSlipResponseDto.class);
+        if (infos.isEmpty()) {
+            throw new OracleBusinessException("FEE_NOT_FOUND",
+                    "Không tìm thấy khoản học phí ID: " + invoiceId);
+        }
+
+        TuitionSlipResponseDto slip = infos.getFirst();
+        List<LocalDate> dates =
+                ProcCursorReader.readCursor(out, "O_ATTENDANCE_CURSOR", LocalDate.class);
+        List<String> badges = new ArrayList<>();
+        for (LocalDate date : dates) {
+            if (date != null) {
+                badges.add(date.format(DAY_MONTH));
+            }
+        }
+        slip.setAttendedDates(badges);
+        return slip;
+    }
+
+    @Override
+    public String nextTuitionFeeCode() {
+        String code = jdbcTemplate.queryForObject("SELECT FN_NEXT_BIZ_CODE('TUITION') FROM DUAL", String.class);
+        if (code == null || code.isBlank()) {
+            throw new OracleBusinessException("FEE_CODE_GENERATE_FAILED",
+                    "Không sinh được mã khoản học phí từ SYS_CODE_RULES.");
+        }
+        return code.trim();
     }
 }

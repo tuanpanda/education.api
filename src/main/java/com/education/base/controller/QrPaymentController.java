@@ -3,45 +3,58 @@ package com.education.base.controller;
 import com.education.base.common.ApiResponse;
 import com.education.base.common.VietQrHelper;
 import com.education.base.dto.request.GenerateQrRequest;
+import com.education.base.dto.response.BankAccountResponseDto;
 import com.education.base.dto.response.QrPaymentResponseDto;
+import com.education.base.service.BankAccountService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Module Sinh mã VietQR Thanh toán Học phí.
+ * Sinh mã VietQR thanh toán học phí từ số tài khoản đang sử dụng trong DB.
  */
 @RestController
 @RequestMapping("/api/v1/payments")
+@RequiredArgsConstructor
 public class QrPaymentController {
 
     private static final int QR_WIDTH = 512;
     private static final int QR_HEIGHT = 512;
 
-    /**
-     * Sinh mã VietQR, trả về đồng thời link nhanh, payload TLV và ảnh Base64.
-     */
+    private final BankAccountService bankAccountService;
+
     @PostMapping("/generate-qr")
     public ApiResponse<QrPaymentResponseDto> generateQr(@Valid @RequestBody GenerateQrRequest request) {
+        BankAccountResponseDto account = bankAccountService.requireActive();
+        GenerateQrRequest params = request == null ? new GenerateQrRequest() : request;
+
         String qrPayload = VietQrHelper.buildVietQrPayload(
-                request.getBankBin(),
-                request.getAccountNo(),
-                request.getAmount(),
-                request.getDescription());
+                account.getBankBin(),
+                account.getAccountNo(),
+                params.getAmount(),
+                params.getDescription());
 
         QrPaymentResponseDto data = QrPaymentResponseDto.builder()
                 .quickUrl(VietQrHelper.buildQuickUrl(
-                        request.getBankBin(),
-                        request.getAccountNo(),
-                        request.getAmount(),
-                        request.getDescription(),
-                        request.getAccountName()))
+                        account.getBankBin(),
+                        account.getAccountNo(),
+                        params.getAmount(),
+                        params.getDescription(),
+                        firstNonBlank(params.getAccountName(), account.getAccountName())))
                 .qrPayload(qrPayload)
                 .base64Image(VietQrHelper.generateQrBase64(qrPayload, QR_WIDTH, QR_HEIGHT))
                 .build();
 
         return ApiResponse.success("Tạo mã QR thành công.", data);
+    }
+
+    private static String firstNonBlank(String preferred, String fallback) {
+        if (preferred != null && !preferred.isBlank()) {
+            return preferred.trim();
+        }
+        return fallback;
     }
 }

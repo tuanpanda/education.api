@@ -35,6 +35,7 @@ class EntityMappingConventionTest {
                 new Object[]{LeadEntity.class, "EDU_LEADS", "SEQ_EDU_LEADS"},
                 new Object[]{TuitionFeeEntity.class, "FIN_TUITION_FEES", "SEQ_FIN_TUITION_FEES"},
                 new Object[]{PaymentTransactionEntity.class, "FIN_PAYMENT_TRANSACTIONS", "SEQ_FIN_PAYMENT_TRANS"},
+                new Object[]{BankAccountEntity.class, "FIN_BANK_ACCOUNTS", "SEQ_FIN_BANK_ACCOUNTS"},
                 new Object[]{FileEntity.class, "SYS_ATTACHED_FILES", "SEQ_SYS_ATTACHED_FILES"},
                 new Object[]{UserEntity.class, "SYS_USERS", "SEQ_SYS_USERS"},
                 new Object[]{RoleEntity.class, "SYS_ROLES", "SEQ_SYS_ROLES"},
@@ -217,8 +218,21 @@ class EntityMappingConventionTest {
         assertColumn(LeadEntity.class, "convertedStudentId", "CONVERTED_STUDENT_ID");
         assertColumn(TuitionFeeEntity.class, "feeCode", "FEE_CODE");
         assertColumn(TuitionFeeEntity.class, "studentId", "STUDENT_ID");
+        assertColumn(TuitionFeeEntity.class, "feeMonth", "FEE_MONTH");
+        assertColumn(TuitionFeeEntity.class, "feeYear", "FEE_YEAR");
+        assertColumn(TuitionFeeEntity.class, "pricePerSession", "PRICE_PER_SESSION");
+        assertColumn(TuitionFeeEntity.class, "totalSessions", "TOTAL_SESSIONS");
+        assertColumn(TuitionFeeEntity.class, "teacherComment", "TEACHER_COMMENT");
+        assertColumn(TuitionFeeEntity.class, "footerWish", "FOOTER_WISH");
+        assertColumn(TuitionFeeEntity.class, "slipLabel", "SLIP_LABEL");
         assertColumn(PaymentTransactionEntity.class, "transactionCode", "TRANSACTION_CODE");
         assertColumn(PaymentTransactionEntity.class, "tuitionFeeId", "TUITION_FEE_ID");
+        assertColumn(BankAccountEntity.class, "accountCode", "ACCOUNT_CODE");
+        assertColumn(BankAccountEntity.class, "bankBin", "BANK_BIN");
+        assertColumn(BankAccountEntity.class, "bankName", "BANK_NAME");
+        assertColumn(BankAccountEntity.class, "accountNo", "ACCOUNT_NO");
+        assertColumn(BankAccountEntity.class, "accountName", "ACCOUNT_NAME");
+        assertColumn(BankAccountEntity.class, "isActive", "IS_ACTIVE");
         assertColumn(AttendanceEntity.class, "attendanceDate", "ATTENDANCE_DATE");
         assertColumn(AttendanceEntity.class, "recordedById", "RECORDED_BY_ID");
         assertColumn(GradeEntity.class, "gradeType", "GRADE_TYPE");
@@ -301,11 +315,18 @@ class EntityMappingConventionTest {
         assertThat(fee.getStatus()).isEqualTo("UNPAID");
         assertThat(fee.getDiscountAmount()).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(fee.getPaidAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(fee.getSlipLabel()).isEqualTo("Mặc Định");
 
         PaymentTransactionEntity transaction = new PaymentTransactionEntity();
         transaction.onCreate();
         assertThat(transaction.getStatus()).isEqualTo("PENDING");
         assertThat(transaction.getPaymentDate()).isNotNull();
+
+        BankAccountEntity bankAccount = new BankAccountEntity();
+        bankAccount.onCreate();
+        assertThat(bankAccount.getIsDeleted()).isZero();
+        assertThat(bankAccount.getIsActive()).isZero();
+        assertThat(bankAccount.getCreatedAt()).isNotNull();
 
         CodeRuleEntity rule = new CodeRuleEntity();
         rule.onCreate();
@@ -334,6 +355,7 @@ class EntityMappingConventionTest {
         assertThat(covered).containsExactlyInAnyOrder(
                 "StudentEntity", "ClassEntity", "ClassStudentEntity", "AttendanceEntity",
                 "GradeEntity", "LeadEntity", "TuitionFeeEntity", "PaymentTransactionEntity",
+                "BankAccountEntity",
                 "FileEntity", "UserEntity", "RoleEntity",
                 "MenuEntity", "FunctionEntity", "RoleMenuPermissionEntity", "CodeRuleEntity",
                 "ClassScheduleEntity", "ClassSessionEntity");

@@ -1,15 +1,20 @@
 package com.education.base.controller;
 
 import com.education.base.dto.request.GenerateQrRequest;
+import com.education.base.dto.response.BankAccountResponseDto;
+import com.education.base.service.BankAccountService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.startsWith;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -23,11 +28,23 @@ class QrPaymentControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @MockBean
+    private BankAccountService bankAccountService;
+
+    @BeforeEach
+    void stubActiveAccount() {
+        when(bankAccountService.requireActive()).thenReturn(BankAccountResponseDto.builder()
+                .bankBin("970436")
+                .bankName("Vietcombank")
+                .accountNo("1234567890")
+                .accountName("TRUONG EDUCATION")
+                .active(true)
+                .build());
+    }
+
     @Test
     void generateQr_validRequest_returnsQuickUrlPayloadAndImage() throws Exception {
         GenerateQrRequest request = new GenerateQrRequest();
-        request.setBankBin("970436");
-        request.setAccountNo("1234567890");
         request.setAccountName("NGUYEN VAN A");
         request.setAmount(150000L);
         request.setDescription("HOC PHI");
@@ -47,10 +64,24 @@ class QrPaymentControllerTest {
 
     @Test
     void generateQr_withoutAmount_returnsStaticQrWithoutAmountParam() throws Exception {
+        String body = "{}";
+
+        mockMvc.perform(post("/api/v1/payments/generate-qr")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.qrPayload").value(startsWith("000201010211")))
+                .andExpect(jsonPath("$.data.quickUrl").value(containsString("970436-1234567890-compact2.png")))
+                .andExpect(jsonPath("$.data.quickUrl").value(containsString("accountName=TRUONG")));
+    }
+
+    @Test
+    void generateQr_ignoresClientBankFields_usesActiveAccount() throws Exception {
         String body = """
                 {
-                  "bankBin": "970436",
-                  "accountNo": "1234567890"
+                  "bankBin": "970415",
+                  "accountNo": "9999999999",
+                  "amount": 150000
                 }
                 """;
 
@@ -58,35 +89,13 @@ class QrPaymentControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.qrPayload").value(startsWith("000201010211")))
-                .andExpect(jsonPath("$.data.quickUrl")
-                        .value("https://img.vietqr.io/image/970436-1234567890-compact2.png"));
-    }
-
-    @Test
-    void generateQr_missingBankBin_returnsValidationError() throws Exception {
-        String body = """
-                {
-                  "bankBin": "",
-                  "accountNo": "1234567890"
-                }
-                """;
-
-        mockMvc.perform(post("/api/v1/payments/generate-qr")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
-                .andExpect(jsonPath("$.message").value(containsString("bankBin")))
-                .andExpect(jsonPath("$.data").doesNotExist());
+                .andExpect(jsonPath("$.data.quickUrl").value(containsString("970436-1234567890")));
     }
 
     @Test
     void generateQr_nonPositiveAmount_returnsValidationError() throws Exception {
         String body = """
                 {
-                  "bankBin": "970436",
-                  "accountNo": "1234567890",
                   "amount": 0
                 }
                 """;

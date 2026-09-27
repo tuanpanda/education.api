@@ -28,6 +28,15 @@ public class DomainConstants {
     /** Trạng thái điểm danh - {@code CK_ATTENDANCE_STATUS}. */
     public static final String ATTENDANCE_STATUS_PATTERN = "PRESENT|ABSENT|LATE|EXCUSED";
 
+    /** Chỉ buổi {@code PRESENT} mới được tính vào phiếu học phí. */
+    public static final String ATTENDANCE_PRESENT = "PRESENT";
+
+    /** Nhãn mặc định trên phiếu học phí điện tử. */
+    public static final String TUITION_SLIP_LABEL_DEFAULT = "Mặc Định";
+
+    /** Lời chúc mặc định cuối phiếu học phí. */
+    public static final String TUITION_SLIP_DEFAULT_WISH = "Chúc em luôn vui vẻ và học tốt! ❤️";
+
     /** Loại điểm - {@code CK_GRADES_TYPE}. */
     public static final String GRADE_TYPE_PATTERN = "ASSIGNMENT|QUIZ|MIDTERM|FINAL";
 

@@ -78,6 +78,27 @@ public class TuitionFeeEntity {
     @Column(name = "NOTE", length = 255)
     private String note;
 
+    @Column(name = "FEE_MONTH")
+    private Integer feeMonth;
+
+    @Column(name = "FEE_YEAR")
+    private Integer feeYear;
+
+    @Column(name = "PRICE_PER_SESSION")
+    private BigDecimal pricePerSession;
+
+    @Column(name = "TOTAL_SESSIONS")
+    private Integer totalSessions;
+
+    @Column(name = "TEACHER_COMMENT", length = 1000)
+    private String teacherComment;
+
+    @Column(name = "FOOTER_WISH", length = 500)
+    private String footerWish;
+
+    @Column(name = "SLIP_LABEL", length = 50)
+    private String slipLabel;
+
     @Column(name = "IS_DELETED", nullable = false)
     private Integer isDeleted;
 
@@ -110,6 +131,9 @@ public class TuitionFeeEntity {
         }
         if (status == null || status.isBlank()) {
             status = "UNPAID";
+        }
+        if (slipLabel == null || slipLabel.isBlank()) {
+            slipLabel = "Mặc Định";
         }
         if (createdAt == null) {
             createdAt = LocalDateTime.now();

@@ -19,4 +19,7 @@ public interface TuitionFeeRepository extends JpaRepository<TuitionFeeEntity, Lo
     boolean existsByFeeCode(String feeCode);
 
     List<TuitionFeeEntity> findByStudentIdAndIsDeleted(Long studentId, Integer isDeleted);
+
+    Optional<TuitionFeeEntity> findByStudentIdAndClassIdAndFeeYearAndFeeMonthAndIsDeleted(
+            Long studentId, Long classId, Integer feeYear, Integer feeMonth, Integer isDeleted);
 }

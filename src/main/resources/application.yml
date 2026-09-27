@@ -45,10 +45,6 @@ spring:
 app:
   storage:
     base-dir: ${APP_STORAGE_DIR:./outputs}
-  payment:
-    bank-bin: ${PAYMENT_BANK_BIN:970436}
-    account-no: ${PAYMENT_ACCOUNT_NO:1234567890}
-    account-name: ${PAYMENT_ACCOUNT_NAME:TRUONG EDUCATION}
 
 springdoc:
   api-docs:

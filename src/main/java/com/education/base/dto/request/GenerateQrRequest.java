@@ -1,6 +1,5 @@
 package com.education.base.dto.request;
 
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
@@ -15,11 +14,11 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class GenerateQrRequest {
 
-    @NotBlank(message = "Mã ngân hàng (BIN) không được để trống")
+    /** Bỏ trống: dùng STK đang sử dụng trong {@code FIN_BANK_ACCOUNTS}. */
     @Size(max = 20, message = "Mã ngân hàng (BIN) không được vượt quá 20 ký tự")
     private String bankBin;
 
-    @NotBlank(message = "Số tài khoản không được để trống")
+    /** Bỏ trống: dùng STK đang sử dụng trong {@code FIN_BANK_ACCOUNTS}. */
     @Size(max = 30, message = "Số tài khoản không được vượt quá 30 ký tự")
     private String accountNo;
 

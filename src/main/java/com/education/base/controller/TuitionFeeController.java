@@ -2,19 +2,25 @@ package com.education.base.controller;
 
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.request.ConfirmPaymentRequest;
+import com.education.base.dto.request.CreateMonthlyInvoiceRequestDto;
 import com.education.base.dto.request.TuitionFeeCreateRequest;
 import com.education.base.dto.request.TuitionFeeFilterRequest;
 import com.education.base.dto.request.TuitionQrRequest;
+import com.education.base.dto.response.GenerateMonthlyInvoicesResponseDto;
 import com.education.base.dto.response.PageResponse;
 import com.education.base.dto.response.PaymentTransactionDto;
 import com.education.base.dto.response.TuitionFeeDetailResponse;
 import com.education.base.dto.response.TuitionFeeReportDto;
 import com.education.base.dto.response.TuitionQrResponseDto;
+import com.education.base.dto.response.TuitionSlipResponseDto;
 import com.education.base.service.TuitionFeeService;
+import com.education.base.service.TuitionSlipService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -23,6 +29,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import java.nio.charset.StandardCharsets;
 
 @RestController
 @RequestMapping("/api/v1/tuition-fees")
@@ -32,6 +39,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class TuitionFeeController {
 
     private final TuitionFeeService tuitionFeeService;
+    private final TuitionSlipService tuitionSlipService;
 
     @Operation(summary = "Tìm kiếm khoản học phí có phân trang")
     @GetMapping("/search")
@@ -72,5 +80,30 @@ public class TuitionFeeController {
         ConfirmPaymentRequest payload = request == null ? new ConfirmPaymentRequest() : request;
         return ApiResponse.success("Xác nhận thanh toán thành công.",
                 tuitionFeeService.confirmPayment(id, payload));
+    }
+
+    @Operation(summary = "Sinh phiếu học phí tháng theo điểm danh PRESENT",
+            description = "Đếm buổi PRESENT trong tháng, totalAmount = pricePerSession * totalSessions, tạo/cập nhật hóa đơn hàng loạt.")
+    @PostMapping("/generate-monthly")
+    public ApiResponse<GenerateMonthlyInvoicesResponseDto> generateMonthly(
+            @Valid @RequestBody CreateMonthlyInvoiceRequestDto request) {
+        return ApiResponse.success("Đã sinh phiếu học phí theo điểm danh.",
+                tuitionSlipService.generateMonthly(request));
+    }
+
+    @Operation(summary = "Dữ liệu phiếu học phí điện tử",
+            description = "Gọi PRC_GET_TUITION_SLIP_DATA và sinh VietQR (EMVCo + Base64).")
+    @GetMapping("/{invoiceId}/slip")
+    public ApiResponse<TuitionSlipResponseDto> getSlip(@PathVariable("invoiceId") Long invoiceId) {
+        return ApiResponse.success(tuitionSlipService.getSlip(invoiceId));
+    }
+
+    @Operation(summary = "HTML phiếu học phí (in ấn / gửi Zalo)",
+            description = "Trả HTML/CSS card mobile, không bọc ApiResponse.")
+    @GetMapping(value = "/{invoiceId}/slip/html", produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<String> getSlipHtml(@PathVariable("invoiceId") Long invoiceId) {
+        return ResponseEntity.ok()
+                .contentType(new MediaType(MediaType.TEXT_HTML, StandardCharsets.UTF_8))
+                .body(tuitionSlipService.generateSlipHtml(invoiceId));
     }
 }

@@ -1,8 +1,8 @@
 package com.education.base.service.impl;
 
-import com.education.base.config.PaymentProperties;
 import com.education.base.dto.request.ConfirmPaymentRequest;
 import com.education.base.dto.request.TuitionQrRequest;
+import com.education.base.dto.response.BankAccountResponseDto;
 import com.education.base.dto.response.PaymentTransactionDto;
 import com.education.base.dto.response.TuitionQrResponseDto;
 import com.education.base.entity.PaymentTransactionEntity;
@@ -15,6 +15,7 @@ import com.education.base.repository.ClassRepository;
 import com.education.base.repository.PaymentTransactionRepository;
 import com.education.base.repository.StudentRepository;
 import com.education.base.repository.TuitionFeeRepository;
+import com.education.base.service.BankAccountService;
 import com.education.base.service.FileStorageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,18 +46,16 @@ class TuitionFeeServiceImplTest {
     private ClassRepository classRepository;
     @Mock
     private FileStorageService fileStorageService;
+    @Mock
+    private BankAccountService bankAccountService;
 
     private TuitionFeeServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        PaymentProperties paymentProperties = new PaymentProperties();
-        paymentProperties.setBankBin("970436");
-        paymentProperties.setAccountNo("1234567890");
-        paymentProperties.setAccountName("TRUONG EDUCATION");
         service = new TuitionFeeServiceImpl(tuitionFeeRepository, paymentTransactionRepository,
                 studentRepository, classRepository, fileStorageService, new FileMapperImpl(),
-                new FinanceAcademicMapperImpl(), paymentProperties);
+                new FinanceAcademicMapperImpl(), bankAccountService);
     }
 
     @Test
@@ -64,6 +63,7 @@ class TuitionFeeServiceImplTest {
         when(tuitionFeeRepository.findByIdAndIsDeleted(4L, 0)).thenReturn(Optional.of(unpaidFee()));
         when(studentRepository.findById(8L)).thenReturn(Optional.of(StudentEntity.builder()
                 .id(8L).studentCode("SV01").fullName("Nguyen Van A").build()));
+        when(bankAccountService.requireActive()).thenReturn(activeAccount());
 
         TuitionQrResponseDto qr = service.createQr(4L, new TuitionQrRequest());
 
@@ -78,6 +78,7 @@ class TuitionFeeServiceImplTest {
     @Test
     void confirmPayment_updatesPaidAmountAndStatusInSameSave() {
         when(tuitionFeeRepository.findByIdAndIsDeleted(4L, 0)).thenReturn(Optional.of(unpaidFee()));
+        when(bankAccountService.requireActive()).thenReturn(activeAccount());
         when(paymentTransactionRepository.save(any(PaymentTransactionEntity.class))).thenAnswer(invocation -> {
             PaymentTransactionEntity entity = invocation.getArgument(0);
             entity.setId(33L);
@@ -111,6 +112,17 @@ class TuitionFeeServiceImplTest {
                 .isInstanceOf(OracleBusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo("FEE_ALREADY_PAID");
+    }
+
+    private BankAccountResponseDto activeAccount() {
+        return BankAccountResponseDto.builder()
+                .id(1L)
+                .bankBin("970436")
+                .bankName("Vietcombank")
+                .accountNo("1234567890")
+                .accountName("TRUONG EDUCATION")
+                .active(true)
+                .build();
     }
 
     private TuitionFeeEntity unpaidFee() {

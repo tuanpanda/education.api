@@ -7,7 +7,7 @@ import lombok.NoArgsConstructor;
 
 /**
  * Tham số tùy chọn khi sinh VietQR cho một khoản học phí.
- * Bỏ trống thì dùng tài khoản mặc định trong {@code app.payment}.
+ * Bỏ trống thì dùng số tài khoản đang sử dụng trong {@code FIN_BANK_ACCOUNTS}.
  */
 @Data
 @NoArgsConstructor

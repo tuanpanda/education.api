@@ -3,7 +3,7 @@ package com.education.base.service.impl;
 import com.education.base.common.DomainConstants;
 import com.education.base.common.PersistenceFlags;
 import com.education.base.common.VietQrHelper;
-import com.education.base.config.PaymentProperties;
+import com.education.base.dto.response.BankAccountResponseDto;
 import com.education.base.dto.request.ConfirmPaymentRequest;
 import com.education.base.dto.request.TuitionFeeCreateRequest;
 import com.education.base.dto.request.TuitionFeeFilterRequest;
@@ -25,6 +25,7 @@ import com.education.base.repository.PaymentTransactionRepository;
 import com.education.base.repository.StudentRepository;
 import com.education.base.repository.TuitionFeeRepository;
 import com.education.base.repository.spec.TuitionFeeSpecifications;
+import com.education.base.service.BankAccountService;
 import com.education.base.service.FileStorageService;
 import com.education.base.service.TuitionFeeService;
 import lombok.RequiredArgsConstructor;
@@ -56,7 +57,7 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
     private final FileStorageService fileStorageService;
     private final FileMapper fileMapper;
     private final FinanceAcademicMapper financeAcademicMapper;
-    private final PaymentProperties paymentProperties;
+    private final BankAccountService bankAccountService;
 
     @Override
     @Transactional(readOnly = true)
@@ -124,9 +125,10 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
         }
 
         TuitionQrRequest params = request == null ? new TuitionQrRequest() : request;
-        String bankBin = firstNonBlank(params.getBankBin(), paymentProperties.getBankBin());
-        String accountNo = firstNonBlank(params.getAccountNo(), paymentProperties.getAccountNo());
-        String accountName = firstNonBlank(params.getAccountName(), paymentProperties.getAccountName());
+        BankAccountResponseDto account = bankAccountService.requireActive();
+        String bankBin = account.getBankBin();
+        String accountNo = account.getAccountNo();
+        String accountName = account.getAccountName();
         StudentEntity student = studentRepository.findById(fee.getStudentId()).orElse(null);
         String description = firstNonBlank(params.getDescription(), defaultQrDescription(fee, student));
 
@@ -180,13 +182,14 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
         }
 
         String method = firstNonBlank(payload.getPaymentMethod(), "VIETQR");
+        BankAccountResponseDto account = bankAccountService.requireActive();
         PaymentTransactionEntity transaction = paymentTransactionRepository.save(PaymentTransactionEntity.builder()
                 .transactionCode(transactionCode)
                 .tuitionFeeId(fee.getId())
                 .amount(amount)
                 .paymentMethod(method.toUpperCase(Locale.ROOT))
-                .bankBin(paymentProperties.getBankBin())
-                .accountNo(paymentProperties.getAccountNo())
+                .bankBin(account.getBankBin())
+                .accountNo(account.getAccountNo())
                 .bankReferenceNo(bankRef == null || bankRef.isBlank() ? null : bankRef.trim())
                 .status("SUCCESS")
                 .note(payload.getNote())
