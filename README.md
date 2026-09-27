@@ -13,7 +13,8 @@ Moi image deu dung profile `prod`. Build tu dong khi co Pull Request (GitHub Act
 docker compose up -d
 ```
 
-Image tags: `education-api:prod`, `education-api:sha-<commit>`.
+Image: `education-api:prod` (API, cổng 8090), `education-ui:prod` (giao diện, cổng 8088).
+Mở giao diện Docker: http://localhost:8088
 
 ### CI (Pull Request + version tag)
 
