@@ -56,6 +56,22 @@ public class StudentDetailResponse {
     private String updatedBy;
 
     /**
+     * Số buổi học sinh đã có mặt ({@code PRESENT} hoặc {@code LATE}).
+     */
+    private Long attendedSessionCount;
+
+    /**
+     * Tổng số buổi đã được điểm danh (mọi trạng thái).
+     */
+    private Long attendanceMarkedCount;
+
+    /**
+     * Chi tiết từng buổi điểm danh, mới nhất trước, kèm lớp học.
+     */
+    @Builder.Default
+    private List<StudentAttendanceSessionDto> attendanceSessions = new ArrayList<>();
+
+    /**
      * Tài liệu đính kèm của học sinh (module {@code STUDENT}), rỗng nếu chưa có file nào.
      */
     @Builder.Default

@@ -8,6 +8,7 @@ import com.education.base.dto.response.FileResponseDto;
 import com.education.base.dto.response.PageResponse;
 import com.education.base.dto.response.StudentDetailResponse;
 import com.education.base.dto.response.StudentReportDto;
+import com.education.base.entity.AttendanceEntity;
 import com.education.base.entity.ClassEntity;
 import com.education.base.entity.ClassStudentEntity;
 import com.education.base.entity.FileEntity;
@@ -15,6 +16,7 @@ import com.education.base.entity.StudentEntity;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.mapper.FileMapperImpl;
 import com.education.base.mapper.StudentMapperImpl;
+import com.education.base.repository.AttendanceRepository;
 import com.education.base.repository.ClassRepository;
 import com.education.base.repository.ClassStudentRepository;
 import com.education.base.repository.StudentRepository;
@@ -30,6 +32,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -54,6 +57,9 @@ class StudentServiceImplTest {
     private ClassStudentRepository classStudentRepository;
 
     @Mock
+    private AttendanceRepository attendanceRepository;
+
+    @Mock
     private UserRepository userRepository;
 
     @Mock
@@ -67,7 +73,7 @@ class StudentServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new StudentServiceImpl(
-                studentRepository, classRepository, classStudentRepository, userRepository,
+                studentRepository, classRepository, classStudentRepository, attendanceRepository, userRepository,
                 fileStorageService, new StudentMapperImpl(), new FileMapperImpl(),
                 entityManager);
     }
@@ -192,9 +198,54 @@ class StudentServiceImplTest {
 
         assertThat(detail.getStudentCode()).isEqualTo("SV001");
         assertThat(detail.getAttachments()).hasSize(1);
+        assertThat(detail.getAttendedSessionCount()).isZero();
+        assertThat(detail.getAttendanceMarkedCount()).isZero();
+        assertThat(detail.getAttendanceSessions()).isEmpty();
         FileResponseDto attachment = detail.getAttachments().get(0);
         assertThat(attachment.getViewUrl()).isEqualTo("/api/v1/files/view/4");
         assertThat(attachment.getDownloadUrl()).isEqualTo("/api/v1/files/download/4");
+    }
+
+    @Test
+    void getDetail_includesAttendanceCounts() {
+        when(studentRepository.findByIdAndIsDeleted(1L, 0)).thenReturn(Optional.of(activeStudent(1L, "SV001")));
+        when(fileStorageService.getFilesByRef("STUDENT", 1L)).thenReturn(List.of());
+        when(attendanceRepository.findByStudentIdAndIsDeleted(1L, 0)).thenReturn(List.of(
+                AttendanceEntity.builder()
+                        .id(11L)
+                        .classId(5L)
+                        .studentId(1L)
+                        .attendanceDate(LocalDate.of(2026, 9, 21))
+                        .status("PRESENT")
+                        .build(),
+                AttendanceEntity.builder()
+                        .id(12L)
+                        .classId(5L)
+                        .studentId(1L)
+                        .attendanceDate(LocalDate.of(2026, 9, 14))
+                        .status("ABSENT")
+                        .build(),
+                AttendanceEntity.builder()
+                        .id(13L)
+                        .classId(8L)
+                        .studentId(1L)
+                        .attendanceDate(LocalDate.of(2026, 8, 10))
+                        .status("LATE")
+                        .build()));
+        when(classRepository.findByIdAndIsDeleted(5L, 0)).thenReturn(Optional.of(
+                ClassEntity.builder().id(5L).classCode("EC5").className("Lop 5").isDeleted(0).build()));
+        when(classRepository.findByIdAndIsDeleted(8L, 0)).thenReturn(Optional.of(
+                ClassEntity.builder().id(8L).classCode("EC8").className("Lop 8").isDeleted(0).build()));
+
+        StudentDetailResponse detail = service.getDetail(1L);
+
+        assertThat(detail.getAttendedSessionCount()).isEqualTo(2L);
+        assertThat(detail.getAttendanceMarkedCount()).isEqualTo(3L);
+        assertThat(detail.getAttendanceSessions()).hasSize(3);
+        assertThat(detail.getAttendanceSessions().get(0).getAttendanceDate())
+                .isEqualTo(LocalDate.of(2026, 9, 21));
+        assertThat(detail.getAttendanceSessions().get(0).getClassCode()).isEqualTo("EC5");
+        assertThat(detail.getAttendanceSessions().get(2).getClassName()).isEqualTo("Lop 8");
     }
 
     @Test

@@ -6,6 +6,7 @@ import com.education.base.dto.response.StudentReportDto;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.mapper.FileMapperImpl;
 import com.education.base.mapper.StudentMapperImpl;
+import com.education.base.repository.AttendanceRepository;
 import com.education.base.repository.ClassRepository;
 import com.education.base.repository.ClassStudentRepository;
 import com.education.base.repository.StudentRepository;
@@ -64,6 +65,9 @@ class StudentIntegrationTest {
     private ClassStudentRepository classStudentRepository;
 
     @Mock
+    private AttendanceRepository attendanceRepository;
+
+    @Mock
     private UserRepository userRepository;
 
     @Mock
@@ -83,7 +87,7 @@ class StudentIntegrationTest {
         oracleProcExecutor = new RecordingProcExecutor(jdbcCall);
         studentRepositoryCustom = new StudentRepositoryCustomImpl(oracleProcExecutor);
         studentService = new StudentServiceImpl(
-                studentRepository, classRepository, classStudentRepository, userRepository,
+                studentRepository, classRepository, classStudentRepository, attendanceRepository, userRepository,
                 fileStorageService, new StudentMapperImpl(), new FileMapperImpl(),
                 entityManager);
     }

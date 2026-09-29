@@ -31,6 +31,9 @@ public class DomainConstants {
     /** Chỉ buổi {@code PRESENT} mới được tính vào phiếu học phí. */
     public static final String ATTENDANCE_PRESENT = "PRESENT";
 
+    /** Đi trễ vẫn được tính là có mặt khi thống kê buổi học. */
+    public static final String ATTENDANCE_LATE = "LATE";
+
     /** Nhãn mặc định trên phiếu học phí điện tử. */
     public static final String TUITION_SLIP_LABEL_DEFAULT = "Mặc Định";
 

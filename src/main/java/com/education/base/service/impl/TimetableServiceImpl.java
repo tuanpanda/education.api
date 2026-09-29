@@ -1,5 +1,6 @@
 package com.education.base.service.impl;
 
+import com.education.base.common.DomainConstants;
 import com.education.base.common.PersistenceFlags;
 import com.education.base.common.TimeSlots;
 import com.education.base.common.WeekdayCodes;
@@ -15,14 +16,17 @@ import com.education.base.dto.response.TimetableDayDto;
 import com.education.base.dto.response.TimetableItemDto;
 import com.education.base.dto.response.TimetableResponse;
 import com.education.base.dto.response.TimetableWeekDto;
+import com.education.base.entity.AttendanceEntity;
 import com.education.base.entity.ClassEntity;
 import com.education.base.entity.ClassScheduleEntity;
 import com.education.base.entity.ClassSessionEntity;
 import com.education.base.entity.UserEntity;
 import com.education.base.exception.OracleBusinessException;
+import com.education.base.repository.AttendanceRepository;
 import com.education.base.repository.ClassRepository;
 import com.education.base.repository.ClassScheduleRepository;
 import com.education.base.repository.ClassSessionRepository;
+import com.education.base.repository.ClassStudentRepository;
 import com.education.base.repository.UserRepository;
 import com.education.base.service.TimetableService;
 import lombok.RequiredArgsConstructor;
@@ -53,6 +57,8 @@ public class TimetableServiceImpl implements TimetableService {
     private final ClassScheduleRepository classScheduleRepository;
     private final ClassSessionRepository classSessionRepository;
     private final UserRepository userRepository;
+    private final ClassStudentRepository classStudentRepository;
+    private final AttendanceRepository attendanceRepository;
 
     @Override
     @Transactional(readOnly = true)
@@ -170,6 +176,7 @@ public class TimetableServiceImpl implements TimetableService {
         validateDateRange(criteria.getFromDate(), criteria.getToDate());
         List<TimetableItemDto> items = classSessionRepository.findTimetableByRange(criteria);
         applyClassColors(items);
+        applyAttendanceCounts(items);
         return TimetableResponse.builder()
                 .fromDate(criteria.getFromDate())
                 .toDate(criteria.getToDate())
@@ -421,6 +428,67 @@ public class TimetableServiceImpl implements TimetableService {
             if (item.getClassId() != null) {
                 item.setCalendarColor(colors.get(item.getClassId()));
             }
+        }
+    }
+
+    private void applyAttendanceCounts(List<TimetableItemDto> items) {
+        Set<Long> classIds = new HashSet<>();
+        LocalDate from = null;
+        LocalDate to = null;
+        for (TimetableItemDto item : items) {
+            if (item.getClassId() != null) {
+                classIds.add(item.getClassId());
+            }
+            LocalDate date = item.getSessionDate();
+            if (date == null) {
+                continue;
+            }
+            if (from == null || date.isBefore(from)) {
+                from = date;
+            }
+            if (to == null || date.isAfter(to)) {
+                to = date;
+            }
+        }
+        if (classIds.isEmpty()) {
+            return;
+        }
+        Map<Long, Long> enrolled = new HashMap<>();
+        for (Long classId : classIds) {
+            enrolled.put(classId, classStudentRepository.countByClassIdAndStatusAndIsDeleted(
+                    classId, "ENROLLED", PersistenceFlags.NOT_DELETED));
+        }
+        Map<String, long[]> dayStats = new HashMap<>();
+        if (from != null && to != null) {
+            List<AttendanceEntity> rows = attendanceRepository
+                    .findByClassIdInAndAttendanceDateBetweenAndIsDeleted(
+                            classIds, from, to, PersistenceFlags.NOT_DELETED);
+            for (AttendanceEntity row : rows) {
+                if (row.getClassId() == null || row.getAttendanceDate() == null) {
+                    continue;
+                }
+                String key = row.getClassId() + "|" + row.getAttendanceDate();
+                long[] stats = dayStats.computeIfAbsent(key, ignored -> new long[2]);
+                stats[0]++;
+                if (DomainConstants.ATTENDANCE_PRESENT.equals(row.getStatus())
+                        || DomainConstants.ATTENDANCE_LATE.equals(row.getStatus())) {
+                    stats[1]++;
+                }
+            }
+        }
+        for (TimetableItemDto item : items) {
+            if (item.getClassId() == null) {
+                continue;
+            }
+            item.setEnrolledCount(enrolled.getOrDefault(item.getClassId(), 0L));
+            if (item.getSessionDate() == null) {
+                item.setAttendanceMarkedCount(0L);
+                item.setAttendedCount(0L);
+                continue;
+            }
+            long[] stats = dayStats.getOrDefault(item.getClassId() + "|" + item.getSessionDate(), new long[2]);
+            item.setAttendanceMarkedCount(stats[0]);
+            item.setAttendedCount(stats[1]);
         }
     }
 

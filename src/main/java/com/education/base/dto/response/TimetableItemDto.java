@@ -32,4 +32,13 @@ public class TimetableItemDto {
     private String status;
     private String note;
     private String calendarColor;
+
+    /** Số học sinh đang ghi danh lớp. */
+    private Long enrolledCount;
+
+    /** Số học sinh đã được điểm danh trong ngày buổi học. */
+    private Long attendanceMarkedCount;
+
+    /** Số học sinh có mặt hoặc đi trễ. */
+    private Long attendedCount;
 }

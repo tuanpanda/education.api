@@ -8,8 +8,10 @@ import com.education.base.dto.request.StudentFilterRequest;
 import com.education.base.dto.request.StudentUpdateRequest;
 import com.education.base.dto.response.FileResponseDto;
 import com.education.base.dto.response.PageResponse;
+import com.education.base.dto.response.StudentAttendanceSessionDto;
 import com.education.base.dto.response.StudentDetailResponse;
 import com.education.base.dto.response.StudentReportDto;
+import com.education.base.entity.AttendanceEntity;
 import com.education.base.entity.ClassEntity;
 import com.education.base.entity.ClassStudentEntity;
 import com.education.base.entity.FileEntity;
@@ -17,6 +19,7 @@ import com.education.base.entity.StudentEntity;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.mapper.FileMapper;
 import com.education.base.mapper.StudentMapper;
+import com.education.base.repository.AttendanceRepository;
 import com.education.base.repository.ClassRepository;
 import com.education.base.repository.ClassStudentRepository;
 import com.education.base.repository.StudentRepository;
@@ -32,7 +35,11 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Triển khai {@link StudentService} theo kiến trúc Hybrid:
@@ -57,9 +64,14 @@ public class StudentServiceImpl implements StudentService {
 
     private static final String ENROLLMENT_STATUS = "ENROLLED";
 
+    private static final List<String> ATTENDED_STATUSES = List.of(
+            DomainConstants.ATTENDANCE_PRESENT,
+            DomainConstants.ATTENDANCE_LATE);
+
     private final StudentRepository studentRepository;
     private final ClassRepository classRepository;
     private final ClassStudentRepository classStudentRepository;
+    private final AttendanceRepository attendanceRepository;
     private final UserRepository userRepository;
     private final FileStorageService fileStorageService;
     private final StudentMapper studentMapper;
@@ -106,6 +118,7 @@ public class StudentServiceImpl implements StudentService {
                 saved.getId(), saved.getStudentCode(), assignedClass == null ? null : assignedClass.getId());
         StudentDetailResponse detail = studentMapper.toDetail(saved);
         applyClass(detail, assignedClass);
+        applyAttendance(detail, saved.getId());
         return detail;
     }
 
@@ -181,7 +194,56 @@ public class StudentServiceImpl implements StudentService {
                 .map(ClassStudentEntity::getClassId)
                 .flatMap(classId -> classRepository.findByIdAndIsDeleted(classId, NOT_DELETED))
                 .ifPresent(clazz -> applyClass(detail, clazz));
+        applyAttendance(detail, entity.getId());
         return detail;
+    }
+
+    private void applyAttendance(StudentDetailResponse detail, Long studentId) {
+        if (studentId == null) {
+            detail.setAttendedSessionCount(0L);
+            detail.setAttendanceMarkedCount(0L);
+            detail.setAttendanceSessions(List.of());
+            return;
+        }
+        List<AttendanceEntity> rows = attendanceRepository.findByStudentIdAndIsDeleted(studentId, NOT_DELETED);
+        Map<Long, ClassEntity> classCache = new HashMap<>();
+        List<StudentAttendanceSessionDto> sessions = new ArrayList<>(rows.size());
+        long attended = 0;
+        for (AttendanceEntity row : rows) {
+            if (ATTENDED_STATUSES.contains(row.getStatus())) {
+                attended++;
+            }
+            ClassEntity clazz = resolveClass(classCache, row.getClassId());
+            sessions.add(StudentAttendanceSessionDto.builder()
+                    .id(row.getId())
+                    .classId(row.getClassId())
+                    .classCode(clazz == null ? null : clazz.getClassCode())
+                    .className(clazz == null ? null : clazz.getClassName())
+                    .attendanceDate(row.getAttendanceDate())
+                    .status(row.getStatus())
+                    .note(row.getNote())
+                    .build());
+        }
+        sessions.sort(Comparator
+                .comparing(StudentAttendanceSessionDto::getAttendanceDate,
+                        Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(session -> session.getClassCode() == null ? "" : session.getClassCode(),
+                        String.CASE_INSENSITIVE_ORDER));
+        detail.setAttendanceMarkedCount((long) rows.size());
+        detail.setAttendedSessionCount(attended);
+        detail.setAttendanceSessions(sessions);
+    }
+
+    private ClassEntity resolveClass(Map<Long, ClassEntity> classCache, Long classId) {
+        if (classId == null) {
+            return null;
+        }
+        if (classCache.containsKey(classId)) {
+            return classCache.get(classId);
+        }
+        ClassEntity clazz = classRepository.findByIdAndIsDeleted(classId, NOT_DELETED).orElse(null);
+        classCache.put(classId, clazz);
+        return clazz;
     }
 
     private ClassEntity requireOpenClass(Long classId) {

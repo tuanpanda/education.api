@@ -57,11 +57,15 @@ public interface StudentMapper {
     /**
      * Map thông tin cơ bản; danh sách {@code attachments} do Service nạp riêng
      * qua Standalone Procedure {@code PRC_GET_FILES_BY_REF}.
-     * Thông tin lớp ({@code classId}/{@code classCode}/{@code className}) do Service gán.
+     * Thông tin lớp ({@code classId}/{@code classCode}/{@code className}) và
+     * số buổi điểm danh do Service gán.
      */
     @Mapping(target = "attachments", ignore = true)
     @Mapping(target = "classId", ignore = true)
     @Mapping(target = "classCode", ignore = true)
     @Mapping(target = "className", ignore = true)
+    @Mapping(target = "attendedSessionCount", ignore = true)
+    @Mapping(target = "attendanceMarkedCount", ignore = true)
+    @Mapping(target = "attendanceSessions", ignore = true)
     StudentDetailResponse toDetail(StudentEntity entity);
 }

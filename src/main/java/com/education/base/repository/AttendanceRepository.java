@@ -4,6 +4,7 @@ import com.education.base.entity.AttendanceEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -26,4 +27,12 @@ public interface AttendanceRepository extends JpaRepository<AttendanceEntity, Lo
     List<AttendanceEntity> findByClassIdAndStudentIdAndIsDeleted(Long classId, Long studentId, Integer isDeleted);
 
     List<AttendanceEntity> findByStudentIdAndIsDeleted(Long studentId, Integer isDeleted);
+
+    long countByStudentIdAndIsDeleted(Long studentId, Integer isDeleted);
+
+    long countByStudentIdAndIsDeletedAndStatusIn(
+            Long studentId, Integer isDeleted, Collection<String> statuses);
+
+    List<AttendanceEntity> findByClassIdInAndAttendanceDateBetweenAndIsDeleted(
+            Collection<Long> classIds, LocalDate fromDate, LocalDate toDate, Integer isDeleted);
 }

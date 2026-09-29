@@ -9,9 +9,11 @@ import com.education.base.entity.ClassEntity;
 import com.education.base.entity.ClassScheduleEntity;
 import com.education.base.entity.ClassSessionEntity;
 import com.education.base.exception.OracleBusinessException;
+import com.education.base.repository.AttendanceRepository;
 import com.education.base.repository.ClassRepository;
 import com.education.base.repository.ClassScheduleRepository;
 import com.education.base.repository.ClassSessionRepository;
+import com.education.base.repository.ClassStudentRepository;
 import com.education.base.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,13 +46,18 @@ class TimetableServiceImplTest {
     private ClassSessionRepository classSessionRepository;
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private ClassStudentRepository classStudentRepository;
+    @Mock
+    private AttendanceRepository attendanceRepository;
 
     private TimetableServiceImpl service;
 
     @BeforeEach
     void setUp() {
         service = new TimetableServiceImpl(
-                classRepository, classScheduleRepository, classSessionRepository, userRepository);
+                classRepository, classScheduleRepository, classSessionRepository, userRepository,
+                classStudentRepository, attendanceRepository);
     }
 
     @Test
