@@ -1,5 +1,8 @@
 package com.education.base.controller;
 
+import com.education.base.support.WebMvcSecurityTestConfig;
+import com.education.base.support.WithAuthUser;
+import org.springframework.context.annotation.Import;
 import com.education.base.dto.request.ClassCreateRequest;
 import com.education.base.dto.request.ClassFilterRequest;
 import com.education.base.dto.request.EnrollStudentsRequest;
@@ -31,6 +34,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(ClassController.class)
+@Import(WebMvcSecurityTestConfig.class)
+@WithAuthUser
 class ClassControllerTest {
 
     @Autowired

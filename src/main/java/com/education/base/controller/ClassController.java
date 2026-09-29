@@ -1,5 +1,7 @@
 package com.education.base.controller;
 
+import com.education.base.security.Permissions;
+import com.education.base.security.RequirePermission;
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.request.ClassCreateRequest;
 import com.education.base.dto.request.ClassFilterRequest;
@@ -45,6 +47,7 @@ public class ClassController {
     @Operation(summary = "Tìm kiếm lớp học có phân trang",
             description = "Gọi Standalone Procedure PRC_SEARCH_CLASSES_PAGING.")
     @GetMapping("/search")
+    @RequirePermission({Permissions.CLASS_VIEW, Permissions.ATTENDANCE_VIEW, Permissions.GRADE_VIEW, Permissions.TIMETABLE_VIEW, Permissions.TUITION_FEE_VIEW})
     public ApiResponse<PageResponse<ClassReportDto>> search(@Valid @ModelAttribute ClassFilterRequest filter) {
         return ApiResponse.success(classService.search(filter));
     }
@@ -62,6 +65,7 @@ public class ClassController {
                     + "giống FN_NEXT_BIZ_CODE nhưng không tăng LAST_SEQ. "
                     + "Mã thật được trigger cấp lúc thêm lớp. Ví dụ khối 9 → LH920260001.")
     @GetMapping("/next-code")
+    @RequirePermission({Permissions.CLASS_VIEW, Permissions.CLASS_CREATE, Permissions.STUDENT_CREATE})
     public ApiResponse<NextClassCodeResponse> peekNextCode(
             @RequestParam("gradeLevel")
             @NotNull(message = "Khối lớp không được để trống")
@@ -73,6 +77,7 @@ public class ClassController {
 
     @Operation(summary = "Chi tiết lớp học")
     @GetMapping("/{id}")
+    @RequirePermission({Permissions.CLASS_VIEW, Permissions.ATTENDANCE_VIEW, Permissions.GRADE_VIEW, Permissions.TIMETABLE_VIEW})
     public ApiResponse<ClassDetailResponse> getDetail(@PathVariable("id") Long id) {
         return ApiResponse.success(classService.getDetail(id));
     }
@@ -82,12 +87,14 @@ public class ClassController {
                     + "SYS_CODE_RULES: {PREFIX}{GRADE}{YYYY}{SEQ} (ví dụ khối 9 → LH920260001). "
                     + "gradeLevel (1–12) bắt buộc khi tạo.")
     @PostMapping
+    @RequirePermission(Permissions.CLASS_CREATE)
     public ApiResponse<ClassDetailResponse> create(@Valid @RequestBody ClassCreateRequest request) {
         return ApiResponse.success("Thêm mới lớp học thành công.", classService.create(request));
     }
 
     @Operation(summary = "Cập nhật lớp học")
     @PutMapping("/{id}")
+    @RequirePermission(Permissions.CLASS_UPDATE)
     public ApiResponse<ClassDetailResponse> update(
             @PathVariable("id") Long id,
             @Valid @RequestBody ClassUpdateRequest request) {
@@ -96,6 +103,7 @@ public class ClassController {
 
     @Operation(summary = "Xóa mềm lớp học")
     @DeleteMapping("/{id}")
+    @RequirePermission(Permissions.CLASS_DELETE)
     public ApiResponse<Void> delete(@PathVariable("id") Long id) {
         classService.softDelete(id);
         return ApiResponse.success("Xóa lớp học thành công.", null);
@@ -103,6 +111,7 @@ public class ClassController {
 
     @Operation(summary = "Ghi danh học sinh vào lớp")
     @PostMapping("/{id}/enroll")
+    @RequirePermission(Permissions.CLASS_UPDATE)
     public ApiResponse<List<EnrolledStudentDto>> enroll(
             @PathVariable("id") Long id,
             @Valid @RequestBody EnrollStudentsRequest request) {
@@ -112,6 +121,7 @@ public class ClassController {
     @Operation(summary = "Xóa học sinh khỏi lớp",
             description = "Xóa mềm ghi danh. Học sinh vẫn còn trong hệ thống, chỉ rời lớp này.")
     @DeleteMapping("/{id}/students/{studentId}")
+    @RequirePermission(Permissions.CLASS_UPDATE)
     public ApiResponse<Void> unenroll(
             @PathVariable("id") Long id,
             @PathVariable("studentId") Long studentId) {

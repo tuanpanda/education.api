@@ -1,0 +1,93 @@
+package com.education.base.security;
+
+import com.education.base.config.JwtProperties;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class JwtTokenServiceTest {
+
+    private static final Instant NOW = Instant.parse("2026-09-01T00:00:00Z");
+
+    private JwtProperties properties;
+
+    @BeforeEach
+    void setUp() {
+        properties = new JwtProperties();
+        properties.setSecret("unit-test-secret-0123456789-abcdefghijklmnop");
+        properties.setIssuer("education-api-test");
+        properties.setAccessTokenTtl(Duration.ofMinutes(15));
+        properties.setRefreshTokenTtl(Duration.ofDays(7));
+    }
+
+    private JwtTokenService serviceAt(Instant instant) {
+        return new JwtTokenService(properties, Clock.fixed(instant, ZoneOffset.UTC));
+    }
+
+    @Test
+    void accessToken_roundTrip() {
+        JwtTokenService service = serviceAt(NOW);
+        String token = service.generateAccessToken(5L, "admin", 3);
+
+        JwtClaims claims = service.parse(token, TokenType.ACCESS);
+
+        assertThat(claims.userId()).isEqualTo(5L);
+        assertThat(claims.username()).isEqualTo("admin");
+        assertThat(claims.tokenVersion()).isEqualTo(3);
+        assertThat(claims.type()).isEqualTo(TokenType.ACCESS);
+        assertThat(claims.expiresAt()).isEqualTo(NOW.plus(Duration.ofMinutes(15)));
+        assertThat(service.getAccessTokenTtlSeconds()).isEqualTo(900);
+        assertThat(service.getRefreshTokenTtlSeconds()).isEqualTo(7 * 24 * 3600);
+    }
+
+    @Test
+    void refreshToken_cannotBeUsedAsAccessToken() {
+        JwtTokenService service = serviceAt(NOW);
+        String refresh = service.generateRefreshToken(5L, "admin", 0);
+
+        assertThat(service.parse(refresh, TokenType.REFRESH).type()).isEqualTo(TokenType.REFRESH);
+        assertThatThrownBy(() -> service.parse(refresh, TokenType.ACCESS))
+                .isInstanceOf(InvalidTokenException.class)
+                .extracting("errorCode").isEqualTo(InvalidTokenException.TOKEN_INVALID);
+    }
+
+    @Test
+    void expiredToken_isRejectedWithExpiredCode() {
+        String token = serviceAt(NOW).generateAccessToken(5L, "admin", 0);
+
+        JwtTokenService later = serviceAt(NOW.plus(Duration.ofMinutes(16)));
+        assertThatThrownBy(() -> later.parse(token, TokenType.ACCESS))
+                .isInstanceOf(InvalidTokenException.class)
+                .extracting("errorCode").isEqualTo(InvalidTokenException.TOKEN_EXPIRED);
+    }
+
+    @Test
+    void tokenSignedWithOtherSecret_isRejected() {
+        String token = serviceAt(NOW).generateAccessToken(5L, "admin", 0);
+
+        JwtProperties other = new JwtProperties();
+        other.setSecret("another-secret-0123456789-abcdefghijklmnopqrs");
+        other.setIssuer("education-api-test");
+        JwtTokenService otherService = new JwtTokenService(other, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThatThrownBy(() -> otherService.parse(token, TokenType.ACCESS))
+                .isInstanceOf(InvalidTokenException.class)
+                .extracting("errorCode").isEqualTo(InvalidTokenException.TOKEN_INVALID);
+    }
+
+    @Test
+    void garbageOrBlankToken_isRejected() {
+        JwtTokenService service = serviceAt(NOW);
+        assertThatThrownBy(() -> service.parse("not-a-jwt", TokenType.ACCESS))
+                .isInstanceOf(InvalidTokenException.class);
+        assertThatThrownBy(() -> service.parse(" ", TokenType.ACCESS))
+                .isInstanceOf(InvalidTokenException.class);
+    }
+}

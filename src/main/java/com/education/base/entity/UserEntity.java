@@ -57,6 +57,23 @@ public class UserEntity {
     @Column(name = "STATUS", nullable = false, length = 20)
     private String status;
 
+    /** 1 = bắt buộc đổi mật khẩu ở lần đăng nhập kế tiếp (V12). */
+    @Column(name = "MUST_CHANGE_PASSWORD", nullable = false)
+    private Integer mustChangePassword;
+
+    /**
+     * Phiên bản token (V12). Tăng lên khi đăng xuất, đổi/đặt lại mật khẩu hoặc khóa tài khoản
+     * để vô hiệu hóa mọi JWT đã phát hành.
+     */
+    @Column(name = "TOKEN_VERSION", nullable = false)
+    private Integer tokenVersion;
+
+    @Column(name = "LAST_LOGIN_AT")
+    private LocalDateTime lastLoginAt;
+
+    @Column(name = "PASSWORD_CHANGED_AT")
+    private LocalDateTime passwordChangedAt;
+
     @Column(name = "IS_DELETED", nullable = false)
     private Integer isDeleted;
 
@@ -87,6 +104,12 @@ public class UserEntity {
         }
         if (status == null || status.isBlank()) {
             status = "ACTIVE";
+        }
+        if (mustChangePassword == null) {
+            mustChangePassword = 0;
+        }
+        if (tokenVersion == null) {
+            tokenVersion = 0;
         }
         if (createdAt == null) {
             createdAt = LocalDateTime.now();

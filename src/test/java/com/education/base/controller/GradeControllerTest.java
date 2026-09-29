@@ -1,5 +1,8 @@
 package com.education.base.controller;
 
+import com.education.base.support.WebMvcSecurityTestConfig;
+import com.education.base.support.WithAuthUser;
+import org.springframework.context.annotation.Import;
 import com.education.base.dto.request.GradeBatchRequest;
 import com.education.base.dto.request.GradeUpsertRequest;
 import com.education.base.dto.response.GradeResponseDto;
@@ -22,6 +25,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(GradeController.class)
+@Import(WebMvcSecurityTestConfig.class)
+@WithAuthUser
 class GradeControllerTest {
 
     @Autowired

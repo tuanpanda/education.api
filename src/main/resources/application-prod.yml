@@ -10,6 +10,12 @@ springdoc:
   swagger-ui:
     enabled: false
 
+app:
+  security:
+    jwt:
+      # Bắt buộc cấu hình qua biến môi trường, không có giá trị mặc định ở production.
+      secret: ${JWT_SECRET}
+
 logging:
   level:
     root: INFO

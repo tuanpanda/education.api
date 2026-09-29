@@ -1,5 +1,8 @@
 package com.education.base.controller;
 
+import com.education.base.support.WebMvcSecurityTestConfig;
+import com.education.base.support.WithAuthUser;
+import org.springframework.context.annotation.Import;
 import com.education.base.dto.request.StudentCreateRequest;
 import com.education.base.dto.request.StudentFilterRequest;
 import com.education.base.dto.request.StudentUpdateRequest;
@@ -35,6 +38,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(StudentController.class)
+@Import(WebMvcSecurityTestConfig.class)
+@WithAuthUser
 class StudentControllerTest {
 
     @Autowired
@@ -224,6 +229,32 @@ class StudentControllerTest {
                 .andExpect(jsonPath("$.message").value("Xóa học sinh thành công."));
 
         verify(studentService).softDelete(5L);
+    }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_TEACHER", permissions = {"MENU_STUDENT_LIST:VIEW"})
+    void delete_withoutDeletePermission_returns403() throws Exception {
+        mockMvc.perform(delete("/api/v1/students/5"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        org.mockito.Mockito.verifyNoInteractions(studentService);
+    }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_TEACHER", permissions = {"MENU_STUDENT_LIST:VIEW", "MENU_STUDENT_LIST:DELETE"})
+    void delete_withDeletePermission_isAllowed() throws Exception {
+        mockMvc.perform(delete("/api/v1/students/5"))
+                .andExpect(status().isOk());
+
+        verify(studentService).softDelete(5L);
+    }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_ACCOUNTANT", permissions = {"MENU_TUITION_FEE:VIEW"})
+    void getDetail_requiresStudentView() throws Exception {
+        mockMvc.perform(get("/api/v1/students/5"))
+                .andExpect(status().isForbidden());
     }
 
     @Test

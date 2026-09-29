@@ -1,7 +1,9 @@
 package com.education.base.config;
 
+import com.education.base.security.PermissionInterceptor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
@@ -23,5 +25,13 @@ public class WebConfig implements WebMvcConfigurer {
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true);
+    }
+
+    /**
+     * Kiểm tra quyền menu x chức năng ({@code @RequirePermission}) cho toàn bộ API nghiệp vụ.
+     */
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(new PermissionInterceptor()).addPathPatterns("/api/**");
     }
 }

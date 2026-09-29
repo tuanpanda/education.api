@@ -20,6 +20,10 @@ services:
       DB_USERNAME: ${DB_USERNAME:-EDUCATION}
       DB_PASSWORD: ${DB_PASSWORD:-EDUCATION}
       APP_STORAGE_DIR: /app/outputs
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (>= 32 characters)}
+      JWT_ISSUER: ${JWT_ISSUER:-education-api}
+      JWT_ACCESS_TOKEN_TTL: ${JWT_ACCESS_TOKEN_TTL:-15m}
+      JWT_REFRESH_TOKEN_TTL: ${JWT_REFRESH_TOKEN_TTL:-7d}
     volumes:
       - education-outputs:/app/outputs
     extra_hosts:

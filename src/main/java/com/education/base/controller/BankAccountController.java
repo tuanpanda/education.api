@@ -1,5 +1,7 @@
 package com.education.base.controller;
 
+import com.education.base.security.Permissions;
+import com.education.base.security.RequirePermission;
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.request.BankAccountUpsertRequest;
 import com.education.base.dto.response.BankAccountResponseDto;
@@ -31,6 +33,7 @@ public class BankAccountController {
 
     @Operation(summary = "Danh sách số tài khoản")
     @GetMapping
+    @RequirePermission(Permissions.BANK_ACCOUNT_VIEW)
     public ApiResponse<List<BankAccountResponseDto>> list() {
         return ApiResponse.success(bankAccountService.list());
     }
@@ -43,18 +46,21 @@ public class BankAccountController {
 
     @Operation(summary = "Chi tiết số tài khoản")
     @GetMapping("/{id}")
+    @RequirePermission(Permissions.BANK_ACCOUNT_VIEW)
     public ApiResponse<BankAccountResponseDto> getById(@PathVariable("id") Long id) {
         return ApiResponse.success(bankAccountService.getById(id));
     }
 
     @Operation(summary = "Thêm số tài khoản")
     @PostMapping
+    @RequirePermission(Permissions.BANK_ACCOUNT_CREATE)
     public ApiResponse<BankAccountResponseDto> create(@Valid @RequestBody BankAccountUpsertRequest request) {
         return ApiResponse.success("Đã lưu số tài khoản.", bankAccountService.create(request));
     }
 
     @Operation(summary = "Cập nhật số tài khoản")
     @PutMapping("/{id}")
+    @RequirePermission(Permissions.BANK_ACCOUNT_UPDATE)
     public ApiResponse<BankAccountResponseDto> update(
             @PathVariable("id") Long id,
             @Valid @RequestBody BankAccountUpsertRequest request) {
@@ -63,12 +69,14 @@ public class BankAccountController {
 
     @Operation(summary = "Đặt làm STK đang sử dụng (các STK khác sẽ tắt)")
     @PostMapping("/{id}/activate")
+    @RequirePermission(Permissions.BANK_ACCOUNT_UPDATE)
     public ApiResponse<BankAccountResponseDto> activate(@PathVariable("id") Long id) {
         return ApiResponse.success("Đã chuyển STK đang sử dụng.", bankAccountService.activate(id));
     }
 
     @Operation(summary = "Xóa mềm số tài khoản (không xóa được STK đang dùng)")
     @DeleteMapping("/{id}")
+    @RequirePermission(Permissions.BANK_ACCOUNT_DELETE)
     public ApiResponse<Void> delete(@PathVariable("id") Long id) {
         bankAccountService.softDelete(id);
         return ApiResponse.success("Đã xóa số tài khoản.", null);

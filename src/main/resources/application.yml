@@ -45,6 +45,13 @@ spring:
 app:
   storage:
     base-dir: ${APP_STORAGE_DIR:./outputs}
+  security:
+    jwt:
+      # Chỉ dùng cho môi trường dev. Profile prod bắt buộc truyền JWT_SECRET (>= 32 ký tự).
+      secret: ${JWT_SECRET:dev-only-education-jwt-secret-change-me-0123456789}
+      issuer: ${JWT_ISSUER:education-api}
+      access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:15m}
+      refresh-token-ttl: ${JWT_REFRESH_TOKEN_TTL:7d}
 
 springdoc:
   api-docs:

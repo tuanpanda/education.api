@@ -1,5 +1,7 @@
 package com.education.base.controller;
 
+import com.education.base.security.Permissions;
+import com.education.base.security.RequirePermission;
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.request.StudentCreateRequest;
 import com.education.base.dto.request.StudentFilterRequest;
@@ -45,6 +47,7 @@ public class StudentController {
             description = "Gọi Standalone Procedure PRC_SEARCH_STUDENTS_PAGING, lọc theo từ khóa "
                     + "(mã học sinh/họ tên/email) và trạng thái. Chỉ trả về học sinh chưa bị xóa mềm.")
     @GetMapping("/search")
+    @RequirePermission({Permissions.STUDENT_VIEW, Permissions.TUITION_FEE_VIEW, Permissions.CLASS_VIEW})
     public ApiResponse<PageResponse<StudentReportDto>> search(
             @Valid @ModelAttribute StudentFilterRequest filter) {
 
@@ -55,6 +58,7 @@ public class StudentController {
             description = "Trả về thông tin học sinh kèm danh sách tài liệu đính kèm "
                     + "(hồ sơ, bảng điểm) lấy qua Procedure PRC_GET_FILES_BY_REF.")
     @GetMapping("/{id:\\d+}")
+    @RequirePermission(Permissions.STUDENT_VIEW)
     public ApiResponse<StudentDetailResponse> getDetail(@PathVariable("id") Long id) {
         return ApiResponse.success(studentService.getDetail(id));
     }
@@ -68,6 +72,7 @@ public class StudentController {
                     + "Không được gửi đồng thời classId và newClass. "
                     + "ID do sequence/trigger. Mã học sinh do FN_NEXT_BIZ_CODE theo SYS_CODE_RULES.")
     @PostMapping
+    @RequirePermission(Permissions.STUDENT_CREATE)
     public ApiResponse<StudentDetailResponse> create(@Valid @RequestBody StudentCreateRequest request) {
         return ApiResponse.success("Thêm mới học sinh thành công.", studentService.create(request));
     }
@@ -76,6 +81,7 @@ public class StudentController {
             description = "Cập nhật hồ sơ. Gửi classId để ghi danh vào lớp đang mở (bỏ qua nếu đã thuộc lớp đó). "
                     + "Mã học sinh là bất biến sau khi tạo.")
     @PutMapping("/{id:\\d+}")
+    @RequirePermission(Permissions.STUDENT_UPDATE)
     public ApiResponse<StudentDetailResponse> update(
             @PathVariable("id") Long id,
             @Valid @RequestBody StudentUpdateRequest request) {
@@ -86,6 +92,7 @@ public class StudentController {
     @Operation(summary = "Xóa mềm học sinh",
             description = "Đặt IS_DELETED = 1, dữ liệu vẫn được giữ lại trong Database để đối soát.")
     @DeleteMapping("/{id:\\d+}")
+    @RequirePermission(Permissions.STUDENT_DELETE)
     public ApiResponse<Void> delete(@PathVariable("id") Long id) {
         studentService.softDelete(id);
         return ApiResponse.success("Xóa học sinh thành công.", null);
@@ -94,6 +101,7 @@ public class StudentController {
     @Operation(summary = "Tải tài liệu hồ sơ đính kèm",
             description = "Lưu file vật lý vào outputs/STUDENT/{YYYY}/{MM}/, Database chỉ lưu đường dẫn tương đối.")
     @PostMapping(value = "/{id:\\d+}/upload-document", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @RequirePermission({Permissions.STUDENT_CREATE, Permissions.STUDENT_UPDATE})
     public ApiResponse<FileResponseDto> uploadDocument(
             @PathVariable("id") Long id,
             @RequestParam("file") MultipartFile file) {
