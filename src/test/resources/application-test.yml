@@ -11,3 +11,9 @@ spring:
 app:
   storage:
     base-dir: ${java.io.tmpdir}/education-test-outputs
+  security:
+    jwt:
+      secret: test-only-education-jwt-secret-0123456789abcdef
+      issuer: education-api-test
+      access-token-ttl: 15m
+      refresh-token-ttl: 7d

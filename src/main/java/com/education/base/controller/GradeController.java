@@ -1,5 +1,7 @@
 package com.education.base.controller;
 
+import com.education.base.security.Permissions;
+import com.education.base.security.RequirePermission;
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.request.GradeBatchRequest;
 import com.education.base.dto.response.GradeResponseDto;
@@ -32,12 +34,14 @@ public class GradeController {
     @Operation(summary = "Nhập điểm hàng loạt",
             description = "Upsert theo (lớp, học sinh, loại điểm) trong một transaction.")
     @PostMapping("/batch")
+    @RequirePermission({Permissions.GRADE_CREATE, Permissions.GRADE_UPDATE})
     public ApiResponse<List<GradeResponseDto>> upsertBatch(@Valid @RequestBody GradeBatchRequest request) {
         return ApiResponse.success("Nhập điểm thành công.", gradeService.upsertBatch(request));
     }
 
     @Operation(summary = "Danh sách đầu điểm")
     @GetMapping
+    @RequirePermission(Permissions.GRADE_VIEW)
     public ApiResponse<List<GradeResponseDto>> list(
             @RequestParam(value = "classId", required = false) Long classId,
             @RequestParam(value = "studentId", required = false) Long studentId) {
@@ -46,6 +50,7 @@ public class GradeController {
 
     @Operation(summary = "Bảng điểm tổng hợp của học sinh trong lớp")
     @GetMapping("/summary")
+    @RequirePermission({Permissions.GRADE_VIEW, Permissions.STUDENT_VIEW})
     public ApiResponse<StudentGradeSummaryDto> summarize(
             @RequestParam("classId") @NotNull(message = "ID lớp học không được để trống") Long classId,
             @RequestParam("studentId") @NotNull(message = "ID học sinh không được để trống") Long studentId) {

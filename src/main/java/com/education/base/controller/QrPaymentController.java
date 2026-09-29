@@ -1,5 +1,7 @@
 package com.education.base.controller;
 
+import com.education.base.security.Permissions;
+import com.education.base.security.RequirePermission;
 import com.education.base.common.ApiResponse;
 import com.education.base.common.VietQrHelper;
 import com.education.base.dto.request.GenerateQrRequest;
@@ -27,6 +29,7 @@ public class QrPaymentController {
     private final BankAccountService bankAccountService;
 
     @PostMapping("/generate-qr")
+    @RequirePermission(Permissions.TUITION_PAYMENT_GEN_QR)
     public ApiResponse<QrPaymentResponseDto> generateQr(@Valid @RequestBody GenerateQrRequest request) {
         BankAccountResponseDto account = bankAccountService.requireActive();
         GenerateQrRequest params = request == null ? new GenerateQrRequest() : request;

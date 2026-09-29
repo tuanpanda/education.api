@@ -3,6 +3,7 @@ package com.education.base.repository;
 import com.education.base.entity.RoleMenuPermissionEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -14,4 +15,8 @@ public interface RoleMenuPermissionRepository extends JpaRepository<RoleMenuPerm
     Optional<RoleMenuPermissionEntity> findByRoleIdAndMenuId(Long roleId, Long menuId);
 
     List<RoleMenuPermissionEntity> findByRoleId(Long roleId);
+
+    List<RoleMenuPermissionEntity> findByRoleIdIn(Collection<Long> roleIds);
+
+    List<RoleMenuPermissionEntity> findByMenuId(Long menuId);
 }

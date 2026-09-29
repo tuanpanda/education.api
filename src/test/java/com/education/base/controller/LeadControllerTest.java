@@ -1,5 +1,8 @@
 package com.education.base.controller;
 
+import com.education.base.support.WebMvcSecurityTestConfig;
+import com.education.base.support.WithAuthUser;
+import org.springframework.context.annotation.Import;
 import com.education.base.dto.request.LeadConvertRequest;
 import com.education.base.dto.response.StudentDetailResponse;
 import com.education.base.service.LeadService;
@@ -19,6 +22,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(LeadController.class)
+@Import(WebMvcSecurityTestConfig.class)
+@WithAuthUser
 class LeadControllerTest {
 
     @Autowired

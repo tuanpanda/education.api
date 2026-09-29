@@ -1,5 +1,8 @@
 package com.education.base.controller;
 
+import com.education.base.support.WebMvcSecurityTestConfig;
+import com.education.base.support.WithAuthUser;
+import org.springframework.context.annotation.Import;
 import com.education.base.dto.request.DashboardFilterRequest;
 import com.education.base.dto.response.DashboardMetricsResponse;
 import com.education.base.service.ReportService;
@@ -19,6 +22,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(ReportController.class)
+@Import(WebMvcSecurityTestConfig.class)
+@WithAuthUser
 class ReportControllerTest {
 
     @Autowired

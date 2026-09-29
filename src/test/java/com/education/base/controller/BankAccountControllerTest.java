@@ -1,5 +1,8 @@
 package com.education.base.controller;
 
+import com.education.base.support.WebMvcSecurityTestConfig;
+import com.education.base.support.WithAuthUser;
+import org.springframework.context.annotation.Import;
 import com.education.base.dto.response.BankAccountResponseDto;
 import com.education.base.service.BankAccountService;
 import org.junit.jupiter.api.Test;
@@ -20,6 +23,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(BankAccountController.class)
+@Import(WebMvcSecurityTestConfig.class)
+@WithAuthUser
 class BankAccountControllerTest {
 
     @Autowired

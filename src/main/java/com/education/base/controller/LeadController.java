@@ -1,5 +1,7 @@
 package com.education.base.controller;
 
+import com.education.base.security.Permissions;
+import com.education.base.security.RequirePermission;
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.request.LeadConvertRequest;
 import com.education.base.dto.request.LeadCreateRequest;
@@ -36,24 +38,28 @@ public class LeadController {
 
     @Operation(summary = "Tìm kiếm lead có phân trang")
     @GetMapping("/search")
+    @RequirePermission(Permissions.LEAD_VIEW)
     public ApiResponse<PageResponse<LeadReportDto>> search(@Valid @ModelAttribute LeadFilterRequest filter) {
         return ApiResponse.success(leadService.search(filter));
     }
 
     @Operation(summary = "Chi tiết lead")
     @GetMapping("/{id}")
+    @RequirePermission(Permissions.LEAD_VIEW)
     public ApiResponse<LeadDetailResponse> getDetail(@PathVariable("id") Long id) {
         return ApiResponse.success(leadService.getDetail(id));
     }
 
     @Operation(summary = "Thêm mới lead")
     @PostMapping
+    @RequirePermission(Permissions.LEAD_CREATE)
     public ApiResponse<LeadDetailResponse> create(@Valid @RequestBody LeadCreateRequest request) {
         return ApiResponse.success("Thêm mới lead thành công.", leadService.create(request));
     }
 
     @Operation(summary = "Cập nhật lead")
     @PutMapping("/{id}")
+    @RequirePermission(Permissions.LEAD_UPDATE)
     public ApiResponse<LeadDetailResponse> update(
             @PathVariable("id") Long id,
             @Valid @RequestBody LeadUpdateRequest request) {
@@ -62,6 +68,7 @@ public class LeadController {
 
     @Operation(summary = "Xóa mềm lead")
     @DeleteMapping("/{id}")
+    @RequirePermission(Permissions.LEAD_DELETE)
     public ApiResponse<Void> delete(@PathVariable("id") Long id) {
         leadService.softDelete(id);
         return ApiResponse.success("Xóa lead thành công.", null);
@@ -70,6 +77,7 @@ public class LeadController {
     @Operation(summary = "Chuyển lead thành học sinh",
             description = "Tạo EDU_STUDENTS, gán CONVERTED_STUDENT_ID và đặt trạng thái CONVERTED trong cùng transaction.")
     @PostMapping("/{id}/convert")
+    @RequirePermission(Permissions.LEAD_CONVERT)
     public ApiResponse<StudentDetailResponse> convert(
             @PathVariable("id") Long id,
             @Valid @RequestBody LeadConvertRequest request) {

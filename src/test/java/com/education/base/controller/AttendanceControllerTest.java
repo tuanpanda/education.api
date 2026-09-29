@@ -1,5 +1,8 @@
 package com.education.base.controller;
 
+import com.education.base.support.WebMvcSecurityTestConfig;
+import com.education.base.support.WithAuthUser;
+import org.springframework.context.annotation.Import;
 import com.education.base.dto.request.AttendanceMarkRequest;
 import com.education.base.dto.response.AttendanceResponseDto;
 import com.education.base.service.AttendanceService;
@@ -21,6 +24,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(AttendanceController.class)
+@Import(WebMvcSecurityTestConfig.class)
+@WithAuthUser
 class AttendanceControllerTest {
 
     @Autowired

@@ -81,6 +81,41 @@ public class DomainConstants {
         return Integer.valueOf(0).equals(isDeleted) && STUDENT_STATUS_ACTIVE.equals(status);
     }
 
+    /** Trạng thái tài khoản - {@code SYS_USERS.STATUS} ({@code CK_USERS_STATUS}, V12). */
+    public static final String USER_STATUS_PATTERN = "ACTIVE|INACTIVE|LOCKED";
+
+    public static final String USER_STATUS_ACTIVE = "ACTIVE";
+
+    public static final String USER_STATUS_INACTIVE = "INACTIVE";
+
+    public static final String USER_STATUS_LOCKED = "LOCKED";
+
+    /** Trạng thái vai trò / menu - {@code SYS_ROLES.STATUS}, {@code SYS_MENUS.STATUS}. */
+    public static final String RECORD_STATUS_ACTIVE = "ACTIVE";
+
+    public static final String RECORD_STATUS_INACTIVE = "INACTIVE";
+
+    /**
+     * Chính sách mật khẩu: 8-100 ký tự, có ít nhất một chữ cái và một chữ số.
+     */
+    public static final String PASSWORD_PATTERN = "^(?=.*[A-Za-z])(?=.*\\d).{8,100}$";
+
+    public static final String PASSWORD_POLICY_MESSAGE =
+            "Mật khẩu phải từ 8 đến 100 ký tự và có cả chữ lẫn số";
+
+    /** Tên đăng nhập: 3-50 ký tự chữ, số, dấu chấm, gạch dưới, gạch ngang. */
+    public static final String USERNAME_PATTERN = "^[A-Za-z0-9._-]{3,50}$";
+
+    /** Mã vai trò / mã menu / mã chức năng: chữ IN HOA, số, gạch dưới. */
+    public static final String SYSTEM_CODE_PATTERN = "^[A-Z][A-Z0-9_]{1,49}$";
+
+    /** Loại menu - {@code CK_MENUS_TYPE}. */
+    public static final String MENU_TYPE_PATTERN = "DIR|MENU";
+
+    public static final String MENU_TYPE_DIR = "DIR";
+
+    public static final String MENU_TYPE_MENU = "MENU";
+
     /** Tên module dùng khi lưu file đính kèm theo từng phân hệ. */
     @UtilityClass
     public static class Module {

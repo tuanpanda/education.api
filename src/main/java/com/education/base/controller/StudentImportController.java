@@ -1,5 +1,7 @@
 package com.education.base.controller;
 
+import com.education.base.security.Permissions;
+import com.education.base.security.RequirePermission;
 import com.education.base.common.ApiResponse;
 import com.education.base.common.excel.StudentExcelHelper;
 import com.education.base.dto.response.StudentImportResultResponse;
@@ -37,6 +39,7 @@ public class StudentImportController {
             description = "File .xlsx gồm sheet DanhSach (header nổi bật, dropdown Trạng thái, 2 dòng mẫu) "
                     + "và sheet HuongDan.")
     @GetMapping("/import-template")
+    @RequirePermission(Permissions.STUDENT_IMPORT)
     public ResponseEntity<Resource> downloadTemplate() {
         byte[] content = studentImportService.generateTemplate();
         ByteArrayResource resource = new ByteArrayResource(content);
@@ -54,6 +57,7 @@ public class StudentImportController {
             description = "Chỉ nhận .xlsx. Lưu các dòng hợp lệ; dòng lỗi được trả về chi tiết "
                     + "(số dòng, cột, lý do). File gốc lưu tại outputs/STUDENT/IMPORT/{YYYY}/{MM}/.")
     @PostMapping(value = "/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @RequirePermission(Permissions.STUDENT_IMPORT)
     public ApiResponse<StudentImportResultResponse> importStudents(
             @RequestParam("file") MultipartFile file) {
         StudentImportResultResponse result = studentImportService.importStudents(file);

@@ -2,34 +2,45 @@ package com.education.base.controller;
 
 import com.education.base.dto.response.MenuItemResponseDto;
 import com.education.base.dto.response.UserNavigationResponseDto;
-import com.education.base.repository.MenuRepository;
+import com.education.base.security.AuthUserPrincipal;
+import com.education.base.service.AccessControlService;
+import com.education.base.support.WebMvcSecurityTestConfig;
+import com.education.base.support.WithAuthUser;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(MenuController.class)
+@Import(WebMvcSecurityTestConfig.class)
 class MenuControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
 
     @MockBean
-    private MenuRepository menuRepository;
+    private AccessControlService accessControlService;
 
     @Test
-    void getUserNavigation_returnsMenuTreeAndFlatPermissions() throws Exception {
+    @WithAuthUser(id = 7L, username = "teacher1", roles = "ROLE_TEACHER",
+            permissions = {"MENU_STUDENT_LIST:VIEW", "MENU_STUDENT_LIST:EXPORT"})
+    void getUserNavigation_usesUserFromToken() throws Exception {
         MenuItemResponseDto child = MenuItemResponseDto.builder()
                 .id(101L)
                 .parentId(100L)
@@ -53,12 +64,12 @@ class MenuControllerTest {
                 .children(new ArrayList<>(List.of(child)))
                 .build();
 
-        when(menuRepository.getUserNavigation(1L)).thenReturn(UserNavigationResponseDto.builder()
+        when(accessControlService.getNavigation(any(AuthUserPrincipal.class))).thenReturn(UserNavigationResponseDto.builder()
                 .menus(List.of(root))
                 .permissions(new LinkedHashSet<>(List.of("MENU_STUDENT_LIST:VIEW", "MENU_STUDENT_LIST:EXPORT")))
                 .build());
 
-        mockMvc.perform(get("/api/v1/menus/user-navigation").param("userId", "1"))
+        mockMvc.perform(get("/api/v1/menus/user-navigation"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("00"))
                 .andExpect(jsonPath("$.data.menus[0].menuCode").value("DIR_ACADEMIC"))
@@ -69,21 +80,29 @@ class MenuControllerTest {
                 .andExpect(jsonPath("$.data.permissions").isArray())
                 .andExpect(jsonPath("$.data.permissions[0]").value("MENU_STUDENT_LIST:VIEW"));
 
-        verify(menuRepository).getUserNavigation(1L);
+        ArgumentCaptor<AuthUserPrincipal> captor = ArgumentCaptor.forClass(AuthUserPrincipal.class);
+        verify(accessControlService).getNavigation(captor.capture());
+        assertThat(captor.getValue().getId()).isEqualTo(7L);
+        assertThat(captor.getValue().getUsername()).isEqualTo("teacher1");
     }
 
     @Test
-    void getUserNavigation_missingUserId_returnsValidationError() throws Exception {
+    @WithAuthUser(roles = "ROLE_TEACHER", mustChangePassword = true)
+    void getUserNavigation_allowedWhilePasswordChangePending() throws Exception {
+        when(accessControlService.getNavigation(any(AuthUserPrincipal.class))).thenReturn(
+                UserNavigationResponseDto.builder().menus(List.of()).permissions(new LinkedHashSet<>()).build());
+
         mockMvc.perform(get("/api/v1/menus/user-navigation"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
-                .andExpect(jsonPath("$.message").value("Thiếu tham số bắt buộc: userId"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("00"));
     }
 
     @Test
-    void getUserNavigation_nonNumericUserId_returnsValidationError() throws Exception {
-        mockMvc.perform(get("/api/v1/menus/user-navigation").param("userId", "abc"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+    void getUserNavigation_withoutToken_returns401() throws Exception {
+        mockMvc.perform(get("/api/v1/menus/user-navigation"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+
+        verifyNoInteractions(accessControlService);
     }
 }

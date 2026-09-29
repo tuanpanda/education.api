@@ -1,5 +1,7 @@
 package com.education.base.controller;
 
+import com.education.base.support.WebMvcSecurityTestConfig;
+import com.education.base.support.WithAuthUser;
 import com.education.base.entity.FileEntity;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.mapper.FileMapperImpl;
@@ -27,7 +29,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(FileController.class)
-@Import(FileMapperImpl.class)
+@Import({WebMvcSecurityTestConfig.class, FileMapperImpl.class})
+@WithAuthUser
 class FileControllerTest {
 
     @Autowired

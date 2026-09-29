@@ -1,5 +1,7 @@
 package com.education.base.controller;
 
+import com.education.base.security.Permissions;
+import com.education.base.security.RequirePermission;
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.request.DashboardFilterRequest;
 import com.education.base.dto.response.DashboardMetricsResponse;
@@ -26,6 +28,7 @@ public class ReportController {
     @Operation(summary = "Chỉ số dashboard",
             description = "Bỏ trống khoảng ngày thì procedure lấy 12 tháng gần nhất.")
     @GetMapping("/dashboard")
+    @RequirePermission(Permissions.DASHBOARD_VIEW)
     public ApiResponse<DashboardMetricsResponse> dashboard(@Valid @ModelAttribute DashboardFilterRequest filter) {
         return ApiResponse.success(reportService.getDashboardMetrics(filter));
     }

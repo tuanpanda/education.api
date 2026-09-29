@@ -2,15 +2,14 @@ package com.education.base.controller;
 
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.response.UserNavigationResponseDto;
-import com.education.base.repository.MenuRepository;
+import com.education.base.security.AllowPendingPasswordChange;
+import com.education.base.security.SecurityUtils;
+import com.education.base.service.AccessControlService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -19,18 +18,16 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/menus")
 @RequiredArgsConstructor
-@Validated
-@Tag(name = "Menu & Quyền", description = "Cây navigation sidebar theo userId")
+@Tag(name = "Menu & Quyền", description = "Cây navigation sidebar của người dùng đang đăng nhập")
 public class MenuController {
 
-    private final MenuRepository menuRepository;
+    private final AccessControlService accessControlService;
 
-    @Operation(summary = "Cây menu sidebar theo người dùng",
-            description = "Gọi PRC_GET_USER_SIDEBAR_MENU, gom menu phẳng thành cây theo parentId.")
+    @Operation(summary = "Cây menu sidebar của người dùng đang đăng nhập",
+            description = "Người dùng lấy từ access token; chỉ trả menu có quyền VIEW (kèm menu cha) và danh sách quyền phẳng.")
     @GetMapping("/user-navigation")
-    public ApiResponse<UserNavigationResponseDto> getUserNavigation(
-            @RequestParam("userId") @NotNull(message = "userId không được để trống") Long userId) {
-
-        return ApiResponse.success(menuRepository.getUserNavigation(userId));
+    @AllowPendingPasswordChange
+    public ApiResponse<UserNavigationResponseDto> getUserNavigation() {
+        return ApiResponse.success(accessControlService.getNavigation(SecurityUtils.requireCurrentUser()));
     }
 }

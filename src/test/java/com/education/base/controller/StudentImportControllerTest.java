@@ -1,5 +1,8 @@
 package com.education.base.controller;
 
+import com.education.base.support.WebMvcSecurityTestConfig;
+import com.education.base.support.WithAuthUser;
+import org.springframework.context.annotation.Import;
 import com.education.base.common.excel.StudentExcelHelper;
 import com.education.base.dto.response.ImportRowErrorDto;
 import com.education.base.dto.response.StudentImportResultResponse;
@@ -25,6 +28,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(StudentImportController.class)
+@Import(WebMvcSecurityTestConfig.class)
+@WithAuthUser
 class StudentImportControllerTest {
 
     @Autowired

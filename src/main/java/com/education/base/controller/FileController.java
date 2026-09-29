@@ -1,5 +1,7 @@
 package com.education.base.controller;
 
+import com.education.base.security.Permissions;
+import com.education.base.security.RequirePermission;
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.response.FileResponseDto;
 import com.education.base.entity.FileEntity;
@@ -39,6 +41,7 @@ public class FileController {
     @Operation(summary = "Upload file",
             description = "Lưu vật lý vào {baseDir}/{MODULE}/{YYYY}/{MM}/{UUID}_{name}, Database chỉ lưu đường dẫn tương đối.")
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @RequirePermission({Permissions.FILE_UPLOAD, Permissions.STUDENT_CREATE, Permissions.STUDENT_UPDATE})
     public ApiResponse<FileResponseDto> upload(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "moduleName", required = false, defaultValue = "COMMON") String moduleName,
@@ -50,6 +53,7 @@ public class FileController {
 
     @Operation(summary = "Xem file trực tiếp", description = "Content-Disposition: inline")
     @GetMapping("/view/{id}")
+    @RequirePermission({Permissions.FILE_VIEW, Permissions.STUDENT_VIEW})
     public ResponseEntity<Resource> viewFile(@PathVariable("id") Long id) {
         FileEntity entity = fileStorageService.getFileEntity(id);
         Resource resource = fileStorageService.loadFileAsResource(id);
@@ -65,6 +69,7 @@ public class FileController {
 
     @Operation(summary = "Tải file về máy", description = "Content-Disposition: attachment")
     @GetMapping("/download/{id}")
+    @RequirePermission({Permissions.FILE_DOWNLOAD, Permissions.STUDENT_VIEW})
     public ResponseEntity<Resource> downloadFile(@PathVariable("id") Long id) {
         FileEntity entity = fileStorageService.getFileEntity(id);
         Resource resource = fileStorageService.loadFileAsResource(id);
@@ -86,6 +91,7 @@ public class FileController {
     @Operation(summary = "Danh sách file theo nghiệp vụ",
             description = "Gọi procedure PRC_GET_FILES_BY_REF.")
     @GetMapping("/by-ref")
+    @RequirePermission({Permissions.FILE_VIEW, Permissions.STUDENT_VIEW})
     public ApiResponse<List<FileResponseDto>> getByRef(
             @RequestParam("moduleName") String moduleName,
             @RequestParam("referenceId") Long referenceId) {

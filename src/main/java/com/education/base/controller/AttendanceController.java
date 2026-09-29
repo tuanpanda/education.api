@@ -1,5 +1,7 @@
 package com.education.base.controller;
 
+import com.education.base.security.Permissions;
+import com.education.base.security.RequirePermission;
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.request.AttendanceFilterRequest;
 import com.education.base.dto.request.AttendanceMarkRequest;
@@ -31,12 +33,14 @@ public class AttendanceController {
     @Operation(summary = "Điểm danh hàng loạt",
             description = "Ghi nhận điểm danh cả lớp trong một transaction, upsert theo (lớp, học sinh, ngày).")
     @PostMapping("/batch")
+    @RequirePermission({Permissions.ATTENDANCE_CREATE, Permissions.ATTENDANCE_UPDATE})
     public ApiResponse<List<AttendanceResponseDto>> markBatch(@Valid @RequestBody AttendanceMarkRequest request) {
         return ApiResponse.success("Lưu điểm danh thành công.", attendanceService.markBatch(request));
     }
 
     @Operation(summary = "Tra cứu điểm danh")
     @GetMapping
+    @RequirePermission({Permissions.ATTENDANCE_VIEW, Permissions.TIMETABLE_VIEW})
     public ApiResponse<List<AttendanceResponseDto>> search(@Valid @ModelAttribute AttendanceFilterRequest filter) {
         return ApiResponse.success(attendanceService.search(filter));
     }

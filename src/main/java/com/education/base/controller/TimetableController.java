@@ -1,5 +1,7 @@
 package com.education.base.controller;
 
+import com.education.base.security.Permissions;
+import com.education.base.security.RequirePermission;
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.request.CancelSessionRequest;
 import com.education.base.dto.request.GenerateSessionsRequest;
@@ -40,6 +42,7 @@ public class TimetableController {
     @Operation(summary = "Xem khung lịch tuần của lớp",
             description = "Trả về các slot ACTIVE (thứ 2–8, giờ HH:mm).")
     @GetMapping("/classes/{classId}/schedules")
+    @RequirePermission({Permissions.TIMETABLE_VIEW, Permissions.CLASS_VIEW})
     public ApiResponse<List<ClassScheduleResponse>> getSchedules(@PathVariable("classId") Long classId) {
         return ApiResponse.success(timetableService.getClassSchedules(classId));
     }
@@ -48,6 +51,7 @@ public class TimetableController {
             description = "Xóa mềm lịch ACTIVE cũ rồi ghi slot mới trong một transaction. "
                     + "Chặn chồng giờ trong cùng lớp, trùng phòng hoặc trùng giáo viên với lớp khác.")
     @PutMapping("/classes/{classId}/schedules")
+    @RequirePermission(Permissions.TIMETABLE_CONFIG_SCHEDULE)
     public ApiResponse<List<ClassScheduleResponse>> saveSchedules(
             @PathVariable("classId") Long classId,
             @Valid @RequestBody SaveClassScheduleRequest request) {
@@ -59,6 +63,7 @@ public class TimetableController {
             description = "Duyệt từng ngày trong khoảng, khớp DAY_OF_WEEK (2–8 ↔ Java DayOfWeek). "
                     + "Bỏ qua buổi đã tồn tại (class + schedule + ngày). Rollback nếu trùng phòng/GV.")
     @PostMapping("/classes/{classId}/sessions/generate")
+    @RequirePermission(Permissions.TIMETABLE_GENERATE_SESSIONS)
     public ApiResponse<GenerateSessionsResponse> generateSessions(
             @PathVariable("classId") Long classId,
             @Valid @RequestBody GenerateSessionsRequest request) {
@@ -69,6 +74,7 @@ public class TimetableController {
     @Operation(summary = "Tra cứu thời khóa biểu",
             description = "Gọi PRC_GET_TIMETABLE_BY_RANGE. Trả danh sách phẳng và nhóm theo tuần.")
     @GetMapping("/timetable")
+    @RequirePermission(Permissions.TIMETABLE_VIEW)
     public ApiResponse<TimetableResponse> getTimetable(@Valid @ModelAttribute TimetableFilterRequest filter) {
         return ApiResponse.success(timetableService.getTimetable(filter));
     }
@@ -76,6 +82,7 @@ public class TimetableController {
     @Operation(summary = "Cập nhật buổi học SCHEDULED",
             description = "Đổi ngày, giờ, phòng, giáo viên hoặc chủ đề. Kiểm tra xung đột trước khi lưu.")
     @PutMapping("/sessions/{id}")
+    @RequirePermission(Permissions.TIMETABLE_CONFIG_SCHEDULE)
     public ApiResponse<TimetableItemDto> updateSession(
             @PathVariable("id") Long id,
             @Valid @RequestBody UpdateSessionRequest request) {
@@ -86,6 +93,7 @@ public class TimetableController {
     @Operation(summary = "Hủy buổi học",
             description = "Chỉ hủy trạng thái SCHEDULED. Lý do bắt buộc, lưu vào NOTE.")
     @PostMapping("/sessions/{id}/cancel")
+    @RequirePermission(Permissions.TIMETABLE_CANCEL_SESSION)
     public ApiResponse<TimetableItemDto> cancelSession(
             @PathVariable("id") Long id,
             @Valid @RequestBody CancelSessionRequest request) {

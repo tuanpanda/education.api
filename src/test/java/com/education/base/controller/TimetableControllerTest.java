@@ -1,5 +1,8 @@
 package com.education.base.controller;
 
+import com.education.base.support.WebMvcSecurityTestConfig;
+import com.education.base.support.WithAuthUser;
+import org.springframework.context.annotation.Import;
 import com.education.base.dto.request.CancelSessionRequest;
 import com.education.base.dto.request.GenerateSessionsRequest;
 import com.education.base.dto.request.SaveClassScheduleRequest;
@@ -31,6 +34,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(TimetableController.class)
+@Import(WebMvcSecurityTestConfig.class)
+@WithAuthUser
 class TimetableControllerTest {
 
     @Autowired

@@ -42,3 +42,35 @@ git push origin v1.0.1
 ```
 
 Oracle tren may host: container ket noi `host.docker.internal:1521`. Copy `.env.example` thanh `.env` neu can doi thong tin DB.
+
+## Bảo mật & quản trị hệ thống (JWT)
+
+Mọi API `/api/**` yêu cầu header `Authorization: Bearer <accessToken>`, trừ:
+`POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `GET /api/v1/health`, Swagger (`/swagger-ui.html`, `/v3/api-docs`).
+
+1. Chạy migration mới (sqlplus):
+
+```powershell
+sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V12__system_admin_security.sql
+```
+
+2. Tài khoản mặc định sau V12 (bắt buộc đổi mật khẩu ở lần đăng nhập đầu):
+
+| Tài khoản | Mật khẩu | Ghi chú |
+| --- | --- | --- |
+| `admin` | `Admin@123` | Vai trò `ROLE_ADMIN` (toàn quyền) |
+| `teacher1`, `accountant1`, `admission1` | `Education@123` | Tài khoản demo (nếu còn mật khẩu seed V1) |
+
+3. Biến môi trường:
+
+| Biến | Mặc định | Ghi chú |
+| --- | --- | --- |
+| `JWT_SECRET` | chỉ có giá trị dev trong `application.yml` | **Bắt buộc** ở profile `prod` / Docker, tối thiểu 32 ký tự (`openssl rand -base64 48`) |
+| `JWT_ISSUER` | `education-api` | Claim `iss` |
+| `JWT_ACCESS_TOKEN_TTL` | `15m` | Thời hạn access token (Duration: `15m`, `1h`...) |
+| `JWT_REFRESH_TOKEN_TTL` | `7d` | Thời hạn refresh token |
+
+Phân quyền: mã quyền dạng `MENU_CODE:FUNCTION_CODE` (ví dụ `MENU_STUDENT_LIST:CREATE`) lấy từ
+`SYS_ROLE_MENU_PERMISSIONS`; controller khai báo `@RequirePermission(...)`, `PermissionInterceptor` kiểm tra
+(`ROLE_ADMIN` luôn được phép). Đăng xuất / đổi mật khẩu / khóa tài khoản tăng `SYS_USERS.TOKEN_VERSION`
+để vô hiệu hóa mọi token đã cấp.
