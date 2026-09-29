@@ -83,6 +83,22 @@ class V12SeedPasswordTest {
                 .contains("IS_DELETED = 0").contains("WHERE USERNAME = 'admin'").contains("'ROLE_ADMIN'");
     }
 
+    /**
+     * teacher1 (schema_init.sql cu) cung mang hash "mau" nhu admin, nen script sua phai dua ca tai khoan demo
+     * con hash "mau" / SHA-256 V1 ve BCrypt 'Education@123' giong V12, bat buoc doi mat khau.
+     */
+    @Test
+    void fixAdminScript_alsoRepairsDemoAccounts() throws IOException {
+        String sql = read("/db/fix_admin_password.sql");
+        String demoUpdate = between(sql, "-- Tai khoan demo", "COMMIT;");
+        String hash = firstHashAfter(demoUpdate, "UPDATE SYS_USERS");
+        assertThat(new BCryptPasswordEncoder().matches("Education@123", hash)).isTrue();
+        assertThat(hash).isEqualTo(firstHashAfter(read(SCRIPT), "-- Tai khoan demo (V1)"));
+        assertThat(demoUpdate).contains("WHERE USERNAME <> 'admin'")
+                .contains("PASSWORD_HASH = '" + LEGACY_PLACEHOLDER_HASH + "'")
+                .contains("STANDARD_HASH('Education@123', 'SHA256')")
+                .contains("MUST_CHANGE_PASSWORD = 1");
+    }
     private String read(String resource) throws IOException {
         try (InputStream in = getClass().getResourceAsStream(resource)) {
             assertThat(in).as(resource + " tren classpath").isNotNull();

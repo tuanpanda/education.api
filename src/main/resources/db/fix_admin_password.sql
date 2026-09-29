@@ -1,11 +1,12 @@
 -- =============================================================================
--- EDUCATION - SUA TAI KHOAN admin VE TRANG THAI SEED CUA V12
+-- EDUCATION - SUA TAI KHOAN admin (VA TAI KHOAN DEMO) VE TRANG THAI SEED CUA V12
 --
 --   Dung khi dang nhap admin / Admin@123 bao "Ten dang nhap hoac mat khau khong dung":
 --   DB duoc tao tu schema_init.sql cu co hash BCrypt "mau" ('$2a$10$7EqJ...Kq2G') khong khop mat khau
 --   nao, nen V12 (chi ghi de hash chua phai BCrypt) da bo qua dong admin.
 --
 --   Ket qua: admin / Admin@123, bat buoc doi mat khau, ACTIVE, chua xoa, co vai tro ROLE_ADMIN.
+--   Tai khoan demo (vd. teacher1) con hash "mau" hoac SHA-256 V1 -> Education@123, bat buoc doi mat khau.
 --   Idempotent: chi cap nhat (va tang TOKEN_VERSION) khi dong admin chua o dung trang thai do.
 --   CANH BAO: script nay dat lai mat khau admin ve Admin@123 neu admin da doi sang mat khau khac.
 --
@@ -39,10 +40,23 @@ USING (
 ) s ON (t.USER_ID = s.USER_ID AND t.ROLE_ID = s.ROLE_ID)
 WHEN NOT MATCHED THEN INSERT (USER_ID, ROLE_ID, ASSIGNED_BY) VALUES (s.USER_ID, s.ROLE_ID, 'FIX_ADMIN_PASSWORD');
 
+-- Tai khoan demo (vd. teacher1 tu schema_init.sql cu) con hash "mau" khong dung duoc hoac SHA-256 V1 cua
+-- 'Education@123' -> BCrypt (cost 10) cua 'Education@123' (giong V12), bat buoc doi mat khau.
+-- Idempotent: dong da co BCrypt that (hoac mat khau nguoi dung tu doi) khong bi dong toi.
+UPDATE SYS_USERS
+   SET PASSWORD_HASH = '$2a$10$NDLPXq0uJZykYoFJWdOZIuYlv64aHu.YXRqP9n8yWAd7./30VwigW',
+       MUST_CHANGE_PASSWORD = 1,
+       TOKEN_VERSION = TOKEN_VERSION + 1,
+       UPDATED_AT = SYSTIMESTAMP,
+       UPDATED_BY = 'FIX_ADMIN_PASSWORD'
+ WHERE USERNAME <> 'admin'
+   AND (PASSWORD_HASH = '$2a$10$7EqJtq98hPqEX7fNZaFWoO96u8xLw9Jm9j.qR8xT6rW1dG7z5Kq2G'
+        OR PASSWORD_HASH = LOWER(RAWTOHEX(STANDARD_HASH('Education@123', 'SHA256'))));
+
 COMMIT;
 
 SELECT USERNAME, SUBSTR(PASSWORD_HASH, 1, 7) AS HASH_PREFIX, STATUS, IS_DELETED, MUST_CHANGE_PASSWORD, TOKEN_VERSION
   FROM SYS_USERS
- WHERE USERNAME = 'admin';
+ ORDER BY ID;
 
 EXIT
