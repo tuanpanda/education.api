@@ -449,12 +449,13 @@ VALUES (1, 'ROLE_ADMIN', 'Quản trị viên tối cao', 'Toàn quyền hệ th�
 INSERT INTO SYS_ROLES (ID, ROLE_CODE, ROLE_NAME, DESCRIPTION, STATUS, IS_DELETED)
 VALUES (2, 'ROLE_TEACHER', 'Giảng viên', 'Quyền xem và quản lý học sinh', 'ACTIVE', 0);
 
--- Mật khẩu mẫu đã băm BCrypt, dùng chung cho cả hai tài khoản demo.
+-- Mat khau demo 'Education@123' bam SHA-256 (giong V1). V12 chuyen sang BCrypt:
+-- admin -> 'Admin@123', teacher1 -> 'Education@123' (ca hai bat buoc doi mat khau).
 INSERT INTO SYS_USERS (ID, USERNAME, PASSWORD_HASH, FULL_NAME, EMAIL, STATUS, IS_DELETED)
-VALUES (1, 'admin', '$2a$10$7EqJtq98hPqEX7fNZaFWoO96u8xLw9Jm9j.qR8xT6rW1dG7z5Kq2G',
+VALUES (1, 'admin', LOWER(RAWTOHEX(STANDARD_HASH('Education@123', 'SHA256'))),
         'Administrator', 'admin@education.com', 'ACTIVE', 0);
 INSERT INTO SYS_USERS (ID, USERNAME, PASSWORD_HASH, FULL_NAME, EMAIL, STATUS, IS_DELETED)
-VALUES (2, 'teacher1', '$2a$10$7EqJtq98hPqEX7fNZaFWoO96u8xLw9Jm9j.qR8xT6rW1dG7z5Kq2G',
+VALUES (2, 'teacher1', LOWER(RAWTOHEX(STANDARD_HASH('Education@123', 'SHA256'))),
         'Giao Vien A', 'teacher@education.com', 'ACTIVE', 0);
 
 INSERT INTO SYS_USER_ROLES (USER_ID, ROLE_ID) VALUES (1, 1);

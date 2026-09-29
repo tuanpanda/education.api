@@ -61,6 +61,12 @@ sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migrati
 | `admin` | `Admin@123` | Vai trò `ROLE_ADMIN` (toàn quyền) |
 | `teacher1`, `accountant1`, `admission1` | `Education@123` | Tài khoản demo (nếu còn mật khẩu seed V1) |
 
+Neu `admin` / `Admin@123` bao sai mat khau (DB tao tu `schema_init.sql` cu co hash BCrypt "mau" khong khop mat khau nao, V12 ban cu bo qua), chay script sua (idempotent, dat lai admin ve `Admin@123` + bat buoc doi mat khau):
+
+```powershell
+sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/fix_admin_password.sql
+```
+
 3. Biến môi trường:
 
 | Biến | Mặc định | Ghi chú |

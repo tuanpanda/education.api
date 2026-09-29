@@ -5,7 +5,8 @@
 --   * Mat khau chuyen sang BCrypt:
 --       - admin / Admin@123            (bat buoc doi mat khau o lan dang nhap dau)
 --       - tai khoan demo con mat khau SHA-256 'Education@123' -> BCrypt 'Education@123' (bat buoc doi)
---     Chi ghi de khi PASSWORD_HASH chua phai BCrypt ('$2...'), chay lai nhieu lan an toan.
+--     Chi ghi de khi PASSWORD_HASH chua phai BCrypt ('$2...') hoac con la hash "mau" cua schema_init.sql cu
+--     ('$2a$10$7EqJ...Kq2G' - dung dinh dang BCrypt nhung KHONG khop mat khau nao), chay lai nhieu lan an toan.
 --   * Menu 'Quan tri he thong': Nguoi dung (/admin/users), Vai tro & phan quyen (/admin/roles), Menu (/admin/menus).
 --   * ROLE_ADMIN: toan quyen tren moi menu / chuc nang.
 --
@@ -85,6 +86,7 @@ WHEN MATCHED THEN UPDATE SET
         t.UPDATED_AT = SYSTIMESTAMP,
         t.UPDATED_BY = 'V12_MIGRATION'
      WHERE t.PASSWORD_HASH NOT LIKE '$2%'
+        OR t.PASSWORD_HASH = '$2a$10$7EqJtq98hPqEX7fNZaFWoO96u8xLw9Jm9j.qR8xT6rW1dG7z5Kq2G'
 WHEN NOT MATCHED THEN INSERT (ID, USERNAME, PASSWORD_HASH, FULL_NAME, EMAIL, STATUS, IS_DELETED,
                               MUST_CHANGE_PASSWORD, TOKEN_VERSION, CREATED_BY)
                       VALUES (SEQ_SYS_USERS.NEXTVAL, s.USERNAME,
@@ -100,7 +102,8 @@ USING (
 ) s ON (t.USER_ID = s.USER_ID AND t.ROLE_ID = s.ROLE_ID)
 WHEN NOT MATCHED THEN INSERT (USER_ID, ROLE_ID, ASSIGNED_BY) VALUES (s.USER_ID, s.ROLE_ID, 'V12_MIGRATION');
 
--- Tai khoan demo (V1) con mat khau SHA-256 cua 'Education@123' -> BCrypt cung mat khau, buoc doi.
+-- Tai khoan demo (V1) con mat khau SHA-256 cua 'Education@123' (hoac hash "mau" khong dung duoc cua
+-- schema_init.sql cu) -> BCrypt 'Education@123', buoc doi.
 UPDATE SYS_USERS
    SET PASSWORD_HASH = '$2a$10$NDLPXq0uJZykYoFJWdOZIuYlv64aHu.YXRqP9n8yWAd7./30VwigW',
        MUST_CHANGE_PASSWORD = 1,
@@ -108,7 +111,8 @@ UPDATE SYS_USERS
        UPDATED_AT = SYSTIMESTAMP,
        UPDATED_BY = 'V12_MIGRATION'
  WHERE USERNAME <> 'admin'
-   AND PASSWORD_HASH = LOWER(RAWTOHEX(STANDARD_HASH('Education@123', 'SHA256')));
+   AND (PASSWORD_HASH = LOWER(RAWTOHEX(STANDARD_HASH('Education@123', 'SHA256')))
+        OR PASSWORD_HASH = '$2a$10$7EqJtq98hPqEX7fNZaFWoO96u8xLw9Jm9j.qR8xT6rW1dG7z5Kq2G');
 
 PROMPT ============ V12.3 Menu Quan tri he thong ============
 
