@@ -4,21 +4,26 @@ import com.education.base.common.ApiResponse;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -32,12 +37,26 @@ public class GlobalExceptionHandler {
     /**
      * Xử lý lỗi nghiệp vụ, bao gồm cả lỗi trả về từ Oracle Package/Procedure
      * (thông qua {@code OracleProcExecutor.validateResult}).
+     * <ul>
+     *     <li>Mã lỗi {@code NOT_FOUND} / {@code *_NOT_FOUND} trả HTTP 404, còn lại HTTP 400.</li>
+     *     <li>Lỗi nghiệp vụ ghi log WARN, không kèm stack trace.</li>
+     *     <li>Message là lỗi Oracle/JDBC thô ({@code ORA-xxxxx}...) được thay bằng thông báo chung
+     *     ({@link OracleErrorMessages#GENERIC_MESSAGE}), chi tiết ghi log ERROR; {@code ORA-20xxx: text}
+     *     chỉ trả {@code text}.</li>
+     * </ul>
      */
     @ExceptionHandler(OracleBusinessException.class)
     public ResponseEntity<ApiResponse<Void>> handleOracleBusinessException(OracleBusinessException ex) {
-        log.error("[OracleBusinessException] errorCode={}, message={}", ex.getErrorCode(), ex.getMessage(), ex);
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(ApiResponse.error(ex.getErrorCode(), ex.getMessage()));
+        HttpStatus status = isNotFoundCode(ex.getErrorCode()) ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
+        String rawMessage = ex.getMessage();
+        if (OracleErrorMessages.isRawDatabaseError(rawMessage)) {
+            log.error("[OracleBusinessException] errorCode={}, message={}", ex.getErrorCode(), rawMessage, ex);
+        } else {
+            log.warn("[BusinessException] errorCode={}, status={}, message={}",
+                    ex.getErrorCode(), status.value(), rawMessage);
+        }
+        return ResponseEntity.status(status)
+                .body(ApiResponse.error(ex.getErrorCode(), OracleErrorMessages.toClientMessage(rawMessage)));
     }
 
     /**
@@ -82,6 +101,18 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Thiếu phần bắt buộc trong request multipart (ví dụ: {@code file}).
+     */
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMissingServletRequestPartException(
+            MissingServletRequestPartException ex) {
+        String message = "Thiếu phần dữ liệu bắt buộc: " + ex.getRequestPartName();
+        log.warn("[MissingRequestPart] {}", message);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("VALIDATION_ERROR", message));
+    }
+
+    /**
      * Tham số truyền vào sai kiểu dữ liệu (ví dụ: {@code userId=abc}).
      */
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
@@ -102,6 +133,35 @@ public class GlobalExceptionHandler {
         log.warn("[MessageNotReadable] {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error("VALIDATION_ERROR", "Dữ liệu đầu vào không đọc được hoặc sai định dạng JSON."));
+    }
+
+    /**
+     * Phương thức HTTP không được hỗ trợ trên URL (ví dụ: {@code DELETE} trên endpoint chỉ có {@code GET}).
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleHttpRequestMethodNotSupportedException(
+            HttpRequestMethodNotSupportedException ex) {
+        log.warn("[MethodNotSupported] {}", ex.getMessage());
+        Set<HttpMethod> supported = ex.getSupportedHttpMethods();
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED);
+        if (supported != null && !supported.isEmpty()) {
+            builder.allow(supported.toArray(HttpMethod[]::new));
+        }
+        return builder.body(ApiResponse.error("METHOD_NOT_ALLOWED",
+                "Phương thức " + ex.getMethod() + " không được hỗ trợ cho đường dẫn này."));
+    }
+
+    /**
+     * {@code Content-Type} của request không được hỗ trợ (ví dụ: gửi {@code text/plain} tới API JSON).
+     */
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleHttpMediaTypeNotSupportedException(
+            HttpMediaTypeNotSupportedException ex) {
+        log.warn("[MediaTypeNotSupported] {}", ex.getMessage());
+        String contentType = ex.getContentType() != null ? ex.getContentType().toString() : "(không có)";
+        return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
+                .body(ApiResponse.error("UNSUPPORTED_MEDIA_TYPE",
+                        "Kiểu dữ liệu (Content-Type) không được hỗ trợ: " + contentType));
     }
 
     /**
@@ -192,6 +252,13 @@ public class GlobalExceptionHandler {
         log.error("[UnhandledException] {}", ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error("INTERNAL_ERROR", "Đã có lỗi xảy ra, vui lòng thử lại sau."));
+    }
+
+    /**
+     * Mã lỗi nghiệp vụ biểu diễn "không tìm thấy" ({@code NOT_FOUND}, {@code STUDENT_NOT_FOUND}, {@code FEE_NOT_FOUND}...).
+     */
+    static boolean isNotFoundCode(String errorCode) {
+        return errorCode != null && ("NOT_FOUND".equals(errorCode) || errorCode.endsWith("_NOT_FOUND"));
     }
 
     private String describeFieldError(FieldError fieldError) {

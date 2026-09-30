@@ -48,6 +48,48 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void handleOracleBusinessException_notFoundCode_returns404() {
+        ResponseEntity<ApiResponse<Void>> response = handler.handleOracleBusinessException(
+                new OracleBusinessException("STUDENT_NOT_FOUND", "Không tìm thấy học sinh với ID: 99"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getCode()).isEqualTo("STUDENT_NOT_FOUND");
+        assertThat(response.getBody().getMessage()).isEqualTo("Không tìm thấy học sinh với ID: 99");
+
+        assertThat(handler.handleOracleBusinessException(new OracleBusinessException("NOT_FOUND", "x"))
+                .getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void handleOracleBusinessException_codeContainingNotFoundInTheMiddle_staysBadRequest() {
+        ResponseEntity<ApiResponse<Void>> response = handler.handleOracleBusinessException(
+                new OracleBusinessException("NOT_FOUND_OR_LOCKED", "x"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void handleOracleBusinessException_rawOracleMessage_isNotLeaked() {
+        ResponseEntity<ApiResponse<Void>> response = handler.handleOracleBusinessException(
+                new OracleBusinessException("-1", "ORA-00001: unique constraint (EDUCATION.UK_USERS_USERNAME) violated"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getCode()).isEqualTo("-1");
+        assertThat(response.getBody().getMessage()).isEqualTo(OracleErrorMessages.GENERIC_MESSAGE);
+    }
+
+    @Test
+    void handleOracleBusinessException_userDefinedOracleError_stripsPrefix() {
+        ResponseEntity<ApiResponse<Void>> response = handler.handleOracleBusinessException(
+                new OracleBusinessException("-20012", "ORA-20012: Quy tac sinh ma khong ton tai\nORA-06512: at line 3"));
+
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getMessage()).isEqualTo("Quy tac sinh ma khong ton tai");
+    }
+
+    @Test
     void handleMethodArgumentNotValidException_returnsValidationError() throws NoSuchMethodException {
         BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(new Object(), "request");
         bindingResult.addError(new FieldError("request", "bankBin", "Mã ngân hàng (BIN) không được để trống"));

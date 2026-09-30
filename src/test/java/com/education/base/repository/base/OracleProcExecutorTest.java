@@ -1,6 +1,7 @@
 package com.education.base.repository.base;
 
 import com.education.base.exception.OracleBusinessException;
+import com.education.base.exception.OracleErrorMessages;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.simple.SimpleJdbcCall;
@@ -59,17 +60,48 @@ class OracleProcExecutorTest {
     }
 
     @Test
-    void validateResult_throwsWhenErrCodeIsNotZero() {
+    void validateResult_rawOracleError_throwsGenericMessage() {
         Map<String, Object> out = new HashMap<>();
-        out.put("O_ERR_CODE", "-1");
+        out.put("O_ERR_CODE", "-6502");
         out.put("O_ERR_MSG", "ORA-06502: numeric or value error");
 
         assertThatThrownBy(() -> executor.validateResult(out))
                 .isInstanceOf(OracleBusinessException.class)
                 .satisfies(ex -> {
                     OracleBusinessException business = (OracleBusinessException) ex;
-                    assertThat(business.getErrorCode()).isEqualTo("-1");
-                    assertThat(business.getMessage()).isEqualTo("ORA-06502: numeric or value error");
+                    assertThat(business.getErrorCode()).isEqualTo("-6502");
+                    assertThat(business.getMessage()).isEqualTo(OracleErrorMessages.GENERIC_MESSAGE);
+                    assertThat(business.getMessage()).doesNotContain("ORA-");
+                });
+    }
+
+    @Test
+    void validateResult_raiseApplicationError_returnsCustomTextWithoutPrefix() {
+        Map<String, Object> out = new HashMap<>();
+        out.put("O_ERR_CODE", "-20011");
+        out.put("O_ERR_MSG", "ORA-20011: Thieu RULE_CODE khi sinh ma nghiep vu.\nORA-06512: at \"EDUCATION.FN_NEXT_CODE\", line 12");
+
+        assertThatThrownBy(() -> executor.validateResult(out))
+                .isInstanceOf(OracleBusinessException.class)
+                .satisfies(ex -> {
+                    OracleBusinessException business = (OracleBusinessException) ex;
+                    assertThat(business.getErrorCode()).isEqualTo("-20011");
+                    assertThat(business.getMessage()).isEqualTo("Thieu RULE_CODE khi sinh ma nghiep vu.");
+                });
+    }
+
+    @Test
+    void validateResult_businessErrorFromProcedure_keepsMessage() {
+        Map<String, Object> out = new HashMap<>();
+        out.put("O_ERR_CODE", "FEE_NOT_FOUND");
+        out.put("O_ERR_MSG", "Khong tim thay khoan hoc phi ID: 15");
+
+        assertThatThrownBy(() -> executor.validateResult(out))
+                .isInstanceOf(OracleBusinessException.class)
+                .satisfies(ex -> {
+                    OracleBusinessException business = (OracleBusinessException) ex;
+                    assertThat(business.getErrorCode()).isEqualTo("FEE_NOT_FOUND");
+                    assertThat(business.getMessage()).isEqualTo("Khong tim thay khoan hoc phi ID: 15");
                 });
     }
 

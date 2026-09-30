@@ -9,6 +9,7 @@ import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 import lombok.experimental.UtilityClass;
+import lombok.extern.slf4j.Slf4j;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -25,6 +26,7 @@ import java.util.Map;
 /**
  * Sinh mã VietQR thanh toán học phí theo chuẩn EMVCo (QR Code for Payment Systems).
  */
+@Slf4j
 @UtilityClass
 public class VietQrHelper {
 
@@ -126,7 +128,8 @@ public class VietQrHelper {
                 return PNG_DATA_URL_PREFIX + Base64.getEncoder().encodeToString(out.toByteArray());
             }
         } catch (WriterException | IOException e) {
-            throw new OracleBusinessException("QR_GENERATE_ERROR", "Không thể tạo mã QR: " + e.getMessage(), e);
+            log.error("Không thể tạo ảnh mã QR (width={}, height={})", width, height, e);
+            throw new OracleBusinessException("QR_GENERATE_ERROR", "Không thể tạo mã QR, vui lòng thử lại.", e);
         }
     }
 
