@@ -1,5 +1,6 @@
 package com.education.base.service.impl;
 
+import com.education.base.common.file.SafeFileType;
 import com.education.base.config.FileStorageProperties;
 import com.education.base.entity.FileEntity;
 import com.education.base.exception.OracleBusinessException;
@@ -14,12 +15,14 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -29,6 +32,9 @@ import java.util.UUID;
  * <p>
  * Chiến lược lưu trữ: {@code {baseDir}/{MODULE}/{YYYY}/{MM}/{UUID}_{tenfile}}.
  * Database chỉ lưu đường dẫn TƯƠNG ĐỐI so với {@code baseDir} để đảm bảo tính di động khi deploy.
+ * <p>
+ * Định dạng file được kiểm tra bằng allow-list {@link SafeFileType} (phần mở rộng + magic bytes);
+ * {@code CONTENT_TYPE} lưu xuống là MIME do server nhận diện, không phải giá trị client gửi.
  */
 @Slf4j
 @Service
@@ -38,7 +44,6 @@ public class FileStorageServiceImpl implements FileStorageService {
     private static final DateTimeFormatter YEAR_FORMATTER = DateTimeFormatter.ofPattern("yyyy");
     private static final DateTimeFormatter MONTH_FORMATTER = DateTimeFormatter.ofPattern("MM");
     private static final String DEFAULT_MODULE = "COMMON";
-    private static final String DEFAULT_CONTENT_TYPE = "application/octet-stream";
     private static final String DEFAULT_FILE_NAME = "unnamed";
 
     private final FileRepository fileRepository;
@@ -56,6 +61,7 @@ public class FileStorageServiceImpl implements FileStorageService {
         if (file == null || file.isEmpty()) {
             throw new OracleBusinessException("FILE_EMPTY", "File tải lên không được để trống.");
         }
+        SafeFileType type = SafeFileType.detect(file.getOriginalFilename(), readHeader(file));
         PathTarget target = prepareTarget(file.getOriginalFilename(), moduleName, subFolder);
         try {
             Files.createDirectories(target.path().getParent());
@@ -64,7 +70,7 @@ public class FileStorageServiceImpl implements FileStorageService {
             log.error("Lỗi khi lưu file vật lý vào '{}': {}", target.path(), e.getMessage(), e);
             throw new OracleBusinessException("FILE_STORE_ERROR", "Không thể lưu file vào hệ thống.");
         }
-        return saveMetadata(target, file.getContentType(), file.getSize(), moduleName, referenceId);
+        return saveMetadata(target, type.mimeType(), file.getSize(), moduleName, referenceId);
     }
 
     @Override
@@ -74,6 +80,8 @@ public class FileStorageServiceImpl implements FileStorageService {
         if (content == null || content.length == 0) {
             throw new OracleBusinessException("FILE_EMPTY", "File tải lên không được để trống.");
         }
+        SafeFileType type = SafeFileType.detect(originalFilename,
+                Arrays.copyOf(content, Math.min(content.length, SafeFileType.HEADER_BYTES)));
         PathTarget target = prepareTarget(originalFilename, moduleName, subFolder);
         try {
             Files.createDirectories(target.path().getParent());
@@ -82,7 +90,17 @@ public class FileStorageServiceImpl implements FileStorageService {
             log.error("Lỗi khi lưu file vật lý vào '{}': {}", target.path(), e.getMessage(), e);
             throw new OracleBusinessException("FILE_STORE_ERROR", "Không thể lưu file vào hệ thống.");
         }
-        return saveMetadata(target, contentType, content.length, moduleName, referenceId);
+        return saveMetadata(target, type.mimeType(), content.length, moduleName, referenceId);
+    }
+
+    /** Đọc các byte đầu file để nhận diện định dạng bằng magic bytes. */
+    private byte[] readHeader(MultipartFile file) {
+        try (InputStream in = file.getInputStream()) {
+            return in.readNBytes(SafeFileType.HEADER_BYTES);
+        } catch (IOException e) {
+            log.error("Không đọc được nội dung file upload '{}': {}", file.getOriginalFilename(), e.getMessage(), e);
+            throw new OracleBusinessException("FILE_READ_ERROR", "Không đọc được nội dung file tải lên.");
+        }
     }
 
     private PathTarget prepareTarget(String originalFilename, String moduleName, String subFolder) {
@@ -108,7 +126,7 @@ public class FileStorageServiceImpl implements FileStorageService {
                     .originalName(target.cleanName())
                     .storedName(target.storedName())
                     .filePath(target.relativePath())
-                    .contentType(resolveContentType(contentType))
+                    .contentType(contentType)
                     .fileSize(fileSize)
                     .moduleName(target.module())
                     .referenceId(referenceId)
@@ -215,10 +233,6 @@ public class FileStorageServiceImpl implements FileStorageService {
                     "Thư mục con chỉ được chứa chữ, số và gạch dưới.");
         }
         return folder;
-    }
-
-    private String resolveContentType(String contentType) {
-        return (contentType == null || contentType.isBlank()) ? DEFAULT_CONTENT_TYPE : contentType;
     }
 
     /**
