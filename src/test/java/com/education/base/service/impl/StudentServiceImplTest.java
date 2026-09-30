@@ -13,6 +13,7 @@ import com.education.base.entity.ClassEntity;
 import com.education.base.entity.ClassStudentEntity;
 import com.education.base.entity.FileEntity;
 import com.education.base.entity.StudentEntity;
+import com.education.base.exception.ForbiddenException;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.mapper.FileMapperImpl;
 import com.education.base.mapper.StudentMapperImpl;
@@ -22,7 +23,9 @@ import com.education.base.repository.ClassStudentRepository;
 import com.education.base.repository.StudentRepository;
 import com.education.base.repository.UserRepository;
 import com.education.base.service.FileStorageService;
+import com.education.base.support.TestSecurityContexts;
 import jakarta.persistence.EntityManager;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,6 +38,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -76,6 +80,12 @@ class StudentServiceImplTest {
                 studentRepository, classRepository, classStudentRepository, attendanceRepository, userRepository,
                 fileStorageService, new StudentMapperImpl(), new FileMapperImpl(),
                 entityManager);
+        TestSecurityContexts.loginAdmin(1L);
+    }
+
+    @AfterEach
+    void tearDown() {
+        TestSecurityContexts.clear();
     }
 
     private StudentEntity activeStudent(long id, String code) {
@@ -574,5 +584,150 @@ class StudentServiceImplTest {
         assertThat(result.getClassId()).isEqualTo(8L);
         assertThat(result.getClassCode()).isEqualTo("LH920260001");
         verify(classStudentRepository).save(any(ClassStudentEntity.class));
+    }
+
+    // ---- M6: tạo lớp / chuyển lớp qua API học sinh cần quyền trên lớp -------------------------------------
+
+    private static QuickCreateClassRequest quickClass() {
+        return QuickCreateClassRequest.builder().className("TOEIC 450").gradeLevel(9).build();
+    }
+
+    private static ClassEntity openClass(long id) {
+        return ClassEntity.builder().id(id).classCode("C" + id).className("Lớp " + id)
+                .status("OPEN").capacity(30).isDeleted(0).build();
+    }
+
+    private static StudentUpdateRequest moveTo(Long classId) {
+        return StudentUpdateRequest.builder().fullName("Ten Da Sua").email("moi@edu.com").status("ACTIVE")
+                .classId(classId).build();
+    }
+
+    @Test
+    void create_withNewClass_withoutClassCreate_isForbidden() {
+        TestSecurityContexts.login(5L, List.of("ROLE_STAFF"), Set.of("MENU_STUDENT_LIST:CREATE"));
+        StudentCreateRequest request = new StudentCreateRequest("Pham Van D", "d@edu.com", "ACTIVE");
+        request.setNewClass(quickClass());
+
+        assertThatThrownBy(() -> service.create(request))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("tạo lớp");
+        verify(studentRepository, never()).saveAndFlush(any());
+        verify(classRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void create_withNewClass_withClassCreate_createsClass() {
+        TestSecurityContexts.login(5L, List.of("ROLE_STAFF"),
+                Set.of("MENU_STUDENT_LIST:CREATE", "MENU_CLASS_LIST:CREATE"));
+        when(studentRepository.saveAndFlush(any(StudentEntity.class))).thenAnswer(inv -> {
+            StudentEntity e = inv.getArgument(0);
+            e.setId(10L);
+            return e;
+        });
+        when(classRepository.saveAndFlush(any(ClassEntity.class))).thenAnswer(inv -> {
+            ClassEntity c = inv.getArgument(0);
+            c.setId(8L);
+            return c;
+        });
+        when(classStudentRepository.save(any(ClassStudentEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        StudentCreateRequest request = new StudentCreateRequest("Pham Van D", "d@edu.com", "ACTIVE");
+        request.setNewClass(quickClass());
+
+        StudentDetailResponse result = service.create(request);
+
+        assertThat(result.getClassId()).isEqualTo(8L);
+        verify(classRepository).saveAndFlush(any(ClassEntity.class));
+    }
+
+    @Test
+    void create_withExistingClass_doesNotRequireClassCreate() {
+        TestSecurityContexts.login(5L, List.of("ROLE_STAFF"), Set.of("MENU_STUDENT_LIST:CREATE"));
+        when(studentRepository.saveAndFlush(any(StudentEntity.class))).thenAnswer(inv -> {
+            StudentEntity e = inv.getArgument(0);
+            e.setId(10L);
+            return e;
+        });
+        when(classRepository.findByIdAndIsDeleted(5L, 0)).thenReturn(Optional.of(openClass(5L)));
+        when(classStudentRepository.save(any(ClassStudentEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        StudentCreateRequest request = new StudentCreateRequest("Pham Van D", "d@edu.com", "ACTIVE");
+        request.setClassId(5L);
+
+        assertThat(service.create(request).getClassId()).isEqualTo(5L);
+    }
+
+    @Test
+    void update_changingClass_withoutClassUpdate_isForbidden() {
+        TestSecurityContexts.login(5L, List.of("ROLE_STAFF"), Set.of("MENU_STUDENT_LIST:UPDATE"));
+        StudentEntity existing = activeStudent(3L, "SV003");
+        when(studentRepository.findByIdAndIsDeleted(3L, 0)).thenReturn(Optional.of(existing));
+        when(classStudentRepository.findByStudentIdAndIsDeleted(3L, 0)).thenReturn(List.of(ClassStudentEntity.builder()
+                .id(40L).classId(2L).studentId(3L).status("ENROLLED").isDeleted(0).build()));
+
+        assertThatThrownBy(() -> service.update(3L, moveTo(5L)))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("chuyển lớp");
+        assertThat(existing.getFullName()).isEqualTo("Nguyen Van A");
+        verify(studentRepository, never()).save(any());
+        verify(classStudentRepository, never()).save(any());
+    }
+
+    @Test
+    void update_firstEnrollment_withoutClassUpdate_isForbidden() {
+        TestSecurityContexts.login(5L, List.of("ROLE_STAFF"), Set.of("MENU_STUDENT_LIST:UPDATE"));
+        when(studentRepository.findByIdAndIsDeleted(3L, 0)).thenReturn(Optional.of(activeStudent(3L, "SV003")));
+
+        assertThatThrownBy(() -> service.update(3L, moveTo(5L)))
+                .isInstanceOf(ForbiddenException.class);
+        verify(studentRepository, never()).save(any());
+    }
+
+    @Test
+    void update_sameClass_withoutClassUpdate_isAllowed() {
+        TestSecurityContexts.login(5L, List.of("ROLE_STAFF"), Set.of("MENU_STUDENT_LIST:UPDATE"));
+        StudentEntity existing = activeStudent(3L, "SV003");
+        when(studentRepository.findByIdAndIsDeleted(3L, 0)).thenReturn(Optional.of(existing));
+        when(studentRepository.save(any(StudentEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        ClassStudentEntity current = ClassStudentEntity.builder()
+                .id(40L).classId(5L).studentId(3L).status("ENROLLED").isDeleted(0).build();
+        when(classStudentRepository.findByStudentIdAndIsDeleted(3L, 0)).thenReturn(List.of(current));
+        when(classRepository.findByIdAndIsDeleted(5L, 0)).thenReturn(Optional.of(openClass(5L)));
+        when(classStudentRepository.findByClassIdAndStudentId(5L, 3L)).thenReturn(Optional.of(current));
+
+        StudentDetailResponse result = service.update(3L, moveTo(5L));
+
+        assertThat(result.getClassId()).isEqualTo(5L);
+        assertThat(existing.getFullName()).isEqualTo("Ten Da Sua");
+        verify(classStudentRepository, never()).save(any());
+    }
+
+    @Test
+    void update_withoutClassId_doesNotRequireClassUpdate() {
+        TestSecurityContexts.login(5L, List.of("ROLE_STAFF"), Set.of("MENU_STUDENT_LIST:UPDATE"));
+        StudentEntity existing = activeStudent(3L, "SV003");
+        when(studentRepository.findByIdAndIsDeleted(3L, 0)).thenReturn(Optional.of(existing));
+        when(studentRepository.save(any(StudentEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        service.update(3L, moveTo(null));
+
+        assertThat(existing.getFullName()).isEqualTo("Ten Da Sua");
+        verify(classStudentRepository, never()).findByStudentIdAndIsDeleted(any(), any());
+    }
+
+    @Test
+    void update_changingClass_withClassUpdate_transfers() {
+        TestSecurityContexts.login(5L, List.of("ROLE_STAFF"),
+                Set.of("MENU_STUDENT_LIST:UPDATE", "MENU_CLASS_LIST:UPDATE"));
+        when(studentRepository.findByIdAndIsDeleted(3L, 0)).thenReturn(Optional.of(activeStudent(3L, "SV003")));
+        when(studentRepository.save(any(StudentEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        ClassStudentEntity previous = ClassStudentEntity.builder()
+                .id(40L).classId(2L).studentId(3L).status("ENROLLED").isDeleted(0).build();
+        when(classStudentRepository.findByStudentIdAndIsDeleted(3L, 0)).thenReturn(List.of(previous));
+        when(classRepository.findByIdAndIsDeleted(5L, 0)).thenReturn(Optional.of(openClass(5L)));
+        when(classStudentRepository.save(any(ClassStudentEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        StudentDetailResponse result = service.update(3L, moveTo(5L));
+
+        assertThat(previous.getIsDeleted()).isEqualTo(1);
+        assertThat(result.getClassId()).isEqualTo(5L);
     }
 }
