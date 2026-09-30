@@ -7,10 +7,15 @@ spring:
         format_sql: false
 
 springdoc:
+  api-docs:
+    enabled: false
   swagger-ui:
     enabled: false
 
 app:
+  cors:
+    # Không có mặc định: rỗng = chỉ same-origin (UI Docker gọi /api qua nginx cùng origin).
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:}
   security:
     jwt:
       # Bắt buộc cấu hình qua biến môi trường, không có giá trị mặc định ở production.
@@ -21,4 +26,3 @@ logging:
     root: INFO
     com.education.base: INFO
     org.hibernate.SQL: WARN
-    org.hibernate.type.descriptor.sql.BasicBinder: WARN

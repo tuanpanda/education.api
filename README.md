@@ -43,6 +43,36 @@ git push origin v1.0.1
 
 Oracle tren may host: container ket noi `host.docker.internal:1521`. Copy `.env.example` thanh `.env` neu can doi thong tin DB.
 
+## Cấu hình web: CORS, header bảo mật, múi giờ, logging
+
+| Biến | Mặc định | Ghi chú |
+| --- | --- | --- |
+| `CORS_ALLOWED_ORIGINS` | non-prod: `http://localhost:5173,http://localhost:8088,http://localhost:3000`; prod: rỗng | Origin được gọi `/api/**` cross-origin, phân tách bằng dấu phẩy (hỗ trợ pattern `*`, ví dụ `http://192.168.1.*:8081`). Rỗng = chỉ same-origin |
+| `TZ` | `Asia/Ho_Chi_Minh` (Dockerfile, compose) | Múi giờ OS trong container |
+
+- **CORS**: UI Docker gọi `/api` qua nginx cùng origin nên prod để trống. UI deploy riêng (IIS, domain/cổng khác
+  gọi thẳng API, ví dụ `env.home.js` / `env.production.js` của `education_ui`) **phải** khai báo origin của UI, nếu không
+  trình duyệt chặn request. Không bật `allowCredentials` (JWT gửi qua header `Authorization`, không dùng cookie).
+  Header `Content-Disposition` được expose để UI đọc tên file khi tải về.
+- **Swagger/OpenAPI**: tắt ở profile `prod` (`springdoc.api-docs.enabled=false`, `swagger-ui.enabled=false`).
+  Ngoài `/api/**`, chỉ `/`, `/favicon.ico`, `/error`, `/swagger-ui/**`, `/v3/api-docs/**` được truy cập; đường dẫn khác bị từ chối.
+- **Header bảo mật**: response API có `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`;
+  Swagger UI dùng CSP nới lỏng (chỉ tài nguyên cùng origin). HSTS (`max-age=31536000`) chỉ gửi khi request là HTTPS;
+  nếu TLS kết thúc ở reverse proxy, cần cấu hình proxy gửi `X-Forwarded-Proto` và bật
+  `server.forward-headers-strategy` (chỉ khi API không bị truy cập trực tiếp từ ngoài proxy).
+- **Múi giờ**: DB lưu `DATE`/`TIMESTAMP` không kèm time zone theo giờ Việt Nam (`SYSDATE` của Oracle trên máy host,
+  `LocalDateTime.now()` của Java). Ứng dụng cố định `Asia/Ho_Chi_Minh` ở mọi nơi: JVM (`EducationApplication` +
+  `-Duser.timezone` trong Dockerfile), `TZ` của container, `spring.jpa.properties.hibernate.jdbc.time_zone`,
+  `spring.jackson.time-zone`. Giờ Việt Nam và `Asia/Bangkok` (Windows "SE Asia Standard Time") cùng UTC+7 nên dữ liệu
+  đã ghi từ máy dev không bị lệch. Nếu Oracle báo `ORA-01882: timezone region not found` khi kết nối, thêm
+  `-Doracle.jdbc.timezoneAsRegion=false` vào `JAVA_TOOL_OPTIONS`.
+- **Lỗi Database**: lỗi Oracle thô (`ORA-xxxxx`) không trả về client, chỉ ghi log ERROR; client nhận
+  "Có lỗi xử lý dữ liệu, vui lòng thử lại hoặc liên hệ quản trị viên.". Lỗi nghiệp vụ
+  `RAISE_APPLICATION_ERROR(-20xxx, 'text')` trả `text` (bỏ tiền tố `ORA-20xxx:`). Mã lỗi `*_NOT_FOUND` trả HTTP 404.
+- **Logging**: mặc định `INFO`, không in SQL. Debug SQL + bind parameter ở máy dev:
+  `SPRING_PROFILES_ACTIVE=local-logging` (hoặc thêm vào danh sách profile, ví dụ `dev,local-logging`), cấu hình ở
+  `application-local-logging.yml`. Không bật ở production (TRACE ghi cả giá trị tham số).
+
 ## Bảo mật & quản trị hệ thống (JWT)
 
 Mọi API `/api/**` yêu cầu header `Authorization: Bearer <accessToken>`, trừ:

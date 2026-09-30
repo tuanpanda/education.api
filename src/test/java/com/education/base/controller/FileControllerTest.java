@@ -132,7 +132,7 @@ class FileControllerTest {
                 .thenThrow(new OracleBusinessException("FILE_NOT_FOUND", "Không tìm thấy thông tin file với ID: 99"));
 
         mockMvc.perform(get("/api/v1/files/view/99"))
-                .andExpect(status().isBadRequest())
+                .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("FILE_NOT_FOUND"));
     }
 }

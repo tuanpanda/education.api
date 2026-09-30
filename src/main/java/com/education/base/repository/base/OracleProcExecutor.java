@@ -1,6 +1,7 @@
 package com.education.base.repository.base;
 
 import com.education.base.exception.OracleBusinessException;
+import com.education.base.exception.OracleErrorMessages;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.simple.SimpleJdbcCall;
 import org.springframework.stereotype.Component;
@@ -55,8 +56,11 @@ public class OracleProcExecutor {
 
     /**
      * Kiểm tra kết quả trả về từ Procedure dựa trên tham số Out quy ước {@code O_ERR_CODE}.
-     * Nếu {@code O_ERR_CODE} khác {@code '0'}, ném {@link OracleBusinessException} với thông tin
-     * lấy từ {@code O_ERR_CODE} và {@code O_ERR_MSG}.
+     * Nếu {@code O_ERR_CODE} khác {@code '0'}, ném {@link OracleBusinessException} với mã lấy từ
+     * {@code O_ERR_CODE} và thông báo từ {@code O_ERR_MSG} đã được chuẩn hóa bởi
+     * {@link OracleErrorMessages#toClientMessage(String)}: lỗi Oracle thô ({@code SQLERRM}, ví dụ
+     * {@code ORA-00001: ...}) được thay bằng thông báo chung và chỉ ghi log mức ERROR; lỗi
+     * {@code RAISE_APPLICATION_ERROR(-20xxx, 'text')} trả về {@code text} không kèm tiền tố.
      *
      * @param out Map kết quả trả về từ {@link SimpleJdbcCall#execute(Map)}.
      * @throws OracleBusinessException nếu {@code O_ERR_CODE} khác {@code '0'}.
@@ -78,8 +82,13 @@ public class OracleProcExecutor {
         if (!SUCCESS_ERR_CODE.equals(errCode)) {
             Object errMsgObj = out.get("O_ERR_MSG");
             String errMsg = errMsgObj != null ? String.valueOf(errMsgObj) : "Lỗi xử lý dữ liệu tại Oracle Procedure.";
-            log.error("Oracle Procedure trả về lỗi: errorCode={}, message={}", errCode, errMsg);
-            throw new OracleBusinessException(errCode, errMsg);
+            if (OracleErrorMessages.isRawDatabaseError(errMsg)) {
+                // SQLERRM thô (ORA-xxxxx ngoài dải -20xxx): chỉ ghi log, không trả chi tiết cho client.
+                log.error("Oracle Procedure trả về lỗi hệ thống: errorCode={}, message={}", errCode, errMsg);
+            } else {
+                log.warn("Oracle Procedure trả về lỗi nghiệp vụ: errorCode={}, message={}", errCode, errMsg);
+            }
+            throw new OracleBusinessException(errCode, OracleErrorMessages.toClientMessage(errMsg));
         }
     }
 }

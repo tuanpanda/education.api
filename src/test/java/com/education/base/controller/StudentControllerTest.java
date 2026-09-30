@@ -143,7 +143,7 @@ class StudentControllerTest {
                 .thenThrow(new OracleBusinessException("STUDENT_NOT_FOUND", "Không tìm thấy học sinh với ID: 99"));
 
         mockMvc.perform(get("/api/v1/students/99"))
-                .andExpect(status().isBadRequest())
+                .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("STUDENT_NOT_FOUND"));
     }
 

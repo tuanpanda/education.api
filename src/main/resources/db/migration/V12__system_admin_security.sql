@@ -15,6 +15,10 @@
 
 SET DEFINE OFF
 SET SERVEROUTPUT ON SIZE UNLIMITED
+-- Dung ngay o loi dau tien (khong chay tiep cac buoc sau tren du lieu dang do), rollback DML chua commit.
+-- Luu y: DDL (ALTER TABLE ben duoi) tu commit, khong rollback duoc; cac khoi DDL da idempotent nen chay lai an toan.
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+WHENEVER OSERROR EXIT FAILURE ROLLBACK
 
 PROMPT ============ V12.1 Cot bao mat tren SYS_USERS ============
 
