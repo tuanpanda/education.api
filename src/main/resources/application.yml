@@ -25,7 +25,8 @@ spring:
   jpa:
     hibernate:
       ddl-auto: none
-    show-sql: true
+    # Log SQL: bật profile local-logging (application-local-logging.yml), không bật ở đây.
+    show-sql: false
     open-in-view: false
     properties:
       hibernate:
@@ -33,8 +34,13 @@ spring:
         format_sql: true
         jdbc:
           batch_size: 20
+          # Trùng múi giờ JVM (EducationApplication.APP_TIME_ZONE) -> LocalDateTime ghi/đọc không bị lệch.
+          time_zone: Asia/Ho_Chi_Minh
         boot:
           allow_jdbc_metadata_access: false
+
+  jackson:
+    time-zone: Asia/Ho_Chi_Minh
 
   servlet:
     multipart:
@@ -43,6 +49,9 @@ spring:
       max-request-size: 55MB
 
 app:
+  cors:
+    # Origin được gọi API cross-origin, phân tách bằng dấu phẩy. Prod: không có mặc định (rỗng = same-origin).
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:8088,http://localhost:3000}
   storage:
     base-dir: ${APP_STORAGE_DIR:./outputs}
   security:
@@ -61,9 +70,9 @@ springdoc:
     enabled: true
     disable-swagger-default-url: true
 
+# DEBUG/TRACE (SQL, bind parameter): SPRING_PROFILES_ACTIVE=local-logging (xem README).
 logging:
   level:
     root: INFO
-    com.education.base: DEBUG
-    org.hibernate.SQL: DEBUG
-    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+    com.education.base: INFO
+    org.hibernate.SQL: INFO

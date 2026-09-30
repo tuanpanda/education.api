@@ -1,0 +1,17 @@
+# Profile CHỈ dùng khi debug ở máy dev: log chi tiết SQL Hibernate và code ứng dụng.
+# Bật: SPRING_PROFILES_ACTIVE=local-logging (hoặc thêm vào danh sách, ví dụ dev,local-logging).
+# KHÔNG bật ở production: TRACE bind parameter ghi cả giá trị tham số (hash mật khẩu, dữ liệu cá nhân...).
+spring:
+  jpa:
+    # Dùng logger org.hibernate.SQL bên dưới thay cho show-sql (tránh in trùng ra stdout).
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+logging:
+  level:
+    com.education.base: DEBUG
+    org.hibernate.SQL: DEBUG
+    # Hibernate 6: giá trị bind parameter (thay cho org.hibernate.type.descriptor.sql.BasicBinder của Hibernate 5).
+    org.hibernate.orm.jdbc.bind: TRACE
