@@ -3,6 +3,7 @@ package com.education.base.controller;
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.response.UserNavigationResponseDto;
 import com.education.base.security.AllowPendingPasswordChange;
+import com.education.base.security.AuthenticatedOnly;
 import com.education.base.security.SecurityUtils;
 import com.education.base.service.AccessControlService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -26,6 +27,7 @@ public class MenuController {
     @Operation(summary = "Cây menu sidebar của người dùng đang đăng nhập",
             description = "Người dùng lấy từ access token; chỉ trả menu có quyền VIEW (kèm menu cha) và danh sách quyền phẳng.")
     @GetMapping("/user-navigation")
+    @AuthenticatedOnly
     @AllowPendingPasswordChange
     public ApiResponse<UserNavigationResponseDto> getUserNavigation() {
         return ApiResponse.success(accessControlService.getNavigation(SecurityUtils.requireCurrentUser()));

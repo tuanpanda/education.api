@@ -1,5 +1,6 @@
 package com.education.base.controller;
 
+import com.education.base.security.PublicEndpoint;
 import io.swagger.v3.oas.annotations.Hidden;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -14,6 +15,7 @@ import java.net.URI;
  */
 @Hidden
 @RestController
+@PublicEndpoint
 public class HomeController {
 
     static final String SWAGGER_UI_PATH = "/swagger-ui/index.html";

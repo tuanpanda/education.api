@@ -1,5 +1,6 @@
 package com.education.base.controller;
 
+import com.education.base.security.AuthenticatedOnly;
 import com.education.base.security.Permissions;
 import com.education.base.security.RequirePermission;
 import com.education.base.common.ApiResponse;
@@ -40,6 +41,7 @@ public class BankAccountController {
 
     @Operation(summary = "STK đang sử dụng")
     @GetMapping("/active")
+    @AuthenticatedOnly
     public ApiResponse<BankAccountResponseDto> getActive() {
         return ApiResponse.success(bankAccountService.requireActive());
     }
