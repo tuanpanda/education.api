@@ -8,12 +8,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.io.Resource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.mock.web.MockMultipartFile;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
@@ -24,6 +27,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -32,6 +36,9 @@ class FileStorageServiceImplTest {
 
     @TempDir
     Path tempDir;
+
+    private static final byte[] PNG_BYTES = {(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0x0D};
+    private static final byte[] ZIP_BYTES = {'P', 'K', 0x03, 0x04, 0x14, 0, 0, 0};
 
     @Mock
     private FileRepository fileRepository;
@@ -58,7 +65,7 @@ class FileStorageServiceImplTest {
     @Test
     void storeFile_savesPhysicalFileAndRelativePathOnly() throws Exception {
         MockMultipartFile upload = new MockMultipartFile(
-                "file", "ho-so.pdf", "application/pdf", "noi dung".getBytes());
+                "file", "ho-so.pdf", "application/pdf", "%PDF-1.4 noi dung".getBytes());
         when(fileRepository.save(any(FileEntity.class))).thenAnswer(invocation -> {
             FileEntity entity = invocation.getArgument(0);
             entity.setId(99L);
@@ -76,7 +83,7 @@ class FileStorageServiceImplTest {
         assertThat(saved.getModuleName()).isEqualTo("STUDENT");
         assertThat(saved.getReferenceId()).isEqualTo(12L);
         assertThat(saved.getContentType()).isEqualTo("application/pdf");
-        assertThat(saved.getFileSize()).isEqualTo("noi dung".getBytes().length);
+        assertThat(saved.getFileSize()).isEqualTo("%PDF-1.4 noi dung".getBytes().length);
         assertThat(saved.getIsDeleted()).isZero();
         assertThat(saved.getStoredName()).endsWith("_ho-so.pdf");
         assertThat(saved.getFilePath())
@@ -87,14 +94,14 @@ class FileStorageServiceImplTest {
 
         Path physical = tempDir.resolve(saved.getFilePath()).normalize();
         assertThat(physical).startsWith(tempDir.toAbsolutePath().normalize());
-        assertThat(Files.readString(physical)).isEqualTo("noi dung");
+        assertThat(Files.readString(physical)).isEqualTo("%PDF-1.4 noi dung");
     }
 
     @Test
     void storeFile_withSubFolder_usesModuleSubFolderYearMonth() {
         MockMultipartFile upload = new MockMultipartFile(
                 "file", "ds.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "xlsx".getBytes());
+                ZIP_BYTES);
         when(fileRepository.save(any(FileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         FileEntity saved = service.storeFile(upload, "STUDENT", null, "IMPORT");
@@ -122,7 +129,7 @@ class FileStorageServiceImplTest {
     @Test
     void storeFile_sanitizesUnsafeCharactersInFileName() {
         MockMultipartFile upload = new MockMultipartFile(
-                "file", "hồ sơ (1).pdf", "application/pdf", "x".getBytes());
+                "file", "hồ sơ (1).pdf", "application/pdf", "%PDF-x".getBytes());
         when(fileRepository.save(any(FileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         FileEntity saved = service.storeFile(upload, "STUDENT", 1L);
@@ -132,15 +139,74 @@ class FileStorageServiceImplTest {
     }
 
     @Test
-    void storeFile_blankModuleAndMissingContentType_useDefaults() {
-        MockMultipartFile upload = new MockMultipartFile("file", "a.bin", null, "x".getBytes());
+    void storeFile_blankModuleAndMissingContentType_useDefaultModuleAndDetectedType() {
+        MockMultipartFile upload = new MockMultipartFile("file", "a.txt", null, "x".getBytes());
         when(fileRepository.save(any(FileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         FileEntity saved = service.storeFile(upload, "  ", null);
 
         assertThat(saved.getModuleName()).isEqualTo("COMMON");
         assertThat(saved.getFilePath()).startsWith("COMMON/");
-        assertThat(saved.getContentType()).isEqualTo("application/octet-stream");
+        assertThat(saved.getContentType()).isEqualTo("text/plain");
+    }
+
+    @Test
+    void storeFile_storesServerDetectedContentTypeNotClientValue() {
+        MockMultipartFile upload = new MockMultipartFile("file", "anh.png", "text/html", PNG_BYTES);
+        when(fileRepository.save(any(FileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        FileEntity saved = service.storeFile(upload, "STUDENT", 1L);
+
+        assertThat(saved.getContentType()).isEqualTo("image/png");
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "logo.svg, image/svg+xml, <svg xmlns=x><script>alert(1)</script></svg>, FILE_TYPE_NOT_ALLOWED",
+            "trang.html, text/html, <html><script>alert(1)</script></html>, FILE_TYPE_NOT_ALLOWED",
+            "trang.htm, text/html, <p>x</p>, FILE_TYPE_NOT_ALLOWED",
+            "virus.exe, application/octet-stream, MZ, FILE_TYPE_NOT_ALLOWED",
+            "khong-duoi, application/pdf, %PDF-1.4, FILE_TYPE_NOT_ALLOWED",
+            "a.bin, application/octet-stream, x, FILE_TYPE_NOT_ALLOWED",
+            "ghi-chu.txt, text/plain, <!DOCTYPE html><html></html>, FILE_CONTENT_MISMATCH",
+            "bang.csv, text/csv, <svg onload=alert(1)>, FILE_CONTENT_MISMATCH",
+            "gia-anh.png, image/png, <html>not a png</html>, FILE_CONTENT_MISMATCH",
+            "gia.pdf, application/pdf, <html>fake</html>, FILE_CONTENT_MISMATCH",
+            "gia.jpg, image/jpeg, GIF89a..., FILE_CONTENT_MISMATCH",
+            "gia.docx, application/msword, %PDF-1.4, FILE_CONTENT_MISMATCH"
+    })
+    void storeFile_rejectsDisallowedOrMismatchedTypes(String name, String clientType, String content, String code) {
+        MockMultipartFile upload = new MockMultipartFile("file", name, clientType,
+                content.getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> service.storeFile(upload, "COMMON", 1L))
+                .isInstanceOf(OracleBusinessException.class)
+                .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
+                .isEqualTo(code);
+        verify(fileRepository, never()).save(any());
+        assertThat(tempDir.toFile().listFiles()).isEmpty();
+    }
+
+    @Test
+    void storeFile_rejectsBinaryContentInTextFile() {
+        MockMultipartFile upload = new MockMultipartFile("file", "a.txt", "text/plain", new byte[]{'a', 0, 'b'});
+
+        assertThatThrownBy(() -> service.storeFile(upload, "COMMON", 1L))
+                .isInstanceOf(OracleBusinessException.class)
+                .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
+                .isEqualTo("FILE_CONTENT_MISMATCH");
+    }
+
+    @Test
+    void storeBytes_rejectsHtmlDisguisedAsXlsx() {
+        byte[] html = "<html><script>alert(1)</script></html>".getBytes(StandardCharsets.UTF_8);
+
+        assertThatThrownBy(() -> service.storeBytes(html, "ds.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "STUDENT", null, "IMPORT"))
+                .isInstanceOf(OracleBusinessException.class)
+                .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
+                .isEqualTo("FILE_CONTENT_MISMATCH");
+        verify(fileRepository, never()).save(any());
     }
 
     @Test
