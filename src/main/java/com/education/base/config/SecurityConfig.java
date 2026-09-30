@@ -6,7 +6,9 @@ import com.education.base.security.RestAccessDeniedHandler;
 import com.education.base.security.RestAuthenticationEntryPoint;
 import com.education.base.security.SecurityErrorWriter;
 import com.education.base.service.AccessControlService;
+import com.education.base.service.RefreshTokenService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -72,7 +74,9 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                    JwtTokenService jwtTokenService,
                                                    AccessControlService accessControlService,
-                                                   ObjectMapper objectMapper) throws Exception {
+                                                   ObjectMapper objectMapper,
+                                                   ObjectProvider<RefreshTokenService> refreshTokenService)
+            throws Exception {
         SecurityErrorWriter errorWriter = new SecurityErrorWriter(objectMapper);
         RequestMatcher swaggerUi = new OrRequestMatcher(Arrays.stream(SWAGGER_UI_PATHS)
                 .map(AntPathRequestMatcher::antMatcher)
@@ -105,7 +109,8 @@ public class SecurityConfig {
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(new RestAuthenticationEntryPoint(errorWriter))
                         .accessDeniedHandler(new RestAccessDeniedHandler(errorWriter)))
-                .addFilterBefore(new JwtAuthenticationFilter(jwtTokenService, accessControlService),
+                .addFilterBefore(new JwtAuthenticationFilter(jwtTokenService, accessControlService,
+                                refreshTokenService.getIfAvailable()),
                         UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

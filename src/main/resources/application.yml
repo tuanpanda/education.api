@@ -2,10 +2,18 @@ server:
   port: ${HTTP_PLATFORM_PORT:${SERVER_PORT:8080}}
   servlet:
     context-path: /
+  # Lấy IP thật của client từ X-Forwarded-For khi chạy sau reverse proxy nội bộ (nginx của UI / Docker),
+  # dùng cho giới hạn tần suất đăng nhập. Tomcat chỉ tin header này khi request đến từ dải IP nội bộ.
+  forward-headers-strategy: ${SERVER_FORWARD_HEADERS_STRATEGY:native}
 
 spring:
   application:
     name: education-base
+
+  # Không truyền SPRING_PROFILES_ACTIVE (vd. chạy EducationApplication trong IntelliJ) -> profile dev
+  # (application-dev.yml có JWT secret dev). Docker / production luôn chạy profile prod.
+  profiles:
+    default: dev
 
   datasource:
     url: ${DB_URL:jdbc:oracle:thin:@//localhost:1521/ORCL}
@@ -56,11 +64,28 @@ app:
     base-dir: ${APP_STORAGE_DIR:./outputs}
   security:
     jwt:
-      # Chỉ dùng cho môi trường dev. Profile prod bắt buộc truyền JWT_SECRET (>= 32 ký tự).
-      secret: ${JWT_SECRET:dev-only-education-jwt-secret-change-me-0123456789}
+      # KHÔNG có giá trị mặc định: bắt buộc JWT_SECRET (>= 32 byte). Chỉ profile dev (application-dev.yml)
+      # và profile test có secret riêng. Profile prod từ chối khởi động nếu dùng secret dev/test.
+      secret: ${JWT_SECRET:}
       issuer: ${JWT_ISSUER:education-api}
       access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:15m}
       refresh-token-ttl: ${JWT_REFRESH_TOKEN_TTL:7d}
+      # Nhiều tab làm mới cùng lúc bằng một refresh token trong khoảng này không bị coi là dùng lại.
+      refresh-reuse-grace: ${JWT_REFRESH_REUSE_GRACE:10s}
+    auth:
+      lockout:
+        # Cứ mỗi N lần sai mật khẩu liên tiếp thì khóa tạm thời; lần khóa sau gấp đôi lần trước, tối đa max-duration.
+        max-failed-attempts: ${AUTH_LOCKOUT_MAX_FAILED_ATTEMPTS:5}
+        base-duration: ${AUTH_LOCKOUT_BASE_DURATION:15m}
+        max-duration: ${AUTH_LOCKOUT_MAX_DURATION:24h}
+      rate-limit:
+        # Giới hạn tần suất /api/v1/auth/login và /refresh (cửa sổ trượt trong bộ nhớ, theo từng instance).
+        enabled: ${AUTH_RATE_LIMIT_ENABLED:true}
+        window: ${AUTH_RATE_LIMIT_WINDOW:5m}
+        login-per-ip: ${AUTH_RATE_LIMIT_LOGIN_PER_IP:30}
+        login-per-username: ${AUTH_RATE_LIMIT_LOGIN_PER_USERNAME:10}
+        refresh-per-ip: ${AUTH_RATE_LIMIT_REFRESH_PER_IP:120}
+        refresh-per-user: ${AUTH_RATE_LIMIT_REFRESH_PER_USER:60}
 
 springdoc:
   api-docs:

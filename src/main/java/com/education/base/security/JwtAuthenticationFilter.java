@@ -1,6 +1,7 @@
 package com.education.base.security;
 
 import com.education.base.service.AccessControlService;
+import com.education.base.service.RefreshTokenService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,8 +19,9 @@ import java.util.Optional;
 
 /**
  * Đọc access token ({@code Authorization: Bearer ...}), kiểm tra chữ ký / hạn dùng, nạp lại người dùng
- * từ DB (phải còn {@code ACTIVE}, {@code TOKEN_VERSION} khớp) rồi gắn {@link AuthUserPrincipal} vào
- * {@code SecurityContext}.
+ * từ DB (phải còn {@code ACTIVE}, {@code TOKEN_VERSION} khớp, phiên {@code sid} chưa bị thu hồi) rồi gắn
+ * {@link AuthUserPrincipal} vào {@code SecurityContext}. Claim đã xác thực được lưu ở request attribute
+ * {@link #CLAIMS_ATTRIBUTE} (ví dụ để đăng xuất đúng phiên).
  * <p>
  * Token lỗi không chặn ngay: request tiếp tục ở trạng thái ẩn danh, endpoint công khai vẫn chạy bình thường,
  * endpoint cần đăng nhập nhận 401 kèm mã lỗi chi tiết từ {@link RestAuthenticationEntryPoint}.
@@ -30,15 +32,24 @@ import java.util.Optional;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     public static final String ERROR_ATTRIBUTE = JwtAuthenticationFilter.class.getName() + ".ERROR";
+    public static final String CLAIMS_ATTRIBUTE = JwtAuthenticationFilter.class.getName() + ".CLAIMS";
     public static final String TOKEN_REVOKED = "TOKEN_REVOKED";
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final JwtTokenService jwtTokenService;
     private final AccessControlService accessControlService;
+    /** Có thể {@code null} (slice test): khi đó không kiểm tra phiên {@code sid}. */
+    private final RefreshTokenService refreshTokenService;
 
     public JwtAuthenticationFilter(JwtTokenService jwtTokenService, AccessControlService accessControlService) {
+        this(jwtTokenService, accessControlService, null);
+    }
+
+    public JwtAuthenticationFilter(JwtTokenService jwtTokenService, AccessControlService accessControlService,
+                                   RefreshTokenService refreshTokenService) {
         this.jwtTokenService = jwtTokenService;
         this.accessControlService = accessControlService;
+        this.refreshTokenService = refreshTokenService;
     }
 
     @Override
@@ -67,8 +78,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         Optional<AuthUserPrincipal> loaded = accessControlService.loadActivePrincipal(claims.userId());
         if (loaded.isEmpty() || claims.tokenVersion() == null
                 || loaded.get().getTokenVersion() != claims.tokenVersion()) {
-            throw new InvalidTokenException(TOKEN_REVOKED,
-                    "Phiên đăng nhập đã hết hiệu lực, vui lòng đăng nhập lại.");
+            throw revoked();
+        }
+        if (refreshTokenService != null && claims.sessionId() != null
+                && !refreshTokenService.isSessionActive(claims.sessionId())) {
+            // Phiên đã đăng xuất / bị thu hồi do phát hiện dùng lại refresh token.
+            throw revoked();
         }
         AuthUserPrincipal principal = loaded.get();
         UsernamePasswordAuthenticationToken authentication =
@@ -77,5 +92,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         SecurityContext context = SecurityContextHolder.createEmptyContext();
         context.setAuthentication(authentication);
         SecurityContextHolder.setContext(context);
+        request.setAttribute(CLAIMS_ATTRIBUTE, claims);
+    }
+
+    private static InvalidTokenException revoked() {
+        return new InvalidTokenException(TOKEN_REVOKED, "Phiên đăng nhập đã hết hiệu lực, vui lòng đăng nhập lại.");
     }
 }
