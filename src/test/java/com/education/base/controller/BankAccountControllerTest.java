@@ -69,4 +69,22 @@ class BankAccountControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
     }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_TEACHER")
+    void getActive_isOpenToAnyAuthenticatedUser() throws Exception {
+        when(bankAccountService.requireActive()).thenReturn(BankAccountResponseDto.builder()
+                .id(2L).active(true).accountNo("222").build());
+
+        mockMvc.perform(get("/api/v1/bank-accounts/active"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accountNo").value("222"));
+    }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_TEACHER")
+    void list_withoutPermission_returns403() throws Exception {
+        mockMvc.perform(get("/api/v1/bank-accounts"))
+                .andExpect(status().isForbidden());
+    }
 }

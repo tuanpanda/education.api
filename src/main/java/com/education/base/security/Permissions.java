@@ -15,6 +15,9 @@ public class Permissions {
     /** Vai trò quản trị tối cao: luôn được phép mọi chức năng. */
     public static final String ADMIN_ROLE = "ROLE_ADMIN";
 
+    /** Vai trò giảng viên: chỉ được ghi điểm / điểm danh cho lớp mình phụ trách. */
+    public static final String TEACHER_ROLE = "ROLE_TEACHER";
+
     public static final String SEPARATOR = ":";
 
     public static final String VIEW = "VIEW";

@@ -9,12 +9,15 @@ import com.education.base.entity.FunctionEntity;
 import com.education.base.entity.MenuEntity;
 import com.education.base.entity.RoleEntity;
 import com.education.base.entity.RoleMenuPermissionEntity;
+import com.education.base.exception.ForbiddenException;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.repository.FunctionRepository;
 import com.education.base.repository.MenuRepository;
 import com.education.base.repository.RoleMenuPermissionRepository;
 import com.education.base.repository.RoleRepository;
 import com.education.base.repository.UserRoleRepository;
+import com.education.base.support.TestSecurityContexts;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,6 +28,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -67,6 +71,19 @@ class RoleAdminServiceImplTest {
                 function(2L, 101L, "VIEW"), function(3L, 101L, "CREATE"), function(4L, 101L, "EXPORT"),
                 function(5L, 102L, "VIEW"), function(6L, 102L, "UPDATE")));
         lenient().when(roleMenuPermissionRepository.findByRoleId(any())).thenAnswer(inv -> storedPermissions);
+        TestSecurityContexts.loginAdmin(1L);
+    }
+
+    @AfterEach
+    void tearDown() {
+        TestSecurityContexts.clear();
+    }
+
+    private static RolePermissionUpdateRequest grant(Long menuId, String... functions) {
+        return RolePermissionUpdateRequest.builder()
+                .permissions(new ArrayList<>(List.of(RolePermissionUpdateRequest.MenuPermission.builder()
+                        .menuId(menuId).functions(List.of(functions)).build())))
+                .build();
     }
 
     private static MenuEntity menu(Long id, Long parentId, String code, String type, int sort) {
@@ -210,5 +227,93 @@ class RoleAdminServiceImplTest {
                 .containsExactlyInAnyOrder(
                         org.assertj.core.groups.Tuple.tuple(101L, "VIEW,EXPORT"),
                         org.assertj.core.groups.Tuple.tuple(100L, "VIEW"));
+    }
+
+    // ---- C1: phân quyền vai trò --------------------------------------------------------------------------
+
+    @Test
+    void updatePermissions_adminRole_byNonAdmin_isForbidden() {
+        TestSecurityContexts.login(5L, List.of("ROLE_MANAGER"), Set.of("MENU_ROLE_LIST:UPDATE"));
+        when(roleRepository.findByIdAndIsDeleted(1L, 0)).thenReturn(Optional.of(role(1L, "ROLE_ADMIN")));
+
+        assertThatThrownBy(() -> service.updatePermissions(1L, grant(101L, "VIEW")))
+                .isInstanceOf(ForbiddenException.class)
+                .extracting("errorCode").isEqualTo("ADMIN_ROLE_PROTECTED");
+        verify(roleMenuPermissionRepository, never()).saveAll(anyList());
+    }
+
+    @Test
+    void updatePermissions_ownRole_byNonAdmin_isForbidden() {
+        TestSecurityContexts.login(5L, List.of("ROLE_TEACHER"),
+                Set.of("MENU_ROLE_LIST:UPDATE", "MENU_STUDENT_LIST:VIEW"));
+        when(roleRepository.findByIdAndIsDeleted(2L, 0)).thenReturn(Optional.of(role(2L, "ROLE_TEACHER")));
+
+        assertThatThrownBy(() -> service.updatePermissions(2L, grant(101L, "VIEW")))
+                .isInstanceOf(ForbiddenException.class)
+                .extracting("errorCode").isEqualTo("CANNOT_EDIT_OWN_ROLE");
+        verify(roleMenuPermissionRepository, never()).saveAll(anyList());
+        verify(roleMenuPermissionRepository, never()).deleteAll(anyList());
+    }
+
+    @Test
+    void updatePermissions_grantNotHeld_byNonAdmin_isForbidden() {
+        TestSecurityContexts.login(5L, List.of("ROLE_MANAGER"),
+                Set.of("MENU_ROLE_LIST:UPDATE", "MENU_STUDENT_LIST:VIEW"));
+        when(roleRepository.findByIdAndIsDeleted(2L, 0)).thenReturn(Optional.of(role(2L, "ROLE_TEACHER")));
+
+        assertThatThrownBy(() -> service.updatePermissions(2L, grant(101L, "VIEW", "CREATE")))
+                .isInstanceOf(ForbiddenException.class)
+                .extracting("errorCode").isEqualTo("GRANT_NOT_HELD");
+        verify(roleMenuPermissionRepository, never()).saveAll(anyList());
+    }
+
+    @Test
+    void updatePermissions_heldGrants_byNonAdmin_isAllowedWithImplicitParentView() {
+        TestSecurityContexts.login(5L, List.of("ROLE_MANAGER"),
+                Set.of("MENU_ROLE_LIST:UPDATE", "MENU_STUDENT_LIST:VIEW", "MENU_STUDENT_LIST:EXPORT"));
+        when(roleRepository.findByIdAndIsDeleted(2L, 0)).thenReturn(Optional.of(role(2L, "ROLE_TEACHER")));
+
+        service.updatePermissions(2L, grant(101L, "VIEW", "EXPORT"));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<RoleMenuPermissionEntity>> captor = ArgumentCaptor.forClass(List.class);
+        verify(roleMenuPermissionRepository).saveAll(captor.capture());
+        assertThat(captor.getValue())
+                .extracting(RoleMenuPermissionEntity::getMenuId, RoleMenuPermissionEntity::getAllowedFunctions)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(101L, "VIEW,EXPORT"),
+                        org.assertj.core.groups.Tuple.tuple(100L, "VIEW"));
+    }
+
+    @Test
+    void updatePermissions_keepOrRevokeExistingUnheldGrant_byNonAdmin_isAllowed() {
+        TestSecurityContexts.login(5L, List.of("ROLE_MANAGER"), Set.of("MENU_ROLE_LIST:UPDATE"));
+        when(roleRepository.findByIdAndIsDeleted(2L, 0)).thenReturn(Optional.of(role(2L, "ROLE_TEACHER")));
+        RoleMenuPermissionEntity classes = RoleMenuPermissionEntity.builder()
+                .id(7L).roleId(2L).menuId(102L).allowedFunctions("VIEW,UPDATE").build();
+        storedPermissions.add(classes);
+
+        service.updatePermissions(2L, grant(102L, "VIEW"));
+
+        assertThat(classes.getAllowedFunctions()).isEqualTo("VIEW");
+    }
+
+    @Test
+    void updatePermissions_withoutSecurityContext_newGrant_isForbidden() {
+        TestSecurityContexts.clear();
+        when(roleRepository.findByIdAndIsDeleted(2L, 0)).thenReturn(Optional.of(role(2L, "ROLE_TEACHER")));
+
+        assertThatThrownBy(() -> service.updatePermissions(2L, grant(101L, "VIEW")))
+                .isInstanceOf(ForbiddenException.class)
+                .extracting("errorCode").isEqualTo("GRANT_NOT_HELD");
+    }
+
+    @Test
+    void updatePermissions_admin_canGrantAnything() {
+        when(roleRepository.findByIdAndIsDeleted(2L, 0)).thenReturn(Optional.of(role(2L, "ROLE_TEACHER")));
+
+        service.updatePermissions(2L, grant(101L, "VIEW", "CREATE"));
+
+        verify(roleMenuPermissionRepository).saveAll(anyList());
     }
 }

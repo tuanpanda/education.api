@@ -11,11 +11,13 @@ import com.education.base.dto.response.UserResponseDto;
 import com.education.base.entity.RoleEntity;
 import com.education.base.entity.UserEntity;
 import com.education.base.entity.UserRoleEntity;
+import com.education.base.exception.ForbiddenException;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.repository.RoleRepository;
 import com.education.base.repository.UserRepository;
 import com.education.base.repository.UserRoleRepository;
 import com.education.base.repository.spec.UserSpecifications;
+import com.education.base.security.AuthUserPrincipal;
 import com.education.base.security.Permissions;
 import com.education.base.security.SecurityUtils;
 import com.education.base.service.UserAdminService;
@@ -79,6 +81,7 @@ public class UserAdminServiceImpl implements UserAdminService {
             throw new OracleBusinessException("USERNAME_DUPLICATED", "Tên đăng nhập '" + username + "' đã tồn tại.");
         }
         List<RoleEntity> roles = requireAssignableRoles(request.getRoleIds());
+        requireAdminToAssignAdminRole(roles);
         String actor = SecurityUtils.currentUsername();
 
         UserEntity user = UserEntity.builder()
@@ -106,6 +109,7 @@ public class UserAdminServiceImpl implements UserAdminService {
     @Transactional(rollbackFor = Exception.class)
     public UserResponseDto update(Long id, UserUpdateRequest request) {
         UserEntity user = requireUser(id);
+        requireAdminForAdminAccount(user, "cập nhật");
         user.setFullName(request.getFullName().trim());
         user.setEmail(blankToNull(request.getEmail()));
         user.setPhone(blankToNull(request.getPhone()));
@@ -120,6 +124,7 @@ public class UserAdminServiceImpl implements UserAdminService {
         if (Objects.equals(id, currentUserId)) {
             throw new OracleBusinessException("CANNOT_DELETE_SELF", "Không thể xóa tài khoản đang đăng nhập.");
         }
+        requireAdminForAdminAccount(user, "xóa");
         guardLastAdmin(user, "xóa");
         user.setIsDeleted(PersistenceFlags.DELETED);
         user.setTokenVersion(nextVersion(user));
@@ -132,6 +137,7 @@ public class UserAdminServiceImpl implements UserAdminService {
     @Transactional(rollbackFor = Exception.class)
     public UserResponseDto changeStatus(Long id, boolean active, Long currentUserId) {
         UserEntity user = requireUser(id);
+        requireAdminForAdminAccount(user, active ? "mở khóa" : "khóa");
         if (!active) {
             if (Objects.equals(id, currentUserId)) {
                 throw new OracleBusinessException("CANNOT_LOCK_SELF", "Không thể khóa tài khoản đang đăng nhập.");
@@ -155,6 +161,7 @@ public class UserAdminServiceImpl implements UserAdminService {
             throw new OracleBusinessException("CANNOT_RESET_SELF",
                     "Hãy dùng chức năng Đổi mật khẩu cho tài khoản đang đăng nhập.");
         }
+        requireAdminForAdminAccount(user, "đặt lại mật khẩu cho");
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         user.setMustChangePassword(1);
         user.setPasswordChangedAt(LocalDateTime.now());
@@ -168,7 +175,16 @@ public class UserAdminServiceImpl implements UserAdminService {
     @Transactional(rollbackFor = Exception.class)
     public UserResponseDto assignRoles(Long id, List<Long> roleIds) {
         UserEntity user = requireUser(id);
+        boolean self = SecurityUtils.currentUser()
+                .map(AuthUserPrincipal::getId)
+                .filter(currentUserId -> Objects.equals(currentUserId, id))
+                .isPresent();
+        if (self) {
+            throw new ForbiddenException("CANNOT_CHANGE_OWN_ROLES", "Không thể tự thay đổi vai trò của chính mình.");
+        }
+        requireAdminForAdminAccount(user, "thay đổi vai trò của");
         List<RoleEntity> roles = requireAssignableRoles(roleIds);
+        requireAdminToAssignAdminRole(roles);
         boolean keepsAdmin = roles.stream().anyMatch(role -> Permissions.ADMIN_ROLE.equals(role.getRoleCode()));
         if (!keepsAdmin) {
             guardLastAdmin(user, "gỡ vai trò quản trị của");
@@ -204,10 +220,37 @@ public class UserAdminServiceImpl implements UserAdminService {
     }
 
     /**
+     * Chỉ quản trị viên ({@link Permissions#ADMIN_ROLE}) được thao tác trên tài khoản đang giữ vai trò quản trị.
+     */
+    private void requireAdminForAdminAccount(UserEntity user, String action) {
+        if (!SecurityUtils.isCurrentUserAdmin() && hasAdminRole(user.getId())) {
+            throw new ForbiddenException("ADMIN_ACCOUNT_PROTECTED",
+                    "Chỉ quản trị viên hệ thống mới được " + action + " tài khoản quản trị viên.");
+        }
+    }
+
+    /** Chỉ quản trị viên được gán vai trò {@link Permissions#ADMIN_ROLE}. */
+    private static void requireAdminToAssignAdminRole(List<RoleEntity> roles) {
+        boolean grantsAdmin = roles.stream().anyMatch(role -> Permissions.ADMIN_ROLE.equals(role.getRoleCode()));
+        if (grantsAdmin && !SecurityUtils.isCurrentUserAdmin()) {
+            throw new ForbiddenException("ADMIN_ROLE_ASSIGNMENT_FORBIDDEN",
+                    "Chỉ quản trị viên hệ thống mới được gán vai trò Quản trị viên.");
+        }
+    }
+
+    /**
      * Chặn thao tác làm hệ thống mất quản trị viên hoạt động cuối cùng.
+     * <p>
+     * Khóa trước các dòng {@code SYS_USER_ROLES} của {@link Permissions#ADMIN_ROLE} ({@code SELECT ... FOR UPDATE})
+     * để các giao dịch song song (xóa / khóa / gỡ quyền những quản trị viên cuối) phải chạy tuần tự; giao dịch sau
+     * chỉ đếm lại sau khi giao dịch trước commit nên không thể cùng vượt qua kiểm tra.
      */
     private void guardLastAdmin(UserEntity user, String action) {
-        if (!DomainConstants.USER_STATUS_ACTIVE.equals(user.getStatus()) || !hasAdminRole(user.getId())) {
+        if (!DomainConstants.USER_STATUS_ACTIVE.equals(user.getStatus())) {
+            return;
+        }
+        userRoleRepository.lockByRoleCode(Permissions.ADMIN_ROLE);
+        if (!hasAdminRole(user.getId())) {
             return;
         }
         long otherAdmins = userRepository.countActiveUsersWithRoleExcluding(Permissions.ADMIN_ROLE, user.getId());

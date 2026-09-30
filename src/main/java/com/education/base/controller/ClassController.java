@@ -56,6 +56,7 @@ public class ClassController {
             description = "Trả về các lớp đang mở (OPEN, chưa xóa mềm), sắp xếp mới nhất trước. "
                     + "Dùng cho Select trên form thêm học sinh.")
     @GetMapping("/options")
+    @RequirePermission({Permissions.CLASS_VIEW, Permissions.STUDENT_CREATE})
     public ApiResponse<List<ClassOptionResponse>> listOpenOptions() {
         return ApiResponse.success(classService.listOpenOptions());
     }

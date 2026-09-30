@@ -16,6 +16,7 @@ import com.education.base.entity.ClassEntity;
 import com.education.base.entity.ClassStudentEntity;
 import com.education.base.entity.FileEntity;
 import com.education.base.entity.StudentEntity;
+import com.education.base.exception.ForbiddenException;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.mapper.FileMapper;
 import com.education.base.mapper.StudentMapper;
@@ -24,6 +25,8 @@ import com.education.base.repository.ClassRepository;
 import com.education.base.repository.ClassStudentRepository;
 import com.education.base.repository.StudentRepository;
 import com.education.base.repository.UserRepository;
+import com.education.base.security.Permissions;
+import com.education.base.security.SecurityUtils;
 import com.education.base.service.FileStorageService;
 import com.education.base.service.StudentService;
 import jakarta.persistence.EntityManager;
@@ -99,6 +102,9 @@ public class StudentServiceImpl implements StudentService {
                     "CLASS_ASSIGNMENT_CONFLICT",
                     "Chỉ chọn lớp có sẵn hoặc tạo nhanh lớp mới, không gửi đồng thời classId và newClass.");
         }
+        if (request.getNewClass() != null) {
+            requirePermission(Permissions.CLASS_CREATE, "Bạn không có quyền tạo lớp học mới.");
+        }
 
         StudentEntity entity = studentMapper.toEntity(request);
         entity.setIsDeleted(NOT_DELETED);
@@ -126,6 +132,9 @@ public class StudentServiceImpl implements StudentService {
     @Transactional(rollbackFor = Exception.class)
     public StudentDetailResponse update(Long id, StudentUpdateRequest request) {
         StudentEntity entity = requireActiveStudent(id);
+        if (request.getClassId() != null && isClassChange(entity.getId(), request.getClassId())) {
+            requirePermission(Permissions.CLASS_UPDATE, "Bạn không có quyền chuyển lớp cho học sinh.");
+        }
 
         studentMapper.updateEntity(request, entity);
         StudentEntity saved = studentRepository.save(entity);
@@ -165,6 +174,22 @@ public class StudentServiceImpl implements StudentService {
         FileEntity stored = fileStorageService.storeFile(file, MODULE_NAME, entity.getId());
         log.info("Đã đính kèm tài liệu fileId={} cho học sinh id={}", stored.getId(), entity.getId());
         return fileMapper.toDto(stored);
+    }
+
+    /**
+     * Quyền kiểm tra ngay trong service (không chỉ ở Controller) vì một endpoint học sinh có thể kéo theo thao tác
+     * trên lớp: tạo nhanh lớp cần {@code CLASS_CREATE}, chuyển lớp cần {@code CLASS_UPDATE}.
+     */
+    private static void requirePermission(String permission, String message) {
+        if (!SecurityUtils.currentUserHasPermission(permission)) {
+            throw new ForbiddenException("FORBIDDEN", message);
+        }
+    }
+
+    /** {@code true} nếu học sinh chưa (chỉ) thuộc đúng lớp {@code classId}, tức cập nhật sẽ ghi danh / chuyển lớp. */
+    private boolean isClassChange(Long studentId, Long classId) {
+        List<ClassStudentEntity> active = classStudentRepository.findByStudentIdAndIsDeleted(studentId, NOT_DELETED);
+        return active.isEmpty() || active.stream().anyMatch(row -> !classId.equals(row.getClassId()));
     }
 
     /**

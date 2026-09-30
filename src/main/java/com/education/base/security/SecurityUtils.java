@@ -34,6 +34,19 @@ public class SecurityUtils {
                 "UNAUTHORIZED", "Vui lòng đăng nhập để tiếp tục."));
     }
 
+    /** Người dùng hiện tại có vai trò quản trị tối cao {@link Permissions#ADMIN_ROLE}. */
+    public boolean isCurrentUserAdmin() {
+        return currentUser().map(AuthUserPrincipal::isAdmin).orElse(false);
+    }
+
+    /**
+     * Người dùng hiện tại có mã quyền {@code permission} ({@code MENU_CODE:FUNCTION_CODE}); quản trị viên luôn có.
+     * Chưa đăng nhập -> {@code false}.
+     */
+    public boolean currentUserHasPermission(String permission) {
+        return currentUser().map(principal -> principal.hasPermission(permission)).orElse(false);
+    }
+
     /** Tên đăng nhập của người thao tác (ghi vào CREATED_BY/UPDATED_BY), mặc định {@code SYSTEM}. */
     public String currentUsername() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();

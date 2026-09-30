@@ -5,6 +5,7 @@ import com.education.base.dto.request.UserFilterRequest;
 import com.education.base.dto.response.PageResponse;
 import com.education.base.dto.response.RoleSummaryDto;
 import com.education.base.dto.response.UserResponseDto;
+import com.education.base.exception.ForbiddenException;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.service.UserAdminService;
 import com.education.base.support.WebMvcSecurityTestConfig;
@@ -188,5 +189,19 @@ class AdminUserControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.roles[0].id").value(2));
         verify(userAdminService).assignRoles(3L, List.of(2L));
+    }
+
+    @Test
+    @WithAuthUser(id = 5L, roles = "ROLE_SUPPORT", permissions = "MENU_USER_LIST:UPDATE")
+    void assignRoles_adminGuardInService_returns403WithMessage() throws Exception {
+        when(userAdminService.assignRoles(anyLong(), any())).thenThrow(new ForbiddenException(
+                "ADMIN_ROLE_ASSIGNMENT_FORBIDDEN", "Chỉ quản trị viên hệ thống mới được gán vai trò Quản trị viên."));
+
+        mockMvc.perform(put("/api/v1/admin/users/3/roles")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"roleIds\":[1]}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ADMIN_ROLE_ASSIGNMENT_FORBIDDEN"))
+                .andExpect(jsonPath("$.message").value("Chỉ quản trị viên hệ thống mới được gán vai trò Quản trị viên."));
     }
 }

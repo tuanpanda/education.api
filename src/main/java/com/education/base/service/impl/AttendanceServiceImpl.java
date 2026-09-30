@@ -32,11 +32,14 @@ public class AttendanceServiceImpl implements AttendanceService {
     private final ClassRepository classRepository;
     private final ClassStudentRepository classStudentRepository;
     private final StudentRepository studentRepository;
+    private final TeachingAssignmentGuard teachingAssignmentGuard;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public List<AttendanceResponseDto> markBatch(AttendanceMarkRequest request) {
         ClassEntity clazz = requireClass(request.getClassId());
+        teachingAssignmentGuard.requireCanWrite(clazz,
+                "Bạn chỉ được điểm danh cho lớp mình phụ trách (lớp " + clazz.getClassCode() + ").");
         List<AttendanceResponseDto> saved = new ArrayList<>();
         for (AttendanceMarkRequest.Entry entry : request.getEntries()) {
             requireListedStudent(entry.getStudentId());
