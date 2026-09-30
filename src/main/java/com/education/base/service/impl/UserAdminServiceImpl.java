@@ -20,6 +20,7 @@ import com.education.base.repository.spec.UserSpecifications;
 import com.education.base.security.AuthUserPrincipal;
 import com.education.base.security.Permissions;
 import com.education.base.security.SecurityUtils;
+import com.education.base.service.RefreshTokenService;
 import com.education.base.service.UserAdminService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,6 +51,7 @@ public class UserAdminServiceImpl implements UserAdminService {
     private final RoleRepository roleRepository;
     private final UserRoleRepository userRoleRepository;
     private final PasswordEncoder passwordEncoder;
+    private final RefreshTokenService refreshTokenService;
 
     @Override
     @Transactional(readOnly = true)
@@ -127,9 +129,9 @@ public class UserAdminServiceImpl implements UserAdminService {
         requireAdminForAdminAccount(user, "xóa");
         guardLastAdmin(user, "xóa");
         user.setIsDeleted(PersistenceFlags.DELETED);
-        user.setTokenVersion(nextVersion(user));
         user.setUpdatedBy(SecurityUtils.currentUsername());
         userRepository.save(user);
+        revokeAllAccess(id);
         log.info("Đã xóa mềm người dùng id={}, username={}", id, user.getUsername());
     }
 
@@ -144,13 +146,19 @@ public class UserAdminServiceImpl implements UserAdminService {
             }
             guardLastAdmin(user, "khóa");
             user.setStatus(DomainConstants.USER_STATUS_LOCKED);
-            user.setTokenVersion(nextVersion(user));
         } else {
             user.setStatus(DomainConstants.USER_STATUS_ACTIVE);
         }
         user.setUpdatedBy(SecurityUtils.currentUsername());
+        UserEntity saved = userRepository.save(user);
+        if (active) {
+            // Mở khóa cũng gỡ khóa tạm thời do đăng nhập sai nhiều lần (FAILED_LOGIN_COUNT, LOCKED_UNTIL).
+            userRepository.clearLoginFailures(id);
+        } else {
+            revokeAllAccess(id);
+        }
         log.info("Đổi trạng thái người dùng id={} -> {}", id, user.getStatus());
-        return toDto(userRepository.save(user));
+        return toDto(saved);
     }
 
     @Override
@@ -165,9 +173,11 @@ public class UserAdminServiceImpl implements UserAdminService {
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         user.setMustChangePassword(1);
         user.setPasswordChangedAt(LocalDateTime.now());
-        user.setTokenVersion(nextVersion(user));
         user.setUpdatedBy(SecurityUtils.currentUsername());
         userRepository.save(user);
+        revokeAllAccess(id);
+        // Mật khẩu mới do quản trị viên cấp: gỡ khóa tạm thời để người dùng đăng nhập được ngay.
+        userRepository.clearLoginFailures(id);
         log.info("Đã đặt lại mật khẩu cho người dùng id={}", id);
     }
 
@@ -344,8 +354,18 @@ public class UserAdminServiceImpl implements UserAdminService {
                 .build();
     }
 
-    private static int nextVersion(UserEntity user) {
-        return (user.getTokenVersion() == null ? 0 : user.getTokenVersion()) + 1;
+    /**
+     * Thu hồi mọi quyền truy cập đang có của người dùng (khóa / xóa / đặt lại mật khẩu):
+     * <ul>
+     *     <li>tăng {@code TOKEN_VERSION} nguyên tử ở DB ({@link UserRepository#incrementTokenVersion}) để vô hiệu hóa
+     *     mọi access token; không tự cộng trên entity (có thể đã cũ) nên không mất lượt tăng khi có cập nhật đồng thời,
+     *     và nhờ {@code @DynamicUpdate} lần flush entity sau đó không ghi đè cột này;</li>
+     *     <li>thu hồi mọi phiên refresh token ({@code SYS_REFRESH_TOKENS}) để không thể làm mới lấy token mới.</li>
+     * </ul>
+     */
+    private void revokeAllAccess(Long userId) {
+        userRepository.incrementTokenVersion(userId);
+        refreshTokenService.revokeAllSessions(userId);
     }
 
     private static String blankToNull(String value) {

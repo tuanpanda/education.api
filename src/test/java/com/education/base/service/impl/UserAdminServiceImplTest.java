@@ -11,6 +11,7 @@ import com.education.base.exception.OracleBusinessException;
 import com.education.base.repository.RoleRepository;
 import com.education.base.repository.UserRepository;
 import com.education.base.repository.UserRoleRepository;
+import com.education.base.service.RefreshTokenService;
 import com.education.base.support.TestSecurityContexts;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,12 +53,15 @@ class UserAdminServiceImplTest {
     private RoleRepository roleRepository;
     @Mock
     private UserRoleRepository userRoleRepository;
+    @Mock
+    private RefreshTokenService refreshTokenService;
 
     private UserAdminServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new UserAdminServiceImpl(userRepository, roleRepository, userRoleRepository, ENCODER);
+        service = new UserAdminServiceImpl(userRepository, roleRepository, userRoleRepository, ENCODER,
+                refreshTokenService);
         lenient().when(userRepository.save(any(UserEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         TestSecurityContexts.loginAdmin(1L);
     }
@@ -120,7 +124,7 @@ class UserAdminServiceImplTest {
         service.delete(2L, 1L);
 
         assertThat(user.getIsDeleted()).isEqualTo(1);
-        assertThat(user.getTokenVersion()).isEqualTo(1);
+        verifyAccessRevoked(2L);
     }
 
     @Test
@@ -149,7 +153,8 @@ class UserAdminServiceImplTest {
         UserResponseDto dto = service.changeStatus(3L, false, 1L);
 
         assertThat(user.getStatus()).isEqualTo("LOCKED");
-        assertThat(user.getTokenVersion()).isEqualTo(1);
+        verifyAccessRevoked(3L);
+        verify(userRepository, never()).clearLoginFailures(any());
         assertThat(dto.isActive()).isFalse();
         verify(userRepository, never()).countActiveUsersWithRoleExcluding(any(), any());
     }
@@ -161,6 +166,8 @@ class UserAdminServiceImplTest {
         service.changeStatus(3L, true, 1L);
 
         assertThat(user.getStatus()).isEqualTo("ACTIVE");
+        verify(userRepository).clearLoginFailures(3L);
+        verifyNoAccessChange();
     }
 
     @Test
@@ -171,7 +178,8 @@ class UserAdminServiceImplTest {
 
         assertThat(ENCODER.matches("Reset@5678", user.getPasswordHash())).isTrue();
         assertThat(user.getMustChangePassword()).isEqualTo(1);
-        assertThat(user.getTokenVersion()).isEqualTo(1);
+        verifyAccessRevoked(3L);
+        verify(userRepository).clearLoginFailures(3L);
     }
 
     @Test
@@ -181,6 +189,8 @@ class UserAdminServiceImplTest {
         assertThatThrownBy(() -> service.resetPassword(1L, "Reset@5678", 1L))
                 .isInstanceOf(OracleBusinessException.class)
                 .extracting("errorCode").isEqualTo("CANNOT_RESET_SELF");
+        verifyNoAccessChange();
+        verify(userRepository, never()).clearLoginFailures(any());
     }
 
     @Test
@@ -548,5 +558,104 @@ class UserAdminServiceImplTest {
         service.delete(3L, 1L);
 
         verify(userRoleRepository, never()).lockByRoleCode(any());
+    }
+
+    @Test
+    void resetPassword_bumpsTokenVersionAtomicallyAfterSavingUser() {
+        UserEntity user = givenUser(3L, "ACTIVE", TEACHER_ROLE);
+
+        service.resetPassword(3L, "Reset@5678", 1L);
+
+        InOrder order = inOrder(userRepository, refreshTokenService);
+        order.verify(userRepository).save(user);
+        order.verify(userRepository).incrementTokenVersion(3L);
+        order.verify(refreshTokenService).revokeAllSessions(3L);
+        // Không tự cộng trên entity (có thể đã cũ): TOKEN_VERSION chỉ tăng bằng UPDATE nguyên tử ở DB.
+        assertThat(user.getTokenVersion()).isZero();
+    }
+
+    @Test
+    void lock_bumpsTokenVersionAtomically_notOnEntity() {
+        UserEntity user = givenUser(3L, "ACTIVE", TEACHER_ROLE);
+
+        service.changeStatus(3L, false, 1L);
+
+        InOrder order = inOrder(userRepository, refreshTokenService);
+        order.verify(userRepository).save(user);
+        order.verify(userRepository).incrementTokenVersion(3L);
+        order.verify(refreshTokenService).revokeAllSessions(3L);
+        assertThat(user.getTokenVersion()).isZero();
+    }
+
+    @Test
+    void delete_bumpsTokenVersionAtomically_notOnEntity() {
+        UserEntity user = givenUser(3L, "ACTIVE", TEACHER_ROLE);
+
+        service.delete(3L, 1L);
+
+        verifyAccessRevoked(3L);
+        verify(userRepository, never()).clearLoginFailures(any());
+        assertThat(user.getTokenVersion()).isZero();
+    }
+
+    @Test
+    void unlock_activeUser_clearsTemporaryLockout() {
+        givenUser(3L, "ACTIVE", TEACHER_ROLE);
+
+        service.changeStatus(3L, true, 1L);
+
+        verify(userRepository).clearLoginFailures(3L);
+        verifyNoAccessChange();
+    }
+
+    @Test
+    void delete_self_doesNotRevokeAccess() {
+        givenUser(1L, "ACTIVE", ADMIN_ROLE);
+
+        assertThatThrownBy(() -> service.delete(1L, 1L)).isInstanceOf(OracleBusinessException.class);
+
+        verifyNoAccessChange();
+    }
+
+    @Test
+    void lock_lastAdmin_doesNotRevokeAccess() {
+        givenUser(2L, "ACTIVE", ADMIN_ROLE);
+        when(userRepository.countActiveUsersWithRoleExcluding("ROLE_ADMIN", 2L)).thenReturn(0L);
+
+        assertThatThrownBy(() -> service.changeStatus(2L, false, 1L)).isInstanceOf(OracleBusinessException.class);
+
+        verifyNoAccessChange();
+    }
+
+    @Test
+    void resetPassword_adminAccount_byNonAdmin_doesNotTouchTokensOrLockout() {
+        givenUser(2L, "ACTIVE", ADMIN_ROLE);
+        loginUserManager();
+
+        assertForbidden(() -> service.resetPassword(2L, "Reset@5678", 5L), "ADMIN_ACCOUNT_PROTECTED");
+
+        verifyNoAccessChange();
+        verify(userRepository, never()).clearLoginFailures(any());
+    }
+
+    @Test
+    void unlock_adminAccount_byNonAdmin_doesNotClearLockout() {
+        givenUser(2L, "LOCKED", ADMIN_ROLE);
+        loginUserManager();
+
+        assertForbidden(() -> service.changeStatus(2L, true, 5L), "ADMIN_ACCOUNT_PROTECTED");
+
+        verify(userRepository, never()).clearLoginFailures(any());
+    }
+
+    /** TOKEN_VERSION tăng nguyên tử ở DB và mọi phiên refresh token của người dùng bị thu hồi. */
+    private void verifyAccessRevoked(Long userId) {
+        verify(userRepository).incrementTokenVersion(userId);
+        verify(refreshTokenService).revokeAllSessions(userId);
+    }
+
+    private void verifyNoAccessChange() {
+        verify(userRepository, never()).incrementTokenVersion(any());
+        verify(refreshTokenService, never()).revokeAllSessions(any());
     }
 }
