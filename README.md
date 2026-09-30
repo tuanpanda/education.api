@@ -70,23 +70,23 @@ Oracle tren may host: container ket noi `host.docker.internal:1521`. Copy `.env.
   "Có lỗi xử lý dữ liệu, vui lòng thử lại hoặc liên hệ quản trị viên.". Lỗi nghiệp vụ
   `RAISE_APPLICATION_ERROR(-20xxx, 'text')` trả `text` (bỏ tiền tố `ORA-20xxx:`). Mã lỗi `*_NOT_FOUND` trả HTTP 404.
 - **Logging**: mặc định `INFO`, không in SQL. Debug SQL + bind parameter ở máy dev:
-  `SPRING_PROFILES_ACTIVE=local-logging` (hoặc thêm vào danh sách profile, ví dụ `dev,local-logging`), cấu hình ở
-  `application-local-logging.yml`. Không bật ở production (TRACE ghi cả giá trị tham số).
+  `SPRING_PROFILES_ACTIVE=dev,local-logging` (giữ `dev`: khi đã đặt `SPRING_PROFILES_ACTIVE`, profile mặc định `dev`
+  không còn tự bật nên thiếu JWT secret dev và ứng dụng không khởi động), cấu hình ở `application-local-logging.yml`. Không bật ở production (TRACE ghi cả giá trị tham số).
 
 ## Bảo mật & quản trị hệ thống (JWT)
 
 Mọi API `/api/**` yêu cầu header `Authorization: Bearer <accessToken>`, trừ:
 `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `GET /api/v1/health`, Swagger (`/swagger-ui.html`, `/v3/api-docs`).
 
-1. Chạy migration mới (sqlplus), theo thứ tự, TRƯỚC khi deploy backend mới:
+1. Chạy migration mới (sqlplus), theo thứ tự, TRƯỚC khi deploy backend mới (xem mục
+[Migration V13](#migration-v13-bản-vá-bảo-mật) bên dưới):
 
 ```powershell
 sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V12__system_admin_security.sql
+sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V13_1__authz.sql
 sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V13_2__auth_tokens.sql
+sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V13_3__files_tuition.sql
 ```
-
-`V13_2` thêm `SYS_USERS.FAILED_LOGIN_COUNT`, `SYS_USERS.LOCKED_UNTIL` và bảng `SYS_REFRESH_TOKENS` (idempotent,
-không đổi trạng thái tài khoản nào). Sau khi deploy, refresh token cũ không còn dùng được: người dùng đăng nhập lại một lần.
 
 2. Tài khoản khởi tạo: V12 tạo `admin` (vai trò `ROLE_ADMIN`) và chuyển tài khoản demo sang BCrypt với **mật khẩu
 tạm thời** ghi trong chú thích của `V12__system_admin_security.sql`. Mọi tài khoản này bị buộc đổi mật khẩu ở lần
@@ -129,6 +129,26 @@ Docker / production luôn chạy profile `prod`.
   refresh token đã bị xoay vòng (`REFRESH_TOKEN_REUSED`) thu hồi cả phiên.
 - `POST /api/v1/auth/logout` chỉ thu hồi phiên hiện tại (theo `sid` của access token, hoặc body tùy chọn
   `{"refreshToken": "..."}`); các thiết bị khác vẫn đăng nhập.
+
+### Migration V13 (bản vá bảo mật)
+
+Ba script tách riêng, chạy đúng thứ tự `V13_1` → `V13_2` → `V13_3` bằng sqlplus (từ thư mục gốc repo), sau V12.
+Mỗi script idempotent (chạy lại an toàn) và dừng ngay ở lỗi SQL đầu tiên (`WHENEVER SQLERROR EXIT`):
+
+```powershell
+sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V13_1__authz.sql
+sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V13_2__auth_tokens.sql
+sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V13_3__files_tuition.sql
+```
+
+| Thứ tự | Script | Nội dung |
+| --- | --- | --- |
+| 1 | `V13_1__authz.sql` | Index `IX_USER_ROLES_ROLE` trên `SYS_USER_ROLES (ROLE_ID, USER_ID)` cho khóa hàng khi kiểm tra "quản trị viên cuối cùng". Không đổi dữ liệu |
+| 2 | `V13_2__auth_tokens.sql` | Cột `SYS_USERS.FAILED_LOGIN_COUNT`, `SYS_USERS.LOCKED_UNTIL`; bảng `SYS_REFRESH_TOKENS` + `SEQ_SYS_REFRESH_TOKENS`. Không đổi `STATUS` của tài khoản nào. **Bắt buộc** trước khi chạy backend mới (entity đã map các cột này) |
+| 3 | `V13_3__files_tuition.sql` | Unique index `UQ_FIN_TRANS_BANK_REF` trên `FIN_PAYMENT_TRANSACTIONS.BANK_REFERENCE_NO`. Nếu dữ liệu đã có mã tham chiếu trùng, script dừng (`ORA-20133`) và in danh sách mã trùng để xử lý tay (không tự sửa / xóa dữ liệu); xử lý xong chạy lại |
+
+**Sau V13_2, mọi người dùng phải đăng nhập lại một lần**: refresh token phát hành trước đó (chưa có trong
+`SYS_REFRESH_TOKENS`) bị từ chối khi làm mới, UI đưa về trang đăng nhập.
 
 Phân quyền: mã quyền dạng `MENU_CODE:FUNCTION_CODE` (ví dụ `MENU_STUDENT_LIST:CREATE`) lấy từ
 `SYS_ROLE_MENU_PERMISSIONS`; controller khai báo `@RequirePermission(...)`, `PermissionInterceptor` kiểm tra

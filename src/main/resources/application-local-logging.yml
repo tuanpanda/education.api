@@ -1,5 +1,6 @@
 # Profile CHỈ dùng khi debug ở máy dev: log chi tiết SQL Hibernate và code ứng dụng.
-# Bật: SPRING_PROFILES_ACTIVE=local-logging (hoặc thêm vào danh sách, ví dụ dev,local-logging).
+# Bật: SPRING_PROFILES_ACTIVE=dev,local-logging (giữ dev: khi đã đặt SPRING_PROFILES_ACTIVE, profile mặc định dev
+# không còn tự bật nên thiếu JWT secret dev).
 # KHÔNG bật ở production: TRACE bind parameter ghi cả giá trị tham số (hash mật khẩu, dữ liệu cá nhân...).
 spring:
   jpa:
