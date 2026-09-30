@@ -43,8 +43,24 @@ class JwtTokenServiceTest {
         assertThat(claims.tokenVersion()).isEqualTo(3);
         assertThat(claims.type()).isEqualTo(TokenType.ACCESS);
         assertThat(claims.expiresAt()).isEqualTo(NOW.plus(Duration.ofMinutes(15)));
+        assertThat(claims.jti()).isNotBlank();
+        assertThat(claims.sessionId()).isNull();
         assertThat(service.getAccessTokenTtlSeconds()).isEqualTo(900);
         assertThat(service.getRefreshTokenTtlSeconds()).isEqualTo(7 * 24 * 3600);
+    }
+
+    @Test
+    void sessionAndJti_areCarriedInClaims() {
+        JwtTokenService service = serviceAt(NOW);
+
+        JwtClaims access = service.parse(service.generateAccessToken(5L, "admin", 1, "sid-1"), TokenType.ACCESS);
+        JwtClaims refresh = service.parse(
+                service.generateRefreshToken(5L, "admin", 1, "jti-1", "sid-1"), TokenType.REFRESH);
+
+        assertThat(access.sessionId()).isEqualTo("sid-1");
+        assertThat(refresh.sessionId()).isEqualTo("sid-1");
+        assertThat(refresh.jti()).isEqualTo("jti-1");
+        assertThat(refresh.expiresAt()).isEqualTo(NOW.plus(Duration.ofDays(7)));
     }
 
     @Test
@@ -89,5 +105,14 @@ class JwtTokenServiceTest {
                 .isInstanceOf(InvalidTokenException.class);
         assertThatThrownBy(() -> service.parse(" ", TokenType.ACCESS))
                 .isInstanceOf(InvalidTokenException.class);
+    }
+
+    @Test
+    void shortSecret_failsAtConstruction() {
+        properties.setSecret("too-short-secret");
+
+        assertThatThrownBy(() -> serviceAt(NOW))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("32 byte");
     }
 }

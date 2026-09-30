@@ -3,15 +3,19 @@ package com.education.base.controller;
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.request.ChangePasswordRequest;
 import com.education.base.dto.request.LoginRequest;
+import com.education.base.dto.request.LogoutRequest;
 import com.education.base.dto.request.RefreshTokenRequest;
 import com.education.base.dto.response.AuthTokenResponse;
 import com.education.base.dto.response.AuthUserResponse;
 import com.education.base.security.AllowPendingPasswordChange;
 import com.education.base.security.AuthUserPrincipal;
+import com.education.base.security.JwtAuthenticationFilter;
+import com.education.base.security.JwtClaims;
 import com.education.base.security.SecurityUtils;
 import com.education.base.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
@@ -22,7 +26,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Đăng nhập / làm mới token / đăng xuất / đổi mật khẩu (JWT stateless).
+ * Đăng nhập / làm mới token / đăng xuất / đổi mật khẩu (JWT, refresh token xoay vòng).
  */
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -34,22 +38,30 @@ public class AuthController {
 
     private final AuthService authService;
 
-    @Operation(summary = "Đăng nhập", description = "Trả access token, refresh token và thông tin người dùng.")
+    @Operation(summary = "Đăng nhập", description = "Trả access token, refresh token và thông tin người dùng. "
+            + "Sai mật khẩu nhiều lần liên tiếp sẽ khóa tạm thời tài khoản (ACCOUNT_TEMPORARILY_LOCKED); "
+            + "gửi quá nhiều request trả HTTP 429.")
     @PostMapping("/login")
     public ApiResponse<AuthTokenResponse> login(@Valid @RequestBody LoginRequest request) {
         return ApiResponse.success("Đăng nhập thành công.", authService.login(request));
     }
 
-    @Operation(summary = "Làm mới access token bằng refresh token")
+    @Operation(summary = "Làm mới access token bằng refresh token",
+            description = "Refresh token được xoay vòng: token cũ bị thu hồi, luôn lưu refresh token mới trả về.")
     @PostMapping("/refresh")
     public ApiResponse<AuthTokenResponse> refresh(@Valid @RequestBody RefreshTokenRequest request) {
         return ApiResponse.success(authService.refresh(request));
     }
 
-    @Operation(summary = "Đăng xuất", description = "Thu hồi mọi access/refresh token đã cấp cho tài khoản.")
+    @Operation(summary = "Đăng xuất", description = "Thu hồi phiên đăng nhập hiện tại (các thiết bị khác không bị "
+            + "ảnh hưởng). Body không bắt buộc: {\"refreshToken\": \"...\"}.")
     @PostMapping("/logout")
-    public ApiResponse<Void> logout() {
-        authService.logout(SecurityUtils.requireCurrentUser().getId());
+    public ApiResponse<Void> logout(@Valid @RequestBody(required = false) LogoutRequest body,
+                                    HttpServletRequest request) {
+        Long userId = SecurityUtils.requireCurrentUser().getId();
+        Object claims = request.getAttribute(JwtAuthenticationFilter.CLAIMS_ATTRIBUTE);
+        String sessionId = claims instanceof JwtClaims jwt ? jwt.sessionId() : null;
+        authService.logout(userId, sessionId, body == null ? null : body.getRefreshToken());
         return ApiResponse.success("Đã đăng xuất.", null);
     }
 
@@ -60,7 +72,7 @@ public class AuthController {
         return ApiResponse.success(authService.me(principal));
     }
 
-    @Operation(summary = "Đổi mật khẩu", description = "Thu hồi token cũ và trả cặp token mới.")
+    @Operation(summary = "Đổi mật khẩu", description = "Thu hồi mọi phiên cũ và trả cặp token mới.")
     @PostMapping("/change-password")
     public ApiResponse<AuthTokenResponse> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
         Long userId = SecurityUtils.requireCurrentUser().getId();

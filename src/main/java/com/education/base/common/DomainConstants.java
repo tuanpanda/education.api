@@ -96,12 +96,19 @@ public class DomainConstants {
     public static final String RECORD_STATUS_INACTIVE = "INACTIVE";
 
     /**
-     * Chính sách mật khẩu: 8-100 ký tự, có ít nhất một chữ cái và một chữ số.
+     * Chính sách mật khẩu: 8-72 ký tự, có ít nhất một chữ cái và một chữ số. Ngoài ra tối đa
+     * {@link #PASSWORD_MAX_BYTES} byte UTF-8 (kiểm tra bằng {@code @MaxUtf8Bytes}).
      */
-    public static final String PASSWORD_PATTERN = "^(?=.*[A-Za-z])(?=.*\\d).{8,100}$";
+    public static final String PASSWORD_PATTERN = "^(?=.*[A-Za-z])(?=.*\\d).{8,72}$";
 
     public static final String PASSWORD_POLICY_MESSAGE =
-            "Mật khẩu phải từ 8 đến 100 ký tự và có cả chữ lẫn số";
+            "Mật khẩu phải từ 8 đến 72 ký tự và có cả chữ lẫn số";
+
+    /** BCrypt chỉ dùng 72 byte đầu của mật khẩu: dài hơn sẽ bị cắt ngầm, nên chặn ngay khi đặt mật khẩu. */
+    public static final int PASSWORD_MAX_BYTES = 72;
+
+    public static final String PASSWORD_MAX_BYTES_MESSAGE =
+            "Mật khẩu không được vượt quá 72 byte (ký tự có dấu tiếng Việt chiếm 2-3 byte)";
 
     /** Tên đăng nhập: 3-50 ký tự chữ, số, dấu chấm, gạch dưới, gạch ngang. */
     public static final String USERNAME_PATTERN = "^[A-Za-z0-9._-]{3,50}$";

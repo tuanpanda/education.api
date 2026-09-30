@@ -1,12 +1,13 @@
 package com.education.base.security;
 
 import com.education.base.config.JwtProperties;
+import com.education.base.config.JwtSecretPolicy;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtBuilder;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
@@ -18,34 +19,59 @@ import java.util.UUID;
 
 /**
  * Phát hành và xác thực JWT (HMAC-SHA) cho access token và refresh token.
+ * <p>
+ * Khóa ký được tạo MỘT lần trong constructor (secret yếu làm ứng dụng không khởi động được).
  */
 @Component
-@RequiredArgsConstructor
 public class JwtTokenService {
 
     static final String CLAIM_TOKEN_TYPE = "token_type";
     static final String CLAIM_TOKEN_VERSION = "ver";
     static final String CLAIM_USERNAME = "username";
+    /** Mã phiên đăng nhập (family của refresh token). */
+    static final String CLAIM_SESSION_ID = "sid";
 
     private final JwtProperties properties;
 
     private final Clock clock;
 
-    private SecretKey signingKey;
+    private final SecretKey signingKey;
+
+    public JwtTokenService(JwtProperties properties, Clock clock) {
+        this.properties = properties;
+        this.clock = clock;
+        JwtSecretPolicy.requireMinimumLength(properties.getSecret());
+        this.signingKey = Keys.hmacShaKeyFor(properties.getSecret().getBytes(StandardCharsets.UTF_8));
+    }
 
     /**
-     * Phát hành access token cho người dùng.
+     * Phát hành access token không gắn phiên (tương thích ngược).
      */
     public String generateAccessToken(Long userId, String username, Integer tokenVersion) {
-        return generate(userId, username, tokenVersion, TokenType.ACCESS,
+        return generateAccessToken(userId, username, tokenVersion, null);
+    }
+
+    /**
+     * Phát hành access token gắn với phiên đăng nhập {@code sessionId} (claim {@code sid}).
+     */
+    public String generateAccessToken(Long userId, String username, Integer tokenVersion, String sessionId) {
+        return generate(userId, username, tokenVersion, TokenType.ACCESS, UUID.randomUUID().toString(), sessionId,
                 properties.getAccessTokenTtl().toMillis());
     }
 
     /**
-     * Phát hành refresh token cho người dùng.
+     * Phát hành refresh token với {@code jti} ngẫu nhiên, không gắn phiên (tương thích ngược).
      */
     public String generateRefreshToken(Long userId, String username, Integer tokenVersion) {
-        return generate(userId, username, tokenVersion, TokenType.REFRESH,
+        return generateRefreshToken(userId, username, tokenVersion, UUID.randomUUID().toString(), null);
+    }
+
+    /**
+     * Phát hành refresh token với {@code jti} đã lưu trong {@code SYS_REFRESH_TOKENS} và phiên {@code sessionId}.
+     */
+    public String generateRefreshToken(Long userId, String username, Integer tokenVersion,
+                                       String jti, String sessionId) {
+        return generate(userId, username, tokenVersion, TokenType.REFRESH, jti, sessionId,
                 properties.getRefreshTokenTtl().toMillis());
     }
 
@@ -71,7 +97,7 @@ public class JwtTokenService {
         Claims claims;
         try {
             claims = Jwts.parser()
-                    .verifyWith(key())
+                    .verifyWith(signingKey)
                     .requireIssuer(properties.getIssuer())
                     .clock(() -> Date.from(clock.instant()))
                     .build()
@@ -100,22 +126,27 @@ public class JwtTokenService {
                 claims.get(CLAIM_USERNAME, String.class),
                 version == null ? 0 : version.intValue(),
                 type,
-                claims.getExpiration() == null ? null : claims.getExpiration().toInstant());
+                claims.getExpiration() == null ? null : claims.getExpiration().toInstant(),
+                claims.getId(),
+                claims.get(CLAIM_SESSION_ID, String.class));
     }
 
-    private String generate(Long userId, String username, Integer tokenVersion, TokenType type, long ttlMillis) {
+    private String generate(Long userId, String username, Integer tokenVersion, TokenType type,
+                            String jti, String sessionId, long ttlMillis) {
         Instant now = clock.instant();
-        return Jwts.builder()
-                .id(UUID.randomUUID().toString())
+        JwtBuilder builder = Jwts.builder()
+                .id(jti)
                 .issuer(properties.getIssuer())
                 .subject(String.valueOf(userId))
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusMillis(ttlMillis)))
                 .claim(CLAIM_USERNAME, username)
                 .claim(CLAIM_TOKEN_TYPE, type.name())
-                .claim(CLAIM_TOKEN_VERSION, tokenVersion == null ? 0 : tokenVersion)
-                .signWith(key())
-                .compact();
+                .claim(CLAIM_TOKEN_VERSION, tokenVersion == null ? 0 : tokenVersion);
+        if (sessionId != null) {
+            builder.claim(CLAIM_SESSION_ID, sessionId);
+        }
+        return builder.signWith(signingKey).compact();
     }
 
     private static TokenType parseType(String raw) {
@@ -127,14 +158,5 @@ public class JwtTokenService {
         } catch (IllegalArgumentException ex) {
             return null;
         }
-    }
-
-    private SecretKey key() {
-        SecretKey current = signingKey;
-        if (current == null) {
-            current = Keys.hmacShaKeyFor(properties.getSecret().getBytes(StandardCharsets.UTF_8));
-            signingKey = current;
-        }
-        return current;
     }
 }

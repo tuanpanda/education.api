@@ -16,6 +16,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.DynamicUpdate;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -23,9 +24,13 @@ import java.util.List;
 
 /**
  * Entity ánh xạ bảng {@code SYS_USERS} - người dùng hệ thống.
+ * <p>
+ * {@link DynamicUpdate}: câu UPDATE chỉ gồm các cột thật sự thay đổi, để việc lưu entity không ghi đè
+ * các cột được tăng nguyên tử bằng câu lệnh riêng ({@code TOKEN_VERSION}, {@code FAILED_LOGIN_COUNT}).
  */
 @Entity
 @Table(name = "SYS_USERS")
+@DynamicUpdate
 @Getter
 @Setter
 @NoArgsConstructor
@@ -62,11 +67,19 @@ public class UserEntity {
     private Integer mustChangePassword;
 
     /**
-     * Phiên bản token (V12). Tăng lên khi đăng xuất, đổi/đặt lại mật khẩu hoặc khóa tài khoản
-     * để vô hiệu hóa mọi JWT đã phát hành.
+     * Phiên bản token (V12). Tăng lên khi đổi/đặt lại mật khẩu hoặc khóa tài khoản
+     * để vô hiệu hóa mọi JWT đã phát hành. Đăng xuất chỉ thu hồi phiên hiện tại ({@code SYS_REFRESH_TOKENS}).
      */
     @Column(name = "TOKEN_VERSION", nullable = false)
     private Integer tokenVersion;
+
+    /** Số lần đăng nhập sai liên tiếp (V13_2); về 0 khi đăng nhập thành công. */
+    @Column(name = "FAILED_LOGIN_COUNT", nullable = false)
+    private Integer failedLoginCount;
+
+    /** Khóa tạm thời do đăng nhập sai nhiều lần (V13_2); {@code null} hoặc đã qua = không khóa. */
+    @Column(name = "LOCKED_UNTIL")
+    private LocalDateTime lockedUntil;
 
     @Column(name = "LAST_LOGIN_AT")
     private LocalDateTime lastLoginAt;
@@ -110,6 +123,9 @@ public class UserEntity {
         }
         if (tokenVersion == null) {
             tokenVersion = 0;
+        }
+        if (failedLoginCount == null) {
+            failedLoginCount = 0;
         }
         if (createdAt == null) {
             createdAt = LocalDateTime.now();

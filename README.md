@@ -48,35 +48,59 @@ Oracle tren may host: container ket noi `host.docker.internal:1521`. Copy `.env.
 Mọi API `/api/**` yêu cầu header `Authorization: Bearer <accessToken>`, trừ:
 `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `GET /api/v1/health`, Swagger (`/swagger-ui.html`, `/v3/api-docs`).
 
-1. Chạy migration mới (sqlplus):
+1. Chạy migration mới (sqlplus), theo thứ tự, TRƯỚC khi deploy backend mới:
 
 ```powershell
 sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V12__system_admin_security.sql
+sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V13_2__auth_tokens.sql
 ```
 
-2. Tài khoản mặc định sau V12 (bắt buộc đổi mật khẩu ở lần đăng nhập đầu):
+`V13_2` thêm `SYS_USERS.FAILED_LOGIN_COUNT`, `SYS_USERS.LOCKED_UNTIL` và bảng `SYS_REFRESH_TOKENS` (idempotent,
+không đổi trạng thái tài khoản nào). Sau khi deploy, refresh token cũ không còn dùng được: người dùng đăng nhập lại một lần.
 
-| Tài khoản | Mật khẩu | Ghi chú |
-| --- | --- | --- |
-| `admin` | `Admin@123` | Vai trò `ROLE_ADMIN` (toàn quyền) |
-| `teacher1`, `accountant1`, `admission1` | `Education@123` | Tài khoản demo (nếu còn mật khẩu seed V1) |
+2. Tài khoản khởi tạo: V12 tạo `admin` (vai trò `ROLE_ADMIN`) và chuyển tài khoản demo sang BCrypt với **mật khẩu
+tạm thời** ghi trong chú thích của `V12__system_admin_security.sql`. Mọi tài khoản này bị buộc đổi mật khẩu ở lần
+đăng nhập đầu: **đổi mật khẩu NGAY sau khi cài đặt**, không dùng mật khẩu tạm thời trên môi trường thật.
 
-Neu `admin` / `Admin@123` bao sai mat khau (DB tao tu `schema_init.sql` cu co hash BCrypt "mau" khong khop mat khau nao, V12 ban cu bo qua), chay script sua (idempotent, dat lai admin ve `Admin@123`, tai khoan demo con hash "mau"/SHA-256 nhu `teacher1` ve `Education@123`, tat ca bat buoc doi mat khau):
+Nếu `admin` báo sai mật khẩu vì DB tạo từ `schema_init.sql` cũ (hash BCrypt "mẫu" không khớp mật khẩu nào) hoặc
+còn hash không phải BCrypt, chạy script vận hành (không đóng gói trong jar). Script CHỈ sửa dòng có hash "mẫu" hoặc
+không phải BCrypt (`NOT LIKE '$2%'`), nên chạy lại không bao giờ đặt lại mật khẩu đã đổi; dòng được sửa nhận lại mật
+khẩu tạm thời của V12 và bị buộc đổi mật khẩu:
 
 ```powershell
-sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/fix_admin_password.sql
+sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @scripts/db/fix_admin_password.sql
 ```
 
 3. Biến môi trường:
 
 | Biến | Mặc định | Ghi chú |
 | --- | --- | --- |
-| `JWT_SECRET` | chỉ có giá trị dev trong `application.yml` | **Bắt buộc** ở profile `prod` / Docker, tối thiểu 32 ký tự (`openssl rand -base64 48`) |
+| `JWT_SECRET` | không có (chỉ profile `dev` có secret dev trong `application-dev.yml`) | **Bắt buộc** ngoài dev, tối thiểu 32 byte UTF-8 (`openssl rand -base64 48`). Ứng dụng không khởi động nếu secret ngắn hơn, hoặc nếu profile `prod` dùng secret dev/test/ví dụ |
 | `JWT_ISSUER` | `education-api` | Claim `iss` |
 | `JWT_ACCESS_TOKEN_TTL` | `15m` | Thời hạn access token (Duration: `15m`, `1h`...) |
 | `JWT_REFRESH_TOKEN_TTL` | `7d` | Thời hạn refresh token |
+| `JWT_REFRESH_REUSE_GRACE` | `10s` | Nhiều tab làm mới cùng lúc bằng một refresh token trong khoảng này không bị coi là dùng lại (`0s` = tắt) |
+| `AUTH_LOCKOUT_MAX_FAILED_ATTEMPTS` | `5` | Mỗi N lần sai mật khẩu liên tiếp thì khóa tạm thời |
+| `AUTH_LOCKOUT_BASE_DURATION` / `AUTH_LOCKOUT_MAX_DURATION` | `15m` / `24h` | Lần khóa đầu / trần; mỗi lần khóa tiếp theo gấp đôi |
+| `AUTH_RATE_LIMIT_ENABLED` | `true` | Giới hạn tần suất `/api/v1/auth/login`, `/refresh` (HTTP 429 + `Retry-After`) |
+| `AUTH_RATE_LIMIT_WINDOW` | `5m` | Cửa sổ trượt |
+| `AUTH_RATE_LIMIT_LOGIN_PER_IP` / `..._LOGIN_PER_USERNAME` | `30` / `10` | Số lần đăng nhập tối đa mỗi cửa sổ |
+| `AUTH_RATE_LIMIT_REFRESH_PER_IP` / `..._REFRESH_PER_USER` | `120` / `60` | Số lần làm mới tối đa mỗi cửa sổ |
+| `SERVER_FORWARD_HEADERS_STRATEGY` | `native` | Lấy IP thật từ `X-Forwarded-For` khi chạy sau proxy nội bộ (nginx của UI) |
+
+Chạy local trong IntelliJ không cần biến môi trường: không có `SPRING_PROFILES_ACTIVE` thì profile mặc định là `dev`.
+Docker / production luôn chạy profile `prod`.
+
+Đăng nhập & phiên:
+- Sai mật khẩu 5 lần liên tiếp -> khóa tạm thời 15 phút (mã `ACCOUNT_TEMPORARILY_LOCKED`, thông báo kèm số phút còn lại);
+  mỗi lần bị khóa tiếp theo gấp đôi (tối đa 24 giờ). Đăng nhập thành công đặt lại bộ đếm. Trạng thái `STATUS` không đổi.
+- Refresh token xoay vòng (`SYS_REFRESH_TOKENS`): mỗi lần đăng nhập tạo một phiên (claim `sid`), mỗi lần
+  `/refresh` thu hồi token cũ và cấp token mới cùng phiên -> client phải lưu refresh token MỚI trả về. Dùng lại một
+  refresh token đã bị xoay vòng (`REFRESH_TOKEN_REUSED`) thu hồi cả phiên.
+- `POST /api/v1/auth/logout` chỉ thu hồi phiên hiện tại (theo `sid` của access token, hoặc body tùy chọn
+  `{"refreshToken": "..."}`); các thiết bị khác vẫn đăng nhập.
 
 Phân quyền: mã quyền dạng `MENU_CODE:FUNCTION_CODE` (ví dụ `MENU_STUDENT_LIST:CREATE`) lấy từ
 `SYS_ROLE_MENU_PERMISSIONS`; controller khai báo `@RequirePermission(...)`, `PermissionInterceptor` kiểm tra
-(`ROLE_ADMIN` luôn được phép). Đăng xuất / đổi mật khẩu / khóa tài khoản tăng `SYS_USERS.TOKEN_VERSION`
+(`ROLE_ADMIN` luôn được phép). Đổi / đặt lại mật khẩu, khóa tài khoản tăng `SYS_USERS.TOKEN_VERSION`
 để vô hiệu hóa mọi token đã cấp.
