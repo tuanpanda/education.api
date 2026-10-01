@@ -4,6 +4,7 @@ import com.education.base.support.WebMvcSecurityTestConfig;
 import com.education.base.support.WithAuthUser;
 import org.springframework.context.annotation.Import;
 import com.education.base.dto.response.GenerateMonthlyInvoicesResponseDto;
+import com.education.base.dto.response.PageResponse;
 import com.education.base.dto.response.PaymentTransactionDto;
 import com.education.base.dto.response.TuitionQrResponseDto;
 import com.education.base.dto.response.TuitionSlipResponseDto;
@@ -21,6 +22,7 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -125,5 +127,69 @@ class TuitionFeeControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("PHIẾU HỌC PHÍ")));
+    }
+
+    @Test
+    void generateMonthly_returnsConflictsAndErrors() throws Exception {
+        when(tuitionSlipService.generateMonthly(any())).thenReturn(GenerateMonthlyInvoicesResponseDto.builder()
+                .updatedCount(0)
+                .cancelledCount(1)
+                .conflicts(List.of(GenerateMonthlyInvoicesResponseDto.FeeConflict.builder()
+                        .feeId(50L)
+                        .reason(GenerateMonthlyInvoicesResponseDto.CONFLICT_NET_BELOW_PAID)
+                        .paidAmount(new BigDecimal("200000"))
+                        .build()))
+                .errors(List.of(GenerateMonthlyInvoicesResponseDto.StudentError.builder()
+                        .studentId(8L).code("FEE_LOCKED").build()))
+                .build());
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-monthly")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"classId\":3,\"month\":4,\"year\":2026,\"pricePerSession\":80000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.cancelledCount").value(1))
+                .andExpect(jsonPath("$.data.conflicts[0].feeId").value(50))
+                .andExpect(jsonPath("$.data.conflicts[0].reason").value("NET_BELOW_PAID"))
+                .andExpect(jsonPath("$.data.errors[0].code").value("FEE_LOCKED"));
+    }
+
+    // ---- B9: MENU_DASHBOARD:VIEW không còn mở được dữ liệu khoản phí -----------------------------------
+
+    @Test
+    @WithAuthUser(roles = "ROLE_ADMISSION", permissions = {"MENU_DASHBOARD:VIEW", "MENU_LEAD_LIST:VIEW"})
+    void feeReads_withOnlyDashboardView_areForbidden() throws Exception {
+        mockMvc.perform(get("/api/v1/tuition-fees/search")).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/tuition-fees/9")).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/tuition-fees/9/slip")).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/tuition-fees/9/slip/html")).andExpect(status().isForbidden());
+        verifyNoInteractions(tuitionFeeService, tuitionSlipService);
+    }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_ACCOUNTANT", permissions = "MENU_TUITION_FEE:VIEW")
+    void feeReads_withTuitionFeeView_areAllowed() throws Exception {
+        when(tuitionFeeService.search(any())).thenReturn(PageResponse.of(List.of(), 1, 20, 0));
+        when(tuitionSlipService.getSlip(9L)).thenReturn(TuitionSlipResponseDto.builder().invoiceId(9L).build());
+        when(tuitionSlipService.generateSlipHtml(9L)).thenReturn("<html></html>");
+
+        mockMvc.perform(get("/api/v1/tuition-fees/search")).andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/tuition-fees/9/slip")).andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/tuition-fees/9/slip/html")).andExpect(status().isOk());
+    }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_CASHIER", permissions = {"MENU_PAYMENT_HISTORY:VIEW"})
+    void feeSearch_withPaymentHistoryView_isAllowed() throws Exception {
+        when(tuitionFeeService.search(any())).thenReturn(PageResponse.of(List.of(), 1, 20, 0));
+
+        mockMvc.perform(get("/api/v1/tuition-fees/search").param("studentStatus", "INACTIVE"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void feeSearch_invalidStudentStatus_returns400() throws Exception {
+        mockMvc.perform(get("/api/v1/tuition-fees/search").param("studentStatus", "GONE"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(tuitionFeeService);
     }
 }

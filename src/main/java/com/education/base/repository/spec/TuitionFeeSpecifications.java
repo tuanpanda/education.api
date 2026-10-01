@@ -1,6 +1,5 @@
 package com.education.base.repository.spec;
 
-import com.education.base.common.DomainConstants;
 import com.education.base.common.PersistenceFlags;
 import com.education.base.dto.request.TuitionFeeFilterRequest;
 import com.education.base.entity.TuitionFeeEntity;
@@ -33,7 +32,11 @@ public final class TuitionFeeSpecifications {
             predicates.add(cb.equal(root.get("isDeleted"), PersistenceFlags.NOT_DELETED));
             Join<Object, Object> student = root.join("student", JoinType.INNER);
             predicates.add(cb.equal(student.get("isDeleted"), PersistenceFlags.NOT_DELETED));
-            predicates.add(cb.equal(student.get("status"), DomainConstants.STUDENT_STATUS_ACTIVE));
+            // B8: không ẩn khoản phí (công nợ) của học sinh đã nghỉ / tốt nghiệp / tạm dừng; lọc theo trạng thái
+            // học sinh chỉ khi người dùng chọn (mặc định: mọi trạng thái).
+            if (criteria.getStudentStatus() != null && !criteria.getStudentStatus().isBlank()) {
+                predicates.add(cb.equal(student.get("status"), criteria.getStudentStatus().trim()));
+            }
 
             if (criteria.getKeyword() != null && !criteria.getKeyword().isBlank()) {
                 String like = contains(criteria.getKeyword());
