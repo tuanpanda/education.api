@@ -39,6 +39,7 @@ public class GradeServiceImpl implements GradeService {
     private final StudentRepository studentRepository;
     private final AttendanceRepository attendanceRepository;
     private final FinanceAcademicMapper financeAcademicMapper;
+    private final TeachingAssignmentGuard teachingAssignmentGuard;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -46,6 +47,8 @@ public class GradeServiceImpl implements GradeService {
         List<GradeResponseDto> saved = new ArrayList<>();
         for (GradeUpsertRequest item : request.getGrades()) {
             ClassEntity clazz = requireClass(item.getClassId());
+            teachingAssignmentGuard.requireCanWrite(clazz,
+                    "Bạn chỉ được nhập điểm cho lớp mình phụ trách (lớp " + clazz.getClassCode() + ").");
             StudentEntity student = requireStudent(item.getStudentId());
             requireEnrolled(item.getClassId(), item.getStudentId());
 

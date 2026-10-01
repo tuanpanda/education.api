@@ -1,6 +1,7 @@
 package com.education.base.dto.request;
 
 import com.education.base.common.DomainConstants;
+import com.education.base.common.validation.MaxUtf8Bytes;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -31,6 +32,7 @@ public class UserCreateRequest {
 
     @NotBlank(message = "Mật khẩu không được để trống")
     @Pattern(regexp = DomainConstants.PASSWORD_PATTERN, message = DomainConstants.PASSWORD_POLICY_MESSAGE)
+    @MaxUtf8Bytes(value = DomainConstants.PASSWORD_MAX_BYTES, message = DomainConstants.PASSWORD_MAX_BYTES_MESSAGE)
     @ToString.Exclude
     private String password;
 

@@ -14,6 +14,8 @@ public interface FileStorageService {
     /**
      * Lưu file vật lý vào {@code {baseDir}/{MODULE}/{YYYY}/{MM}/{UUID}_{tenfile}} và ghi metadata
      * vào bảng {@code SYS_ATTACHED_FILES} (cột {@code FILE_PATH} chỉ lưu đường dẫn tương đối).
+     * Chỉ nhận định dạng thuộc allow-list (ảnh jpg/png/gif/webp, pdf, doc/docx, xls/xlsx, csv, txt, zip),
+     * kiểm tra bằng magic bytes; {@code CONTENT_TYPE} lưu xuống là MIME do server nhận diện.
      *
      * @param file        file multipart do client upload.
      * @param moduleName  Module nghiệp vụ sở hữu file.
@@ -31,6 +33,9 @@ public interface FileStorageService {
 
     /**
      * Lưu nội dung nhị phân đã đọc sẵn (dùng khi cùng một file vừa parse Excel vừa lưu audit).
+     * <p>
+     * {@code contentType} của client chỉ mang tính tham khảo: định dạng thực tế được nhận diện lại bằng
+     * phần mở rộng + magic bytes (xem {@code SafeFileType}) và file ngoài allow-list bị từ chối.
      */
     FileEntity storeBytes(byte[] content, String originalFilename, String contentType,
                           String moduleName, Long referenceId, String subFolder);

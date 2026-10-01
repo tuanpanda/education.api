@@ -150,4 +150,31 @@ class ClassControllerTest {
                 .andExpect(jsonPath("$.data.preview").value(true));
         verify(classService).peekNextClassCode(9);
     }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_STAFF", permissions = "MENU_STUDENT_LIST:CREATE")
+    void listOpenOptions_withStudentCreate_isAllowed() throws Exception {
+        when(classService.listOpenOptions()).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/classes/options"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_STAFF", permissions = "MENU_CLASS_LIST:VIEW")
+    void listOpenOptions_withClassView_isAllowed() throws Exception {
+        when(classService.listOpenOptions()).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/classes/options"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_STAFF", permissions = "MENU_LEAD_LIST:VIEW")
+    void listOpenOptions_withoutClassViewOrStudentCreate_returns403() throws Exception {
+        mockMvc.perform(get("/api/v1/classes/options"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        verify(classService, org.mockito.Mockito.never()).listOpenOptions();
+    }
 }

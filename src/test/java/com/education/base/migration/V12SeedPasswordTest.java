@@ -6,13 +6,15 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Đảm bảo hash BCrypt seed trong V12 khớp với mật khẩu mặc định ghi trong README.
+ * Đảm bảo hash BCrypt seed trong V12 khớp với mật khẩu tạm thời ghi trong chú thích của V12.
  */
 class V12SeedPasswordTest {
 
@@ -73,31 +75,66 @@ class V12SeedPasswordTest {
         }
     }
 
+    /** Script van hanh, nam ngoai classpath (khong dong goi trong jar). */
+    private static final Path FIX_SCRIPT = Path.of("scripts", "db", "fix_admin_password.sql");
+
+    /** Chi dong con hash "mau" hoac khong phai BCrypt moi bi dong toi -> chay lai khong dat lai mat khau da doi. */
+    private static final String ONLY_UNUSABLE_HASHES = "(PASSWORD_HASH = '" + LEGACY_PLACEHOLDER_HASH + "' "
+            + "OR PASSWORD_HASH NOT LIKE '$2%')";
+
+    @Test
+    void fixAdminScript_isNotPackagedInJar() {
+        // Kiểm tra cây nguồn (target/classes có thể còn bản cũ nếu không chạy mvn clean).
+        assertThat(Files.exists(Path.of("src", "main", "resources", "db", "fix_admin_password.sql"))).isFalse();
+        assertThat(Files.exists(FIX_SCRIPT)).as(FIX_SCRIPT + " ton tai").isTrue();
+    }
+
     @Test
     void fixAdminScript_restoresV12SeedState() throws IOException {
-        String sql = read("/db/fix_admin_password.sql");
+        String sql = readFixScript();
         String hash = firstHashAfter(sql, "-- BCrypt (cost 10) cua 'Admin@123'");
         assertThat(new BCryptPasswordEncoder().matches("Admin@123", hash)).isTrue();
         assertThat(hash).isEqualTo(firstHashAfter(read(SCRIPT), "-- BCrypt (cost 10) cua 'Admin@123'."));
         assertThat(sql).contains("MUST_CHANGE_PASSWORD = 1").contains("STATUS = 'ACTIVE'")
-                .contains("IS_DELETED = 0").contains("WHERE USERNAME = 'admin'").contains("'ROLE_ADMIN'");
+                .contains("IS_DELETED = 0").contains("WHERE USERNAME = 'admin'").contains("'ROLE_ADMIN'")
+                .contains("WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK");
+    }
+
+    /**
+     * Chay lai script khong bao gio dat lai mat khau da doi: admin chi bi sua khi hash la hash "mau"
+     * hoac khong phai BCrypt (khong con dieu kien "khac hash seed" / trang thai nhu truoc).
+     */
+    @Test
+    void fixAdminScript_neverResetsAChangedPassword() throws IOException {
+        String sql = readFixScript();
+        String adminUpdate = normalize(between(sql, "WHERE USERNAME = 'admin'", ";"));
+        assertThat(adminUpdate).contains(ONLY_UNUSABLE_HASHES);
+        assertThat(adminUpdate).doesNotContain("PASSWORD_HASH <>").doesNotContain("MUST_CHANGE_PASSWORD <>")
+                .doesNotContain("STATUS <>").doesNotContain("IS_DELETED <>");
     }
 
     /**
      * teacher1 (schema_init.sql cu) cung mang hash "mau" nhu admin, nen script sua phai dua ca tai khoan demo
-     * con hash "mau" / SHA-256 V1 ve BCrypt 'Education@123' giong V12, bat buoc doi mat khau.
+     * con hash "mau" / khong phai BCrypt (SHA-256 V1) ve BCrypt 'Education@123' giong V12, bat buoc doi mat khau.
      */
     @Test
     void fixAdminScript_alsoRepairsDemoAccounts() throws IOException {
-        String sql = read("/db/fix_admin_password.sql");
-        String demoUpdate = between(sql, "-- Tai khoan demo", "COMMIT;");
+        String sql = readFixScript();
+        String demoUpdate = normalize(between(sql, "-- Tai khoan demo", "COMMIT;"));
         String hash = firstHashAfter(demoUpdate, "UPDATE SYS_USERS");
         assertThat(new BCryptPasswordEncoder().matches("Education@123", hash)).isTrue();
         assertThat(hash).isEqualTo(firstHashAfter(read(SCRIPT), "-- Tai khoan demo (V1)"));
         assertThat(demoUpdate).contains("WHERE USERNAME <> 'admin'")
-                .contains("PASSWORD_HASH = '" + LEGACY_PLACEHOLDER_HASH + "'")
-                .contains("STANDARD_HASH('Education@123', 'SHA256')")
+                .contains(ONLY_UNUSABLE_HASHES)
                 .contains("MUST_CHANGE_PASSWORD = 1");
+    }
+
+    private static String normalize(String sql) {
+        return sql.replaceAll("\\s+", " ");
+    }
+
+    private static String readFixScript() throws IOException {
+        return Files.readString(FIX_SCRIPT, StandardCharsets.UTF_8);
     }
     private String read(String resource) throws IOException {
         try (InputStream in = getClass().getResourceAsStream(resource)) {

@@ -11,8 +11,8 @@ import java.lang.annotation.Target;
  * (dạng {@code MENU_CODE:FUNCTION_CODE}, xem {@link Permissions}).
  * <p>
  * Đặt trên method (ưu tiên) hoặc trên class Controller (áp dụng cho mọi method chưa khai báo).
- * Endpoint không có annotation chỉ yêu cầu đăng nhập. Người dùng có {@link Permissions#ADMIN_ROLE}
- * luôn được phép. Kiểm tra bởi {@link PermissionInterceptor}.
+ * Endpoint {@code /api/**} không có annotation này, {@link AuthenticatedOnly} hay {@link PublicEndpoint} bị từ chối
+ * mặc định. Người dùng có {@link Permissions#ADMIN_ROLE} luôn được phép. Kiểm tra bởi {@link PermissionInterceptor}.
  */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)

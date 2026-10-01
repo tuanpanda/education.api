@@ -2,7 +2,9 @@ package com.education.base.repository;
 
 import com.education.base.entity.UserRoleEntity;
 import com.education.base.entity.UserRoleId;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -19,6 +21,17 @@ public interface UserRoleRepository extends JpaRepository<UserRoleEntity, UserRo
     List<UserRoleEntity> findByRoleId(Long roleId);
 
     boolean existsByUserIdAndRoleId(Long userId, Long roleId);
+
+    /**
+     * Khóa ghi ({@code SELECT ... FOR UPDATE}) mọi dòng gán vai trò {@code roleCode}. Gọi trước khi kiểm tra
+     * "quản trị viên cuối cùng" để các giao dịch song song phải xếp hàng.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select ur from UserRoleEntity ur
+             where ur.roleId in (select r.id from RoleEntity r where r.roleCode = :roleCode)
+            """)
+    List<UserRoleEntity> lockByRoleCode(@Param("roleCode") String roleCode);
 
     /** Vai trò (kèm entity {@code RoleEntity}) của nhiều người dùng trong một truy vấn. */
     @Query("select ur from UserRoleEntity ur join fetch ur.role r where ur.userId in :userIds")

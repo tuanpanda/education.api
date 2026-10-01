@@ -2,26 +2,36 @@ package com.education.base.service;
 
 import com.education.base.dto.request.ChangePasswordRequest;
 import com.education.base.dto.request.LoginRequest;
-import com.education.base.dto.request.RefreshTokenRequest;
-import com.education.base.dto.response.AuthTokenResponse;
 import com.education.base.dto.response.AuthUserResponse;
 import com.education.base.security.AuthUserPrincipal;
 
 /**
- * Xác thực người dùng bằng JWT stateless (access + refresh token).
+ * Xác thực người dùng bằng JWT (access token stateless + refresh token xoay vòng lưu trong DB).
  */
 public interface AuthService {
 
-    AuthTokenResponse login(LoginRequest request);
+    /**
+     * Đăng nhập, tạo phiên mới. Sai mật khẩu liên tiếp nhiều lần sẽ khóa tạm thời tài khoản
+     * ({@code ACCOUNT_TEMPORARILY_LOCKED}).
+     */
+    AuthTokens login(LoginRequest request);
 
-    /** Cấp cặp token mới từ refresh token (refresh token cũ vẫn hợp lệ tới khi hết hạn hoặc bị thu hồi). */
-    AuthTokenResponse refresh(RefreshTokenRequest request);
+    /**
+     * Xoay vòng refresh token (đọc từ cookie): token cũ bị thu hồi, trả cặp token mới cùng phiên. Dùng lại
+     * refresh token đã bị xoay vòng sẽ thu hồi toàn bộ phiên.
+     */
+    AuthTokens refresh(String refreshToken);
 
-    /** Thu hồi mọi token đã phát hành cho người dùng (tăng {@code TOKEN_VERSION}). */
-    void logout(Long userId);
+    /**
+     * Đăng xuất phiên hiện tại: thu hồi phiên của {@code refreshToken} (cookie; chữ ký hợp lệ và thuộc
+     * {@code userId} nếu đã đăng nhập), nếu không thì phiên {@code sessionId} (claim {@code sid} của access
+     * token). {@code userId} có thể {@code null} khi access token đã hết hạn: khi đó chỉ dựa vào refresh token.
+     * Các phiên khác (thiết bị khác) không bị ảnh hưởng.
+     */
+    void logout(Long userId, String sessionId, String refreshToken);
 
     AuthUserResponse me(AuthUserPrincipal principal);
 
-    /** Đổi mật khẩu, thu hồi token cũ và trả cặp token mới. */
-    AuthTokenResponse changePassword(Long userId, ChangePasswordRequest request);
+    /** Đổi mật khẩu, thu hồi mọi token/phiên cũ và trả cặp token mới (phiên mới). */
+    AuthTokens changePassword(Long userId, ChangePasswordRequest request);
 }

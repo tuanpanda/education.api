@@ -2,10 +2,18 @@ server:
   port: ${HTTP_PLATFORM_PORT:${SERVER_PORT:8080}}
   servlet:
     context-path: /
+  # Lấy IP thật của client từ X-Forwarded-For khi chạy sau reverse proxy nội bộ (nginx của UI / Docker),
+  # dùng cho giới hạn tần suất đăng nhập. Tomcat chỉ tin header này khi request đến từ dải IP nội bộ.
+  forward-headers-strategy: ${SERVER_FORWARD_HEADERS_STRATEGY:native}
 
 spring:
   application:
     name: education-base
+
+  # Không truyền SPRING_PROFILES_ACTIVE (vd. chạy EducationApplication trong IntelliJ) -> profile dev
+  # (application-dev.yml có JWT secret dev). Docker / production luôn chạy profile prod.
+  profiles:
+    default: dev
 
   datasource:
     url: ${DB_URL:jdbc:oracle:thin:@//localhost:1521/ORCL}
@@ -25,7 +33,8 @@ spring:
   jpa:
     hibernate:
       ddl-auto: none
-    show-sql: true
+    # Log SQL: bật profile local-logging (application-local-logging.yml), không bật ở đây.
+    show-sql: false
     open-in-view: false
     properties:
       hibernate:
@@ -33,8 +42,13 @@ spring:
         format_sql: true
         jdbc:
           batch_size: 20
+          # Trùng múi giờ JVM (EducationApplication.APP_TIME_ZONE) -> LocalDateTime ghi/đọc không bị lệch.
+          time_zone: Asia/Ho_Chi_Minh
         boot:
           allow_jdbc_metadata_access: false
+
+  jackson:
+    time-zone: Asia/Ho_Chi_Minh
 
   servlet:
     multipart:
@@ -43,15 +57,42 @@ spring:
       max-request-size: 55MB
 
 app:
+  cors:
+    # Origin được gọi API cross-origin, phân tách bằng dấu phẩy. Prod: không có mặc định (rỗng = same-origin).
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:8088,http://localhost:3000}
   storage:
     base-dir: ${APP_STORAGE_DIR:./outputs}
   security:
     jwt:
-      # Chỉ dùng cho môi trường dev. Profile prod bắt buộc truyền JWT_SECRET (>= 32 ký tự).
-      secret: ${JWT_SECRET:dev-only-education-jwt-secret-change-me-0123456789}
+      # KHÔNG có giá trị mặc định: bắt buộc JWT_SECRET (>= 32 byte). Chỉ profile dev (application-dev.yml)
+      # và profile test có secret riêng. Profile prod từ chối khởi động nếu dùng secret dev/test.
+      secret: ${JWT_SECRET:}
       issuer: ${JWT_ISSUER:education-api}
       access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:15m}
       refresh-token-ttl: ${JWT_REFRESH_TOKEN_TTL:7d}
+      # Nhiều tab làm mới cùng lúc bằng một refresh token trong khoảng này không bị coi là dùng lại.
+      refresh-reuse-grace: ${JWT_REFRESH_REUSE_GRACE:10s}
+    cookie:
+      # Access / refresh token nằm trong cookie HttpOnly (không trả trong body, không lưu localStorage).
+      # Secure: chỉ gửi qua HTTPS. Mặc định true; profile dev đặt false (http://localhost). Chạy qua HTTP thuần
+      # trên IP/tên máy (không phải localhost) với Secure=true thì trình duyệt bỏ cookie -> không đăng nhập được.
+      secure: ${AUTH_COOKIE_SECURE:true}
+      # Strict (mặc định) hoặc Lax. UI và API phải cùng site (cùng host khác cổng, hoặc chung tên miền gốc).
+      same-site: ${AUTH_COOKIE_SAME_SITE:Strict}
+    auth:
+      lockout:
+        # Cứ mỗi N lần sai mật khẩu liên tiếp thì khóa tạm thời; lần khóa sau gấp đôi lần trước, tối đa max-duration.
+        max-failed-attempts: ${AUTH_LOCKOUT_MAX_FAILED_ATTEMPTS:5}
+        base-duration: ${AUTH_LOCKOUT_BASE_DURATION:15m}
+        max-duration: ${AUTH_LOCKOUT_MAX_DURATION:24h}
+      rate-limit:
+        # Giới hạn tần suất /api/v1/auth/login và /refresh (cửa sổ trượt trong bộ nhớ, theo từng instance).
+        enabled: ${AUTH_RATE_LIMIT_ENABLED:true}
+        window: ${AUTH_RATE_LIMIT_WINDOW:5m}
+        login-per-ip: ${AUTH_RATE_LIMIT_LOGIN_PER_IP:30}
+        login-per-username: ${AUTH_RATE_LIMIT_LOGIN_PER_USERNAME:10}
+        refresh-per-ip: ${AUTH_RATE_LIMIT_REFRESH_PER_IP:120}
+        refresh-per-user: ${AUTH_RATE_LIMIT_REFRESH_PER_USER:60}
 
 springdoc:
   api-docs:
@@ -60,10 +101,13 @@ springdoc:
     path: /swagger-ui.html
     enabled: true
     disable-swagger-default-url: true
+    # Swagger UI đọc cookie XSRF-TOKEN và gửi header X-XSRF-TOKEN cho request ghi (CSRF bật cho cookie phiên).
+    csrf:
+      enabled: true
 
+# DEBUG/TRACE (SQL, bind parameter): SPRING_PROFILES_ACTIVE=dev,local-logging (xem README).
 logging:
   level:
     root: INFO
-    com.education.base: DEBUG
-    org.hibernate.SQL: DEBUG
-    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+    com.education.base: INFO
+    org.hibernate.SQL: INFO

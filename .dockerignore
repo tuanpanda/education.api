@@ -13,6 +13,7 @@ actions-runner
 *.md
 docs
 scripts
+!scripts/db
 docker-compose*.yml
 .gitkeep
 ci-image-tags.txt

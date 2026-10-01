@@ -16,6 +16,9 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: prod
       SERVER_PORT: "8080"
+      TZ: Asia/Ho_Chi_Minh
+      # Rỗng = chỉ same-origin (UI gọi /api qua nginx). Thêm origin khi UI chạy ở domain/cổng khác.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
       DB_URL: ${DB_URL:-jdbc:oracle:thin:@//host.docker.internal:1521/ORCL}
       DB_USERNAME: ${DB_USERNAME:-EDUCATION}
       DB_PASSWORD: ${DB_PASSWORD:-EDUCATION}
@@ -24,6 +27,23 @@ services:
       JWT_ISSUER: ${JWT_ISSUER:-education-api}
       JWT_ACCESS_TOKEN_TTL: ${JWT_ACCESS_TOKEN_TTL:-15m}
       JWT_REFRESH_TOKEN_TTL: ${JWT_REFRESH_TOKEN_TTL:-7d}
+      # Chống dò mật khẩu / refresh token xoay vòng (mặc định như application.yml; đổi trong .env).
+      JWT_REFRESH_REUSE_GRACE: ${JWT_REFRESH_REUSE_GRACE:-10s}
+      AUTH_LOCKOUT_MAX_FAILED_ATTEMPTS: ${AUTH_LOCKOUT_MAX_FAILED_ATTEMPTS:-5}
+      AUTH_LOCKOUT_BASE_DURATION: ${AUTH_LOCKOUT_BASE_DURATION:-15m}
+      AUTH_LOCKOUT_MAX_DURATION: ${AUTH_LOCKOUT_MAX_DURATION:-24h}
+      AUTH_RATE_LIMIT_ENABLED: ${AUTH_RATE_LIMIT_ENABLED:-true}
+      AUTH_RATE_LIMIT_WINDOW: ${AUTH_RATE_LIMIT_WINDOW:-5m}
+      AUTH_RATE_LIMIT_LOGIN_PER_IP: ${AUTH_RATE_LIMIT_LOGIN_PER_IP:-30}
+      AUTH_RATE_LIMIT_LOGIN_PER_USERNAME: ${AUTH_RATE_LIMIT_LOGIN_PER_USERNAME:-10}
+      AUTH_RATE_LIMIT_REFRESH_PER_IP: ${AUTH_RATE_LIMIT_REFRESH_PER_IP:-120}
+      AUTH_RATE_LIMIT_REFRESH_PER_USER: ${AUTH_RATE_LIMIT_REFRESH_PER_USER:-60}
+      # IP thật của client từ X-Forwarded-For (API chạy sau nginx của UI); Tomcat chỉ tin header từ IP nội bộ.
+      SERVER_FORWARD_HEADERS_STRATEGY: ${SERVER_FORWARD_HEADERS_STRATEGY:-native}
+      # Cookie đăng nhập HttpOnly: Secure (chỉ gửi qua HTTPS; trình duyệt vẫn chấp nhận trên http://localhost).
+      # Mở UI qua HTTP bằng IP / tên máy thì đặt AUTH_COOKIE_SECURE=false trong .env (hoặc dùng HTTPS).
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      AUTH_COOKIE_SAME_SITE: ${AUTH_COOKIE_SAME_SITE:-Strict}
     volumes:
       - education-outputs:/app/outputs
     extra_hosts:

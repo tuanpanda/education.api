@@ -38,6 +38,7 @@ class EntityMappingConventionTest {
                 new Object[]{BankAccountEntity.class, "FIN_BANK_ACCOUNTS", "SEQ_FIN_BANK_ACCOUNTS"},
                 new Object[]{FileEntity.class, "SYS_ATTACHED_FILES", "SEQ_SYS_ATTACHED_FILES"},
                 new Object[]{UserEntity.class, "SYS_USERS", "SEQ_SYS_USERS"},
+                new Object[]{RefreshTokenEntity.class, "SYS_REFRESH_TOKENS", "SEQ_SYS_REFRESH_TOKENS"},
                 new Object[]{RoleEntity.class, "SYS_ROLES", "SEQ_SYS_ROLES"},
                 new Object[]{MenuEntity.class, "SYS_MENUS", "SEQ_SYS_MENUS"},
                 new Object[]{FunctionEntity.class, "SYS_FUNCTIONS", "SEQ_SYS_FUNCTIONS"},
@@ -276,6 +277,12 @@ class EntityMappingConventionTest {
         UserEntity user = new UserEntity();
         user.onCreate();
         assertThat(user.getStatus()).isEqualTo("ACTIVE");
+        assertThat(user.getFailedLoginCount()).isZero();
+        assertThat(user.getLockedUntil()).isNull();
+
+        RefreshTokenEntity refreshToken = new RefreshTokenEntity();
+        refreshToken.onCreate();
+        assertThat(refreshToken.getCreatedAt()).isNotNull();
 
         RoleEntity role = new RoleEntity();
         role.onCreate();
@@ -356,7 +363,7 @@ class EntityMappingConventionTest {
                 "StudentEntity", "ClassEntity", "ClassStudentEntity", "AttendanceEntity",
                 "GradeEntity", "LeadEntity", "TuitionFeeEntity", "PaymentTransactionEntity",
                 "BankAccountEntity",
-                "FileEntity", "UserEntity", "RoleEntity",
+                "FileEntity", "UserEntity", "RefreshTokenEntity", "RoleEntity",
                 "MenuEntity", "FunctionEntity", "RoleMenuPermissionEntity", "CodeRuleEntity",
                 "ClassScheduleEntity", "ClassSessionEntity");
         assertThat(UserRoleEntity.class.getAnnotation(Entity.class)).isNotNull();

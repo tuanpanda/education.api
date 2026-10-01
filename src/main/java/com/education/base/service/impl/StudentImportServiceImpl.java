@@ -12,6 +12,7 @@ import com.education.base.exception.OracleBusinessException;
 import com.education.base.repository.ClassRepository;
 import com.education.base.repository.ClassStudentRepository;
 import com.education.base.repository.StudentRepository;
+import com.education.base.security.SecurityUtils;
 import com.education.base.service.FileStorageService;
 import com.education.base.service.StudentImportService;
 import com.education.base.service.StudentService;
@@ -49,8 +50,6 @@ public class StudentImportServiceImpl implements StudentImportService {
     static final long MAX_IMPORT_BYTES = 5L * 1024 * 1024;
 
     static final String IMPORT_SUBFOLDER = "IMPORT";
-
-    static final String CREATED_BY = "IMPORT";
 
     private static final String DEFAULT_STATUS = "ACTIVE";
 
@@ -90,27 +89,46 @@ public class StudentImportServiceImpl implements StudentImportService {
         return studentExcelHelper.generateStudentTemplate(catalog);
     }
 
+    /**
+     * Import học sinh. File Excel gốc chỉ được lưu (audit, {@code STUDENT/IMPORT/YYYY/MM/}) <b>sau khi</b>
+     * transaction import commit thành công - file lỗi / rỗng / import thất bại không để lại file rác.
+     * {@code CREATED_BY} ghi tên đăng nhập của người thực hiện import.
+     */
     @Override
     public StudentImportResultResponse importStudents(MultipartFile file) {
         byte[] bytes = readAndValidateFile(file);
-        fileStorageService.storeBytes(
-                bytes,
-                file.getOriginalFilename(),
-                file.getContentType(),
-                StudentService.MODULE_NAME,
-                null,
-                IMPORT_SUBFOLDER);
+        String importedBy = SecurityUtils.currentUsername();
 
         List<StudentImportRowDto> rows = studentExcelHelper.parseStudentsFromExcel(new ByteArrayInputStream(bytes));
         if (rows.isEmpty()) {
             throw new OracleBusinessException("IMPORT_NO_DATA",
                     "File Excel không có dòng dữ liệu (bỏ qua dòng tiêu đề).");
         }
-        StudentImportResultResponse result = new TransactionTemplate(transactionManager).execute(status -> persistValidRows(rows));
+        StudentImportResultResponse result = new TransactionTemplate(transactionManager)
+                .execute(status -> persistValidRows(rows, importedBy));
+        storeImportFile(file, bytes);
         return result != null ? result : StudentImportResultResponse.builder().totalRows(rows.size()).build();
     }
 
-    private StudentImportResultResponse persistValidRows(List<StudentImportRowDto> rows) {
+    /**
+     * Lưu file import để đối soát. Dữ liệu đã commit nên lỗi lưu file chỉ ghi log, không làm hỏng kết quả import.
+     */
+    private void storeImportFile(MultipartFile file, byte[] bytes) {
+        try {
+            fileStorageService.storeBytes(
+                    bytes,
+                    file.getOriginalFilename(),
+                    file.getContentType(),
+                    StudentService.MODULE_NAME,
+                    null,
+                    IMPORT_SUBFOLDER);
+        } catch (RuntimeException e) {
+            log.error("Import học sinh đã hoàn tất nhưng không lưu được file gốc '{}': {}",
+                    file.getOriginalFilename(), e.getMessage(), e);
+        }
+    }
+
+    private StudentImportResultResponse persistValidRows(List<StudentImportRowDto> rows, String importedBy) {
         Set<String> existingCodes = loadExistingCodes(rows);
         Map<String, ClassEntity> classes = loadClasses(rows);
         Map<Long, Long> enrolledByClass = new HashMap<>();
@@ -130,8 +148,11 @@ public class StudentImportServiceImpl implements StudentImportService {
             }
         }
 
+        // Lưu theo lô: ID lấy từ sequence ngay khi persist, Hibernate gom INSERT theo hibernate.jdbc.batch_size;
+        // STUDENT_CODE do trigger sinh được Hibernate đọc lại nhờ @Generated nên không cần refresh từng dòng.
+        List<StudentEntity> students = new ArrayList<>(valid.size());
         for (StudentImportRowDto row : valid) {
-            StudentEntity saved = studentRepository.saveAndFlush(StudentEntity.builder()
+            students.add(StudentEntity.builder()
                     .studentCode(blankToNull(row.getStudentCode()))
                     .fullName(row.getFullName().trim())
                     .status(resolveStatus(row.getStatus()))
@@ -142,22 +163,32 @@ public class StudentImportServiceImpl implements StudentImportService {
                     .address(blankToNull(row.getAddress()))
                     .note(blankToNull(row.getNote()))
                     .isDeleted(PersistenceFlags.NOT_DELETED)
-                    .createdBy(CREATED_BY)
+                    .createdBy(importedBy)
                     .build());
-            entityManager.refresh(saved);
+        }
+        List<StudentEntity> savedStudents = students.isEmpty() ? List.of() : studentRepository.saveAll(students);
 
-            String classCode = blankToNull(row.getClassCode());
+        List<ClassStudentEntity> enrollments = new ArrayList<>();
+        LocalDateTime enrolledAt = LocalDateTime.now();
+        for (int i = 0; i < valid.size(); i++) {
+            String classCode = blankToNull(valid.get(i).getClassCode());
             if (classCode != null) {
                 ClassEntity clazz = classes.get(classCode.toUpperCase(Locale.ROOT));
-                classStudentRepository.save(ClassStudentEntity.builder()
+                enrollments.add(ClassStudentEntity.builder()
                         .classId(clazz.getId())
-                        .studentId(saved.getId())
+                        .studentId(savedStudents.get(i).getId())
                         .status(ENROLLMENT_STATUS)
-                        .enrolledAt(LocalDateTime.now())
+                        .enrolledAt(enrolledAt)
                         .isDeleted(PersistenceFlags.NOT_DELETED)
-                        .createdBy(CREATED_BY)
+                        .createdBy(importedBy)
                         .build());
             }
+        }
+        if (!enrollments.isEmpty()) {
+            classStudentRepository.saveAll(enrollments);
+        }
+        if (!students.isEmpty()) {
+            entityManager.flush();
         }
 
         log.info("Import học sinh: total={}, success={}, failure={}",

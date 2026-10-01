@@ -17,6 +17,7 @@ import com.education.base.entity.FunctionEntity;
 import com.education.base.entity.MenuEntity;
 import com.education.base.entity.RoleEntity;
 import com.education.base.entity.RoleMenuPermissionEntity;
+import com.education.base.exception.ForbiddenException;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.repository.FunctionRepository;
 import com.education.base.repository.MenuRepository;
@@ -24,6 +25,7 @@ import com.education.base.repository.RoleMenuPermissionRepository;
 import com.education.base.repository.RoleRepository;
 import com.education.base.repository.UserRoleRepository;
 import com.education.base.repository.spec.RoleSpecifications;
+import com.education.base.security.AuthUserPrincipal;
 import com.education.base.security.Permissions;
 import com.education.base.security.SecurityUtils;
 import com.education.base.service.RoleAdminService;
@@ -212,9 +214,19 @@ public class RoleAdminServiceImpl implements RoleAdminService {
     @Transactional(rollbackFor = Exception.class)
     public RolePermissionMatrixResponse updatePermissions(Long id, RolePermissionUpdateRequest request) {
         RoleEntity role = requireRole(id);
+        AuthUserPrincipal caller = SecurityUtils.currentUser().orElse(null);
+        boolean callerIsAdmin = caller != null && caller.isAdmin();
         if (isAdminRole(role)) {
+            if (!callerIsAdmin) {
+                throw new ForbiddenException("ADMIN_ROLE_PROTECTED",
+                        "Chỉ quản trị viên hệ thống mới được phân quyền cho vai trò Quản trị viên.");
+            }
             throw new OracleBusinessException("ADMIN_ROLE_PROTECTED",
                     "Vai trò Quản trị viên hệ thống luôn có toàn quyền, không cần phân quyền.");
+        }
+        if (!callerIsAdmin && caller != null && caller.getRoles().contains(role.getRoleCode())) {
+            throw new ForbiddenException("CANNOT_EDIT_OWN_ROLE",
+                    "Không thể tự phân quyền cho vai trò mà bạn đang được gán.");
         }
         Map<Long, MenuEntity> menus = new LinkedHashMap<>();
         for (MenuEntity menu : menuRepository.findByIsDeletedOrderBySortOrderAscIdAsc(PersistenceFlags.NOT_DELETED)) {
@@ -243,6 +255,14 @@ public class RoleAdminServiceImpl implements RoleAdminService {
             }
         }
 
+        Map<Long, RoleMenuPermissionEntity> existing = new HashMap<>();
+        for (RoleMenuPermissionEntity row : roleMenuPermissionRepository.findByRoleId(id)) {
+            existing.put(row.getMenuId(), row);
+        }
+        if (!callerIsAdmin) {
+            requireGrantsHeldByCaller(caller, target, existing, menus);
+        }
+
         // Có quyền trên menu con thì menu cha phải có VIEW để hiện trên sidebar.
         for (Long menuId : new ArrayList<>(target.keySet())) {
             Long parentId = menus.get(menuId).getParentId();
@@ -255,10 +275,6 @@ public class RoleAdminServiceImpl implements RoleAdminService {
         }
 
         String actor = SecurityUtils.currentUsername();
-        Map<Long, RoleMenuPermissionEntity> existing = new HashMap<>();
-        for (RoleMenuPermissionEntity row : roleMenuPermissionRepository.findByRoleId(id)) {
-            existing.put(row.getMenuId(), row);
-        }
         List<RoleMenuPermissionEntity> toSave = new ArrayList<>();
         List<RoleMenuPermissionEntity> toDelete = new ArrayList<>();
         for (Map.Entry<Long, RoleMenuPermissionEntity> entry : existing.entrySet()) {
@@ -291,6 +307,29 @@ public class RoleAdminServiceImpl implements RoleAdminService {
         log.info("Cập nhật phân quyền vai trò id={}: {} menu được cấp quyền, {} menu bị thu hồi",
                 id, target.size(), toDelete.size());
         return getPermissions(id);
+    }
+
+    /**
+     * Người không phải quản trị viên chỉ được CẤP THÊM những quyền chính mình đang có. Quyền vai trò đã có từ trước
+     * được giữ nguyên hoặc thu hồi tự do; VIEW của menu cha được thêm tự động (chỉ để hiện sidebar) không xét ở đây.
+     */
+    private static void requireGrantsHeldByCaller(AuthUserPrincipal caller, Map<Long, Set<String>> target,
+                                                  Map<Long, RoleMenuPermissionEntity> existing,
+                                                  Map<Long, MenuEntity> menus) {
+        Set<String> held = caller == null || caller.getPermissions() == null ? Set.of() : caller.getPermissions();
+        for (Map.Entry<Long, Set<String>> entry : target.entrySet()) {
+            RoleMenuPermissionEntity row = existing.get(entry.getKey());
+            Set<String> alreadyGranted = row == null
+                    ? Set.of() : new LinkedHashSet<>(FunctionCodes.splitCsv(row.getAllowedFunctions()));
+            MenuEntity menu = menus.get(entry.getKey());
+            for (String code : entry.getValue()) {
+                if (!alreadyGranted.contains(code) && !held.contains(Permissions.of(menu.getMenuCode(), code))) {
+                    throw new ForbiddenException("GRANT_NOT_HELD",
+                            "Bạn không thể cấp quyền '" + code + "' trên menu '" + menu.getMenuName()
+                                    + "' vì chính bạn không có quyền này.");
+                }
+            }
+        }
     }
 
     private Map<Long, List<FunctionEntity>> functionsByMenu() {

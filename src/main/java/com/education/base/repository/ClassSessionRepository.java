@@ -23,6 +23,10 @@ public interface ClassSessionRepository extends JpaRepository<ClassSessionEntity
     List<ClassSessionEntity> findByClassIdAndSessionDateAndIsDeleted(
             Long classId, LocalDate sessionDate, Integer isDeleted);
 
+    /** Giảng viên {@code teacherId} có dạy buổi nào (trạng thái khác {@code excludedStatus}) của lớp không. */
+    boolean existsByClassIdAndTeacherIdAndIsDeletedAndStatusNot(
+            Long classId, Long teacherId, Integer isDeleted, String excludedStatus);
+
     @Query("""
             SELECT CASE WHEN COUNT(s) > 0 THEN true ELSE false END
               FROM ClassSessionEntity s

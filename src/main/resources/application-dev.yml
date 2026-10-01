@@ -1,0 +1,11 @@
+# Profile dev - mặc định khi không truyền SPRING_PROFILES_ACTIVE (spring.profiles.default: dev),
+# ví dụ chạy EducationApplication trong IntelliJ mà không cần biến môi trường.
+# KHÔNG dùng cho môi trường thật: profile prod từ chối khởi động nếu gặp secret này.
+app:
+  security:
+    jwt:
+      secret: ${JWT_SECRET:dev-only-education-jwt-secret-change-me-0123456789}
+    # http://localhost (IntelliJ, Vite proxy): cookie đăng nhập không gắn Secure. Đặt AUTH_COOKIE_SECURE=true khi
+    # chạy dev sau HTTPS.
+    cookie:
+      secure: ${AUTH_COOKIE_SECURE:false}
