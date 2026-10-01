@@ -115,7 +115,8 @@ final class ReceiptHtmlRenderer {
                              color: #dc2626; font-size: 34px; font-weight: 900; padding: 6px 18px; border-radius: 8px; opacity: .85; }
                     .void { margin-top: 14px; color: #b91c1c; font-size: 13px; font-style: italic; }
                     .toolbar { text-align: center; margin: 0 0 12px; }
-                    .toolbar button { padding: 8px 18px; font-size: 14px; cursor: pointer; }
+                    .toolbar span { display: inline-block; padding: 6px 14px; font-size: 13px; color: #555;
+                                    border: 1px dashed #bbb; border-radius: 4px; }
                     @page { size: A5 landscape; margin: 10mm; }
                     @media print { body { background: #fff; } .page { padding: 0; } .sheet { border: 0; box-shadow: none; max-width: none; padding: 0; }
                                    .toolbar { display: none; } }
@@ -124,7 +125,7 @@ final class ReceiptHtmlRenderer {
                 <body>
                   <div class="page">
                     <div>
-                      <div class="toolbar"><button type="button" onclick="window.print()">In phiếu</button></div>
+                      <div class="toolbar"><span>Nhấn Ctrl + P (⌘ + P trên macOS) để in phiếu</span></div>
                       <article class="sheet">
                         %s
                         <div class="top">

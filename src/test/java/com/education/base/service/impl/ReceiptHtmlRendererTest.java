@@ -48,8 +48,9 @@ class ReceiptHtmlRendererTest {
         assertThat(html).contains("PHIẾU THU HỌC PHÍ", "PT20261000001", "PAY4", "Trung tâm ABC", "12 Lê Lợi",
                 "ĐT: 0909000000", "Nguyen Van A", "SV01", "Lop 1", "FEE01 tháng 10/2026", "1.500.000đ",
                 "Một triệu năm trăm nghìn đồng", "Chuyển khoản", "FT123", "Le Thu Ngan", "01/10/2026 09:30",
-                "window.print()");
-        assertThat(html).doesNotContain("<script>alert(1)</script>");
+                "Nhấn Ctrl + P");
+        // Trang mở qua blob URL có CSP chặn script (apiOpenHtmlInNewTab): không dùng onclick / script.
+        assertThat(html).doesNotContain("onclick", "<script");
         assertThat(html).contains("&lt;script&gt;");
         assertThat(html).doesNotContain("ĐÃ HỦY");
     }
