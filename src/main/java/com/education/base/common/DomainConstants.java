@@ -52,6 +52,19 @@ public class DomainConstants {
     /** Trạng thái khoản học phí - {@code CK_FEES_STATUS}. */
     public static final String FEE_STATUS_PATTERN = "UNPAID|PARTIAL|PAID|OVERDUE|CANCELLED";
 
+    // ---- Tài chính: dùng chung (Stream 0) ------------------------------------
+    // Giá trị lẻ của CK_FEES_STATUS; FeeStatusCalculator là nơi DUY NHẤT suy ra trạng thái từ số tiền.
+
+    public static final String FEE_STATUS_UNPAID = "UNPAID";
+
+    public static final String FEE_STATUS_PARTIAL = "PARTIAL";
+
+    public static final String FEE_STATUS_PAID = "PAID";
+
+    public static final String FEE_STATUS_OVERDUE = "OVERDUE";
+
+    public static final String FEE_STATUS_CANCELLED = "CANCELLED";
+
     /** Hình thức thanh toán - {@code CK_TRANS_METHOD}. */
     public static final String PAYMENT_METHOD_PATTERN = "CASH|BANK_TRANSFER|VIETQR|CARD|EWALLET";
 
@@ -122,6 +135,15 @@ public class DomainConstants {
     public static final String MENU_TYPE_DIR = "DIR";
 
     public static final String MENU_TYPE_MENU = "MENU";
+
+    // ---- Tài chính - Stream A: tính phí, khoản học phí, miễn giảm (feat/fin-billing) ----------------
+    // Chỉ Stream A thêm hằng số vào khối này (ví dụ FEE_TYPE_PATTERN, DISCOUNT_TYPE_PATTERN).
+
+    // ---- Tài chính - Stream B: giao dịch, phiếu thu, hủy / hoàn tiền (feat/fin-payments) -------------
+    // Chỉ Stream B thêm hằng số vào khối này (ví dụ TRANSACTION_TYPE_PATTERN).
+
+    // ---- Tài chính - Stream C: báo cáo, dashboard, xuất Excel (feat/fin-reports) ----------------------
+    // Chỉ Stream C thêm hằng số vào khối này (ví dụ DEBT_AGING_BUCKETS).
 
     /** Tên module dùng khi lưu file đính kèm theo từng phân hệ. */
     @UtilityClass

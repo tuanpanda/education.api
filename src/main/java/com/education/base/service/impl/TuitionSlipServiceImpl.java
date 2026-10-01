@@ -1,6 +1,7 @@
 package com.education.base.service.impl;
 
 import com.education.base.common.DomainConstants;
+import com.education.base.common.FeeStatusCalculator;
 import com.education.base.common.PersistenceFlags;
 import com.education.base.common.VietQrHelper;
 import com.education.base.dto.response.BankAccountResponseDto;
@@ -109,7 +110,7 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
                         .discountAmount(BigDecimal.ZERO)
                         .paidAmount(BigDecimal.ZERO)
                         .dueDate(to)
-                        .status(TuitionFeeServiceImpl.resolveFeeStatus(totalAmount, BigDecimal.ZERO, BigDecimal.ZERO, to))
+                        .status(FeeStatusCalculator.resolveFeeStatus(totalAmount, BigDecimal.ZERO, BigDecimal.ZERO, to))
                         .note("HP T" + month + "/" + year)
                         .feeMonth(month)
                         .feeYear(year)
@@ -132,7 +133,7 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
                 existing.setTeacherComment(comment);
                 existing.setFooterWish(wish);
                 existing.setSlipLabel(DomainConstants.TUITION_SLIP_LABEL_DEFAULT);
-                existing.setStatus(TuitionFeeServiceImpl.resolveFeeStatus(
+                existing.setStatus(FeeStatusCalculator.resolveFeeStatus(
                         totalAmount, existing.getDiscountAmount(), existing.getPaidAmount(), to));
                 saved = tuitionFeeRepository.saveAndFlush(existing);
                 updated++;

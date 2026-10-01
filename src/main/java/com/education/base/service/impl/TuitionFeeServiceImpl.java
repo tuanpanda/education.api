@@ -1,6 +1,7 @@
 package com.education.base.service.impl;
 
 import com.education.base.common.DomainConstants;
+import com.education.base.common.FeeStatusCalculator;
 import com.education.base.common.PersistenceFlags;
 import com.education.base.common.VietQrHelper;
 import com.education.base.dto.response.BankAccountResponseDto;
@@ -40,7 +41,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -123,7 +123,7 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
         entity.setDiscountAmount(discount);
         entity.setPaidAmount(BigDecimal.ZERO);
         entity.setIsDeleted(PersistenceFlags.NOT_DELETED);
-        entity.setStatus(resolveFeeStatus(entity.getTotalAmount(), discount, BigDecimal.ZERO, entity.getDueDate()));
+        entity.setStatus(FeeStatusCalculator.resolveFeeStatus(entity.getTotalAmount(), discount, BigDecimal.ZERO, entity.getDueDate()));
         TuitionFeeEntity saved = tuitionFeeRepository.saveAndFlush(entity);
         log.info("Đã tạo khoản học phí id={}, feeCode={}", saved.getId(), saved.getFeeCode());
         return getDetail(saved.getId());
@@ -133,7 +133,7 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
     @Transactional(readOnly = true)
     public TuitionQrResponseDto createQr(Long id, TuitionQrRequest request) {
         TuitionFeeEntity fee = requirePayableFee(id);
-        BigDecimal remaining = remainingOf(fee);
+        BigDecimal remaining = FeeStatusCalculator.remainingOf(fee);
         long amountVnd = remaining.setScale(0, RoundingMode.HALF_UP).longValue();
         if (amountVnd <= 0) {
             throw new OracleBusinessException("FEE_ALREADY_PAID",
@@ -169,7 +169,7 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
     public PaymentTransactionDto confirmPayment(Long id, ConfirmPaymentRequest request) {
         ConfirmPaymentRequest payload = request == null ? new ConfirmPaymentRequest() : request;
         TuitionFeeEntity fee = requirePayable(lockActiveFee(id));
-        BigDecimal remaining = remainingOf(fee);
+        BigDecimal remaining = FeeStatusCalculator.remainingOf(fee);
         BigDecimal amount = payload.getAmount() == null ? remaining : payload.getAmount();
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new OracleBusinessException("INVALID_PAYMENT_AMOUNT", "Số tiền thanh toán phải lớn hơn 0.");
@@ -218,7 +218,7 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
 
         BigDecimal newPaid = nvl(fee.getPaidAmount()).add(amount);
         fee.setPaidAmount(newPaid);
-        fee.setStatus(resolveFeeStatus(fee.getTotalAmount(), fee.getDiscountAmount(), newPaid, fee.getDueDate()));
+        fee.setStatus(FeeStatusCalculator.resolveFeeStatus(fee.getTotalAmount(), fee.getDiscountAmount(), newPaid, fee.getDueDate()));
         tuitionFeeRepository.save(fee);
 
         log.info("Đã xác nhận thanh toán {} cho khoản học phí id={}, status={}",
@@ -279,7 +279,7 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
             throw new OracleBusinessException("FEE_CANCELLED",
                     "Khoản học phí " + fee.getFeeCode() + " đã bị hủy.");
         }
-        if ("PAID".equals(fee.getStatus()) || remainingOf(fee).compareTo(BigDecimal.ZERO) <= 0) {
+        if ("PAID".equals(fee.getStatus()) || FeeStatusCalculator.remainingOf(fee).compareTo(BigDecimal.ZERO) <= 0) {
             throw new OracleBusinessException("FEE_ALREADY_PAID",
                     "Khoản học phí " + fee.getFeeCode() + " đã thu đủ.");
         }
@@ -324,7 +324,7 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
     private TuitionFeeReportDto toReport(TuitionFeeEntity entity, Map<Long, StudentEntity> students,
                                          Map<Long, ClassEntity> classes) {
         TuitionFeeReportDto dto = financeAcademicMapper.toFeeReport(entity);
-        dto.setRemainingAmount(remainingOf(entity));
+        dto.setRemainingAmount(FeeStatusCalculator.remainingOf(entity));
         StudentEntity student = entity.getStudentId() == null ? null : students.get(entity.getStudentId());
         if (student != null) {
             dto.setStudentCode(student.getStudentCode());
@@ -336,25 +336,6 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
             dto.setClassName(clazz.getClassName());
         }
         return dto;
-    }
-
-    static BigDecimal remainingOf(TuitionFeeEntity fee) {
-        BigDecimal remaining = nvl(fee.getTotalAmount())
-                .subtract(nvl(fee.getDiscountAmount()))
-                .subtract(nvl(fee.getPaidAmount()));
-        return remaining.compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO : remaining;
-    }
-
-    static String resolveFeeStatus(BigDecimal total, BigDecimal discount, BigDecimal paid, LocalDate dueDate) {
-        BigDecimal remaining = nvl(total).subtract(nvl(discount)).subtract(nvl(paid));
-        if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
-            return "PAID";
-        }
-        boolean overdue = dueDate != null && dueDate.isBefore(LocalDate.now());
-        if (nvl(paid).compareTo(BigDecimal.ZERO) > 0) {
-            return overdue ? "OVERDUE" : "PARTIAL";
-        }
-        return overdue ? "OVERDUE" : "UNPAID";
     }
 
     private static BigDecimal nvl(BigDecimal value) {
