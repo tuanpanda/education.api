@@ -44,6 +44,12 @@ public class TuitionFeeDetailResponse {
     private String status;
     private String note;
 
+    /** Lý do hủy ({@code STATUS = CANCELLED}); lấy từ {@code FIN_TUITION_FEES.CANCEL_REASON} (V14_1). */
+    private String cancelReason;
+
+    /** Trạng thái học sinh ({@code EDU_STUDENTS.STATUS}) để giao diện gắn nhãn "Đã nghỉ". */
+    private String studentStatus;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 

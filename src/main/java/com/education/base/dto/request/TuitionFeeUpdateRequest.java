@@ -3,9 +3,9 @@ package com.education.base.dto.request;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -13,28 +13,18 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /**
- * Request tạo một khoản học phí cho học sinh.
+ * Request cập nhật một khoản học phí ({@code PUT /api/v1/tuition-fees/{id}}).
  * <p>
- * Ràng buộc {@code CK_FEES_DISCOUNT} yêu cầu {@code discountAmount <= totalAmount};
- * tầng Service phải kiểm tra điều kiện liên trường này vì Jakarta Validation ở mức field
- * không so sánh được hai trường với nhau.
+ * Thay thế TOÀN BỘ các trường được phép sửa: tổng tiền, tiền giảm, hạn thu, ghi chú.
+ * {@code discountAmount = null} nghĩa là 0; {@code dueDate} / {@code note} = null nghĩa là xóa giá trị cũ.
+ * Tầng Service kiểm tra {@code discountAmount <= totalAmount} ({@code CK_FEES_DISCOUNT}) và
+ * {@code totalAmount - discountAmount >= paidAmount} (không tạo tiền thừa).
  */
 @Data
+@Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class TuitionFeeCreateRequest {
-
-    /** Bỏ trống thì hệ thống tự sinh theo quy luật {@code TUITION} ({@code SYS_CODE_RULES}, ví dụ HP2026040001). */
-    @Size(max = 30, message = "Mã khoản học phí không được vượt quá 30 ký tự")
-    @Pattern(regexp = "^[A-Za-z0-9_-]*$",
-            message = "Mã khoản học phí chỉ được chứa chữ, số, dấu gạch ngang và gạch dưới")
-    private String feeCode;
-
-    @NotNull(message = "ID học sinh không được để trống")
-    private Long studentId;
-
-    /** Lớp học phát sinh khoản phí; có thể để trống với các khoản phí chung. */
-    private Long classId;
+public class TuitionFeeUpdateRequest {
 
     @NotNull(message = "Tổng số tiền không được để trống")
     @DecimalMin(value = "0", message = "Tổng số tiền không được là số âm")
