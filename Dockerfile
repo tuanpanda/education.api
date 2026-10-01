@@ -6,6 +6,8 @@ WORKDIR /src
 
 COPY pom.xml .
 COPY src ./src
+# V12SeedPasswordTest checks this ops script (build stage only, not in the runtime image).
+COPY scripts/db ./scripts/db
 
 ARG BUILD_VERSION=0.0.0
 ARG GIT_SHA=unknown
