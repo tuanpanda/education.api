@@ -5,3 +5,7 @@ app:
   security:
     jwt:
       secret: ${JWT_SECRET:dev-only-education-jwt-secret-change-me-0123456789}
+    # http://localhost (IntelliJ, Vite proxy): cookie đăng nhập không gắn Secure. Đặt AUTH_COOKIE_SECURE=true khi
+    # chạy dev sau HTTPS.
+    cookie:
+      secure: ${AUTH_COOKIE_SECURE:false}

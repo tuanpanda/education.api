@@ -3,6 +3,7 @@ package com.education.base.security;
 import com.education.base.config.AuthSecurityProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.ServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,8 +54,16 @@ class AuthRateLimitFilterTest {
                 "{\"username\":\"" + username + "\",\"password\":\"Secret@123\"}");
     }
 
-    private MockHttpServletResponse post(String path, String ip, String body) throws Exception {
+    private MockHttpServletResponse refresh(String ip, String refreshCookie) throws Exception {
+        return post(AuthRateLimitFilter.REFRESH_PATH, ip, "",
+                new Cookie(AuthCookieService.REFRESH_COOKIE, refreshCookie));
+    }
+
+    private MockHttpServletResponse post(String path, String ip, String body, Cookie... cookies) throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", path);
+        if (cookies.length > 0) {
+            request.setCookies(cookies);
+        }
         request.setRemoteAddr(ip);
         request.setContentType("application/json");
         request.setContent(body.getBytes(StandardCharsets.UTF_8));
@@ -114,24 +123,32 @@ class AuthRateLimitFilterTest {
     void refresh_perUserLimit_usesVerifiedTokenOwner() throws Exception {
         when(jwtTokenService.parse(eq("r-good"), eq(TokenType.REFRESH)))
                 .thenReturn(new JwtClaims(7L, "teacher1", 0, TokenType.REFRESH, null, "jti", "sid"));
-        String body = "{\"refreshToken\":\"r-good\"}";
 
-        assertThat(post(AuthRateLimitFilter.REFRESH_PATH, "10.0.0.1", body).getStatus()).isEqualTo(200);
-        assertThat(post(AuthRateLimitFilter.REFRESH_PATH, "10.0.0.2", body).getStatus()).isEqualTo(200);
-        assertThat(post(AuthRateLimitFilter.REFRESH_PATH, "10.0.0.3", body).getStatus()).isEqualTo(429);
+        assertThat(refresh("10.0.0.1", "r-good").getStatus()).isEqualTo(200);
+        assertThat(refresh("10.0.0.2", "r-good").getStatus()).isEqualTo(200);
+        assertThat(refresh("10.0.0.3", "r-good").getStatus()).isEqualTo(429);
     }
 
     @Test
     void refresh_invalidToken_onlyCountsPerIp() throws Exception {
         when(jwtTokenService.parse(anyString(), eq(TokenType.REFRESH)))
                 .thenThrow(new InvalidTokenException(InvalidTokenException.TOKEN_INVALID, "bad"));
-        String body = "{\"refreshToken\":\"forged\"}";
 
         for (int i = 0; i < 4; i++) {
-            assertThat(post(AuthRateLimitFilter.REFRESH_PATH, "10.0.0.5", body).getStatus()).isEqualTo(200);
+            assertThat(refresh("10.0.0.5", "forged").getStatus()).isEqualTo(200);
         }
-        assertThat(post(AuthRateLimitFilter.REFRESH_PATH, "10.0.0.5", body).getStatus()).isEqualTo(429);
-        assertThat(post(AuthRateLimitFilter.REFRESH_PATH, "10.0.0.6", body).getStatus()).isEqualTo(200);
+        assertThat(refresh("10.0.0.5", "forged").getStatus()).isEqualTo(429);
+        assertThat(refresh("10.0.0.6", "forged").getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void refresh_tokenInBodyIsIgnored_onlyCookieCountsPerUser() throws Exception {
+        String body = "{\"refreshToken\":\"r-good\"}";
+
+        for (int i = 0; i < 4; i++) {
+            assertThat(post(AuthRateLimitFilter.REFRESH_PATH, "10.0.1." + i, body).getStatus()).isEqualTo(200);
+        }
+        org.mockito.Mockito.verifyNoInteractions(jwtTokenService);
     }
 
     @Test

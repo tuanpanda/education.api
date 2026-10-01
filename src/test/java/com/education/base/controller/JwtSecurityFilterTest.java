@@ -1,6 +1,7 @@
 package com.education.base.controller;
 
 import com.education.base.dto.response.UserNavigationResponseDto;
+import com.education.base.security.AuthCookieService;
 import com.education.base.security.AuthUserPrincipal;
 import com.education.base.security.InvalidTokenException;
 import com.education.base.security.JwtClaims;
@@ -8,6 +9,7 @@ import com.education.base.security.JwtTokenService;
 import com.education.base.security.TokenType;
 import com.education.base.service.AccessControlService;
 import com.education.base.support.WebMvcSecurityTestConfig;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -29,7 +31,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Kiểm tra filter JWT thật trong chuỗi Spring Security (token hợp lệ / hết hạn / bị thu hồi, CORS preflight).
+ * Kiểm tra filter JWT thật trong chuỗi Spring Security: access token trong cookie hợp lệ / hết hạn / bị thu hồi,
+ * header Bearer bị bỏ qua, CORS preflight.
  */
 @WebMvcTest(MenuController.class)
 @Import(WebMvcSecurityTestConfig.class)
@@ -49,15 +52,26 @@ class JwtSecurityFilterTest {
                 .permission("MENU_STUDENT_LIST:VIEW").tokenVersion(version).build();
     }
 
+    private static Cookie accessCookie(String token) {
+        return new Cookie(AuthCookieService.ACCESS_COOKIE, token);
+    }
+
     @Test
-    void validBearerToken_authenticatesRequest() throws Exception {
+    void bearerHeaderWithoutCookie_isUnauthorized() throws Exception {
+        mockMvc.perform(get("/api/v1/menus/user-navigation").header(HttpHeaders.AUTHORIZATION, "Bearer good"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    void validAccessCookie_authenticatesRequest() throws Exception {
         when(jwtTokenService.parse("good", TokenType.ACCESS))
                 .thenReturn(new JwtClaims(7L, "teacher1", 2, TokenType.ACCESS, null));
         when(accessControlService.loadActivePrincipal(7L)).thenReturn(Optional.of(principal(2)));
         when(accessControlService.getNavigation(any())).thenReturn(UserNavigationResponseDto.builder()
                 .menus(List.of()).permissions(new LinkedHashSet<>(List.of("MENU_STUDENT_LIST:VIEW"))).build());
 
-        mockMvc.perform(get("/api/v1/menus/user-navigation").header(HttpHeaders.AUTHORIZATION, "Bearer good"))
+        mockMvc.perform(get("/api/v1/menus/user-navigation").cookie(accessCookie("good")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.permissions[0]").value("MENU_STUDENT_LIST:VIEW"));
     }
@@ -67,7 +81,7 @@ class JwtSecurityFilterTest {
         when(jwtTokenService.parse("old", TokenType.ACCESS))
                 .thenThrow(new InvalidTokenException(InvalidTokenException.TOKEN_EXPIRED, "Phiên đăng nhập đã hết hạn."));
 
-        mockMvc.perform(get("/api/v1/menus/user-navigation").header(HttpHeaders.AUTHORIZATION, "Bearer old"))
+        mockMvc.perform(get("/api/v1/menus/user-navigation").cookie(accessCookie("old")))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("TOKEN_EXPIRED"));
     }
@@ -78,7 +92,7 @@ class JwtSecurityFilterTest {
                 .thenReturn(new JwtClaims(7L, "teacher1", 1, TokenType.ACCESS, null));
         when(accessControlService.loadActivePrincipal(7L)).thenReturn(Optional.of(principal(2)));
 
-        mockMvc.perform(get("/api/v1/menus/user-navigation").header(HttpHeaders.AUTHORIZATION, "Bearer stale"))
+        mockMvc.perform(get("/api/v1/menus/user-navigation").cookie(accessCookie("stale")))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("TOKEN_REVOKED"));
     }
@@ -89,7 +103,7 @@ class JwtSecurityFilterTest {
                 .thenReturn(new JwtClaims(7L, "teacher1", 2, TokenType.ACCESS, null));
         when(accessControlService.loadActivePrincipal(7L)).thenReturn(Optional.empty());
 
-        mockMvc.perform(get("/api/v1/menus/user-navigation").header(HttpHeaders.AUTHORIZATION, "Bearer locked"))
+        mockMvc.perform(get("/api/v1/menus/user-navigation").cookie(accessCookie("locked")))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("TOKEN_REVOKED"));
     }
@@ -99,7 +113,7 @@ class JwtSecurityFilterTest {
         mockMvc.perform(options("/api/v1/menus/user-navigation")
                         .header(HttpHeaders.ORIGIN, "http://localhost:5173")
                         .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "GET")
-                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "authorization"))
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type"))
                 .andExpect(status().isOk())
                 .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "http://localhost:5173"));
     }

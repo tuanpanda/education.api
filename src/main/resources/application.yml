@@ -72,6 +72,13 @@ app:
       refresh-token-ttl: ${JWT_REFRESH_TOKEN_TTL:7d}
       # Nhiều tab làm mới cùng lúc bằng một refresh token trong khoảng này không bị coi là dùng lại.
       refresh-reuse-grace: ${JWT_REFRESH_REUSE_GRACE:10s}
+    cookie:
+      # Access / refresh token nằm trong cookie HttpOnly (không trả trong body, không lưu localStorage).
+      # Secure: chỉ gửi qua HTTPS. Mặc định true; profile dev đặt false (http://localhost). Chạy qua HTTP thuần
+      # trên IP/tên máy (không phải localhost) với Secure=true thì trình duyệt bỏ cookie -> không đăng nhập được.
+      secure: ${AUTH_COOKIE_SECURE:true}
+      # Strict (mặc định) hoặc Lax. UI và API phải cùng site (cùng host khác cổng, hoặc chung tên miền gốc).
+      same-site: ${AUTH_COOKIE_SAME_SITE:Strict}
     auth:
       lockout:
         # Cứ mỗi N lần sai mật khẩu liên tiếp thì khóa tạm thời; lần khóa sau gấp đôi lần trước, tối đa max-duration.

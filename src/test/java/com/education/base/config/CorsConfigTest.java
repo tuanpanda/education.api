@@ -18,14 +18,15 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * CORS đọc từ {@code app.cors.allowed-origins}: chỉ origin khai báo được phép, không bật credentials;
- * danh sách rỗng = chỉ same-origin.
+ * CORS đọc từ {@code app.cors.allowed-origins}: chỉ origin khai báo được phép, bật credentials (cookie phiên),
+ * từ chối origin khớp mọi host; danh sách rỗng = chỉ same-origin.
  */
 class CorsConfigTest {
 
@@ -36,6 +37,19 @@ class CorsConfigTest {
 
         assertThat(properties.allowedOrigins()).containsExactly("http://localhost:5173", "https://edu.example.vn");
         assertThat(new CorsProperties(null).allowedOrigins()).isEmpty();
+    }
+
+    @Test
+    void corsProperties_rejectsPatternsMatchingEveryHost() {
+        for (String origin : List.of("*", "http://*", "https://*:8088", "*://*", "http://*:*", "**")) {
+            assertThatThrownBy(() -> new CorsProperties(List.of("http://localhost:5173", origin)))
+                    .as(origin)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("CORS_ALLOWED_ORIGINS");
+        }
+        // Pattern có phần host cụ thể vẫn được phép (ví dụ dải LAN).
+        assertThat(new CorsProperties(List.of("http://192.168.1.*:8088", "https://*.edu.example.vn")).allowedOrigins())
+                .hasSize(2);
     }
 
     @Nested
@@ -63,23 +77,36 @@ class CorsConfigTest {
         }
 
         @Test
-        void preflightFromAllowedOrigin_isAcceptedWithoutCredentials() throws Exception {
+        void preflightFromAllowedOrigin_isAcceptedWithCredentials() throws Exception {
+            mockMvc.perform(options("/api/v1/health")
+                            .header(HttpHeaders.ORIGIN, "https://edu.example.vn")
+                            .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                            .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type"))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "https://edu.example.vn"))
+                    .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true"))
+                    .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS,
+                            org.hamcrest.Matchers.containsStringIgnoringCase("content-type")));
+        }
+
+        @Test
+        void preflightWithAuthorizationHeader_isRejected() throws Exception {
+            // Bearer token không còn được dùng: header Authorization không nằm trong danh sách cho phép.
             mockMvc.perform(options("/api/v1/health")
                             .header(HttpHeaders.ORIGIN, "https://edu.example.vn")
                             .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "GET")
                             .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "authorization"))
-                    .andExpect(status().isOk())
-                    .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "https://edu.example.vn"))
-                    .andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS));
+                    .andExpect(status().isForbidden());
         }
 
         @Test
-        void simpleRequestFromAllowedOrigin_exposesContentDisposition() throws Exception {
+        void simpleRequestFromAllowedOrigin_exposesContentDispositionAndRetryAfter() throws Exception {
             mockMvc.perform(get("/api/v1/health").header(HttpHeaders.ORIGIN, "http://localhost:5173"))
                     .andExpect(status().isOk())
                     .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "http://localhost:5173"))
-                    .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION))
-                    .andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS));
+                    .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS,
+                            HttpHeaders.CONTENT_DISPOSITION + ", " + HttpHeaders.RETRY_AFTER))
+                    .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true"));
         }
 
         @Test

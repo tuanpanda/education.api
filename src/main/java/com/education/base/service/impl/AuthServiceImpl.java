@@ -5,8 +5,6 @@ import com.education.base.common.PersistenceFlags;
 import com.education.base.config.AuthSecurityProperties;
 import com.education.base.dto.request.ChangePasswordRequest;
 import com.education.base.dto.request.LoginRequest;
-import com.education.base.dto.request.RefreshTokenRequest;
-import com.education.base.dto.response.AuthTokenResponse;
 import com.education.base.dto.response.AuthUserResponse;
 import com.education.base.entity.UserEntity;
 import com.education.base.exception.OracleBusinessException;
@@ -19,6 +17,7 @@ import com.education.base.security.JwtTokenService;
 import com.education.base.security.TokenType;
 import com.education.base.service.AccessControlService;
 import com.education.base.service.AuthService;
+import com.education.base.service.AuthTokens;
 import com.education.base.service.RefreshTokenService;
 import com.education.base.service.RefreshTokenService.IssuedRefreshToken;
 import com.education.base.service.RefreshTokenService.RotationResult;
@@ -67,7 +66,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional(rollbackFor = Exception.class, noRollbackFor = UnauthorizedException.class)
-    public AuthTokenResponse login(LoginRequest request) {
+    public AuthTokens login(LoginRequest request) {
         String username = request.getUsername() == null ? "" : request.getUsername().trim();
         Optional<UserEntity> found = findByUsername(username);
         if (found.isEmpty()) {
@@ -100,10 +99,14 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional(rollbackFor = Exception.class, noRollbackFor = UnauthorizedException.class)
-    public AuthTokenResponse refresh(RefreshTokenRequest request) {
+    public AuthTokens refresh(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            throw new UnauthorizedException(REFRESH_TOKEN_INVALID,
+                    "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.");
+        }
         JwtClaims claims;
         try {
-            claims = jwtTokenService.parse(request.getRefreshToken(), TokenType.REFRESH);
+            claims = jwtTokenService.parse(refreshToken, TokenType.REFRESH);
         } catch (InvalidTokenException ex) {
             throw new UnauthorizedException(REFRESH_TOKEN_INVALID,
                     "Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.");
@@ -134,16 +137,23 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void logout(Long userId, String sessionId, String refreshToken) {
-        String target = sessionOfRefreshToken(userId, refreshToken);
-        if (target == null) {
+        JwtClaims refreshClaims = verifiedRefreshClaims(userId, refreshToken);
+        Long owner = userId;
+        String target = null;
+        if (refreshClaims != null) {
+            owner = refreshClaims.userId();
+            target = refreshClaims.sessionId();
+        }
+        if ((target == null || target.isBlank()) && userId != null) {
             target = sessionId;
         }
-        if (target == null || target.isBlank()) {
-            log.info("Đăng xuất: userId={} không xác định được phiên (token cũ không có sid), không thu hồi gì", userId);
+        if (owner == null || target == null || target.isBlank()) {
+            log.info("Đăng xuất: userId={} không xác định được phiên (chưa đăng nhập / token cũ không có sid), "
+                    + "không thu hồi gì", owner);
             return;
         }
-        refreshTokenService.revokeSession(userId, target);
-        log.info("Đăng xuất: userId={}, đã thu hồi phiên sid={}", userId, target);
+        refreshTokenService.revokeSession(owner, target);
+        log.info("Đăng xuất: userId={}, đã thu hồi phiên sid={}", owner, target);
     }
 
     @Override
@@ -153,7 +163,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AuthTokenResponse changePassword(Long userId, ChangePasswordRequest request) {
+    public AuthTokens changePassword(Long userId, ChangePasswordRequest request) {
         UserEntity user = userRepository.findByIdAndIsDeleted(userId, PersistenceFlags.NOT_DELETED)
                 .orElseThrow(() -> new UnauthorizedException("UNAUTHORIZED", "Vui lòng đăng nhập để tiếp tục."));
         if (!passwordMatches(request.getOldPassword(), user.getPasswordHash())) {
@@ -228,15 +238,21 @@ public class AuthServiceImpl implements AuthService {
                         + minutesRemaining(until, now) + " phút.");
     }
 
-    /** Phiên của refresh token gửi kèm khi đăng xuất, chỉ khi token hợp lệ và thuộc chính người dùng. */
-    private String sessionOfRefreshToken(Long userId, String refreshToken) {
+    /**
+     * Claim của refresh token gửi kèm khi đăng xuất: chỉ khi chữ ký hợp lệ và (nếu đã đăng nhập) thuộc chính
+     * người dùng {@code userId}.
+     */
+    private JwtClaims verifiedRefreshClaims(Long userId, String refreshToken) {
         if (refreshToken == null || refreshToken.isBlank()) {
             return null;
         }
         try {
             JwtClaims claims = jwtTokenService.parse(refreshToken, TokenType.REFRESH);
-            if (claims != null && Objects.equals(claims.userId(), userId)) {
-                return claims.sessionId();
+            if (claims == null || claims.userId() == null) {
+                return null;
+            }
+            if (userId == null || Objects.equals(claims.userId(), userId)) {
+                return claims;
             }
             log.warn("Đăng xuất: refresh token gửi kèm không thuộc userId={}, bỏ qua", userId);
         } catch (InvalidTokenException ex) {
@@ -281,16 +297,15 @@ public class AuthServiceImpl implements AuthService {
         }
     }
 
-    private AuthTokenResponse issueTokens(UserEntity user, int version, IssuedRefreshToken session) {
+    private AuthTokens issueTokens(UserEntity user, int version, IssuedRefreshToken session) {
         AuthUserPrincipal principal = accessControlService.buildPrincipal(user);
-        return AuthTokenResponse.builder()
+        return AuthTokens.builder()
                 .accessToken(jwtTokenService.generateAccessToken(user.getId(), user.getUsername(), version,
                         session.sessionId()))
                 .refreshToken(jwtTokenService.generateRefreshToken(user.getId(), user.getUsername(), version,
                         session.jti(), session.sessionId()))
-                .tokenType(AuthTokenResponse.BEARER)
-                .expiresIn(jwtTokenService.getAccessTokenTtlSeconds())
-                .refreshExpiresIn(jwtTokenService.getRefreshTokenTtlSeconds())
+                .accessTokenTtlSeconds(jwtTokenService.getAccessTokenTtlSeconds())
+                .refreshTokenTtlSeconds(jwtTokenService.getRefreshTokenTtlSeconds())
                 .user(toUserResponse(principal))
                 .build();
     }

@@ -28,7 +28,8 @@ import java.util.Locale;
 
 /**
  * Giới hạn tần suất {@code POST /api/v1/auth/login} và {@code POST /api/v1/auth/refresh} theo IP và theo
- * tài khoản (tên đăng nhập / người dùng của refresh token). Vượt ngưỡng trả HTTP 429 kèm {@code Retry-After}.
+ * tài khoản (tên đăng nhập trong body / người dùng của refresh token trong cookie
+ * {@value AuthCookieService#REFRESH_COOKIE}). Vượt ngưỡng trả HTTP 429 kèm {@code Retry-After}.
  * <p>
  * Được đăng ký SAU chuỗi Spring Security (để phản hồi 429 vẫn có header CORS) - xem {@code AuthSecurityConfig}.
  * IP lấy từ {@link HttpServletRequest#getRemoteAddr()}; phía sau reverse proxy (nginx của UI) cần bật
@@ -41,7 +42,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     public static final String REFRESH_PATH = "/api/v1/auth/refresh";
     public static final String TOO_MANY_REQUESTS = "TOO_MANY_REQUESTS";
 
-    /** Chỉ đọc tối đa ngần này byte đầu của body để lấy tên đăng nhập / refresh token. */
+    /** Chỉ đọc tối đa ngần này byte đầu của body để lấy tên đăng nhập. */
     static final int MAX_INSPECTED_BODY_BYTES = 16 * 1024;
     private static final int MAX_KEY_LENGTH = 100;
 
@@ -84,8 +85,9 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
             return;
         }
 
-        CachedBodyRequest wrapped = new CachedBodyRequest(request);
-        String accountKey = login ? loginAccountKey(wrapped) : refreshAccountKey(wrapped);
+        // Chỉ đăng nhập cần đọc body (tên đăng nhập); refresh token nằm trong cookie HttpOnly.
+        HttpServletRequest forwarded = login ? new CachedBodyRequest(request) : request;
+        String accountKey = login ? loginAccountKey((CachedBodyRequest) forwarded) : refreshAccountKey(request);
         if (accountKey != null) {
             SlidingWindowRateLimiter.Decision byAccount = limiter.tryAcquire(
                     accountKey,
@@ -97,7 +99,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
                 return;
             }
         }
-        chain.doFilter(wrapped, response);
+        chain.doFilter(forwarded, response);
     }
 
     private void reject(HttpServletResponse response, SlidingWindowRateLimiter.Decision decision) throws IOException {
@@ -125,18 +127,17 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
         return "login:user:" + truncate(username.asText().trim().toLowerCase(Locale.ROOT));
     }
 
-    private String refreshAccountKey(CachedBodyRequest request) {
-        JsonNode body = request.jsonBody(objectMapper);
-        if (body == null || jwtTokenService == null) {
+    private String refreshAccountKey(HttpServletRequest request) {
+        if (jwtTokenService == null) {
             return null;
         }
-        JsonNode token = body.get("refreshToken");
-        if (token == null || !token.isTextual() || token.asText().isBlank()) {
+        String token = AuthCookieService.readRefreshToken(request).orElse(null);
+        if (token == null) {
             return null;
         }
         try {
             // Chỉ tin người dùng của token có chữ ký hợp lệ (không để kẻ gian chặn tài khoản khác).
-            JwtClaims claims = jwtTokenService.parse(token.asText(), TokenType.REFRESH);
+            JwtClaims claims = jwtTokenService.parse(token, TokenType.REFRESH);
             return claims == null || claims.userId() == null ? null : "refresh:user:" + claims.userId();
         } catch (InvalidTokenException ex) {
             return null;

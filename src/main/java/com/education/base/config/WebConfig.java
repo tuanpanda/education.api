@@ -14,14 +14,21 @@ import java.util.List;
 /**
  * CORS cho {@code /api/**} theo danh sách origin cấu hình ({@link CorsProperties}) và interceptor phân quyền.
  * <p>
- * Frontend gửi JWT qua header {@code Authorization: Bearer} (không dùng cookie) nên không bật
- * {@code allowCredentials}. Khi không cấu hình origin nào thì không đăng ký CORS mapping: request same-origin
- * vẫn chạy bình thường, trình duyệt chặn mọi request cross-origin.
+ * JWT nằm trong cookie HttpOnly nên bật {@code allowCredentials} (frontend gọi {@code fetch} với
+ * {@code credentials: 'include'}); vì vậy chỉ chấp nhận origin khai báo tường minh ({@link CorsProperties} từ chối
+ * {@code *}) và chỉ cho phép các header cần thiết ({@link #ALLOWED_HEADERS}). Khi không
+ * cấu hình origin nào thì không đăng ký CORS mapping: request same-origin vẫn chạy bình thường, trình duyệt chặn
+ * mọi request cross-origin.
  */
 @Slf4j
 @Configuration
 @EnableConfigurationProperties(CorsProperties.class)
 public class WebConfig implements WebMvcConfigurer {
+
+    /** Header request được phép gửi cross-origin. */
+    static final String[] ALLOWED_HEADERS = {
+            HttpHeaders.ACCEPT, HttpHeaders.ACCEPT_LANGUAGE, HttpHeaders.CONTENT_TYPE, "X-Requested-With"
+    };
 
     private final CorsProperties corsProperties;
 
@@ -40,9 +47,9 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addMapping("/api/**")
                 .allowedOriginPatterns(origins.toArray(String[]::new))
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-                .allowedHeaders("*")
-                .exposedHeaders(HttpHeaders.CONTENT_DISPOSITION)
-                .allowCredentials(false)
+                .allowedHeaders(ALLOWED_HEADERS)
+                .exposedHeaders(HttpHeaders.CONTENT_DISPOSITION, HttpHeaders.RETRY_AFTER)
+                .allowCredentials(true)
                 .maxAge(3600);
     }
 

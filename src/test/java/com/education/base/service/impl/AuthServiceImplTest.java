@@ -3,8 +3,6 @@ package com.education.base.service.impl;
 import com.education.base.config.AuthSecurityProperties;
 import com.education.base.dto.request.ChangePasswordRequest;
 import com.education.base.dto.request.LoginRequest;
-import com.education.base.dto.request.RefreshTokenRequest;
-import com.education.base.dto.response.AuthTokenResponse;
 import com.education.base.entity.UserEntity;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.exception.UnauthorizedException;
@@ -15,6 +13,7 @@ import com.education.base.security.JwtClaims;
 import com.education.base.security.JwtTokenService;
 import com.education.base.security.TokenType;
 import com.education.base.service.AccessControlService;
+import com.education.base.service.AuthTokens;
 import com.education.base.service.RefreshTokenService;
 import com.education.base.service.RefreshTokenService.IssuedRefreshToken;
 import com.education.base.service.RefreshTokenService.Rejection;
@@ -125,12 +124,11 @@ class AuthServiceImplTest {
         UserEntity user = user("ACTIVE");
         when(userRepository.findByUsernameAndIsDeleted("teacher1", 0)).thenReturn(Optional.of(user));
 
-        AuthTokenResponse response = service.login(new LoginRequest("teacher1", PASSWORD));
+        AuthTokens response = service.login(new LoginRequest("teacher1", PASSWORD));
 
         assertThat(response.getAccessToken()).isEqualTo("access");
         assertThat(response.getRefreshToken()).isEqualTo("refresh");
-        assertThat(response.getTokenType()).isEqualTo("Bearer");
-        assertThat(response.getExpiresIn()).isEqualTo(900L);
+        assertThat(response.getAccessTokenTtlSeconds()).isEqualTo(900L);
         assertThat(response.getUser().getUsername()).isEqualTo("teacher1");
         assertThat(response.getUser().getRoles()).containsExactly("ROLE_TEACHER");
         assertThat(response.getUser().getPermissions()).containsExactly("MENU_STUDENT_LIST:VIEW");
@@ -286,7 +284,7 @@ class AuthServiceImplTest {
         when(refreshTokenService.rotate(10L, "jti-old")).thenReturn(RotationResult.rotated(
                 new IssuedRefreshToken("jti-new", "sid-1", NOW.plusDays(7))));
 
-        AuthTokenResponse response = service.refresh(new RefreshTokenRequest("r1"));
+        AuthTokens response = service.refresh("r1");
 
         assertThat(response.getAccessToken()).isEqualTo("access");
         assertThat(response.getRefreshToken()).isEqualTo("refresh");
@@ -300,7 +298,7 @@ class AuthServiceImplTest {
         when(userRepository.findByIdAndIsDeleted(10L, 0)).thenReturn(Optional.of(user("ACTIVE")));
         when(refreshTokenService.rotate(10L, "jti-old")).thenReturn(RotationResult.rejected(Rejection.REUSED));
 
-        assertThatThrownBy(() -> service.refresh(new RefreshTokenRequest("r1")))
+        assertThatThrownBy(() -> service.refresh("r1"))
                 .isInstanceOf(UnauthorizedException.class)
                 .extracting("errorCode").isEqualTo(AuthServiceImpl.REFRESH_TOKEN_REUSED);
     }
@@ -311,7 +309,7 @@ class AuthServiceImplTest {
         when(userRepository.findByIdAndIsDeleted(10L, 0)).thenReturn(Optional.of(user("ACTIVE")));
         when(refreshTokenService.rotate(10L, null)).thenReturn(RotationResult.rejected(Rejection.UNKNOWN));
 
-        assertThatThrownBy(() -> service.refresh(new RefreshTokenRequest("r1")))
+        assertThatThrownBy(() -> service.refresh("r1"))
                 .isInstanceOf(UnauthorizedException.class)
                 .extracting("errorCode").isEqualTo(AuthServiceImpl.REFRESH_TOKEN_INVALID);
     }
@@ -321,7 +319,7 @@ class AuthServiceImplTest {
         when(jwtTokenService.parse("r1", TokenType.REFRESH)).thenReturn(refreshClaims(1, "jti-old"));
         when(userRepository.findByIdAndIsDeleted(10L, 0)).thenReturn(Optional.of(user("ACTIVE")));
 
-        assertThatThrownBy(() -> service.refresh(new RefreshTokenRequest("r1")))
+        assertThatThrownBy(() -> service.refresh("r1"))
                 .isInstanceOf(UnauthorizedException.class)
                 .extracting("errorCode").isEqualTo(AuthServiceImpl.REFRESH_TOKEN_INVALID);
         verify(refreshTokenService, never()).rotate(anyLong(), any());
@@ -332,7 +330,7 @@ class AuthServiceImplTest {
         when(jwtTokenService.parse("bad", TokenType.REFRESH))
                 .thenThrow(new InvalidTokenException(InvalidTokenException.TOKEN_EXPIRED, "expired"));
 
-        assertThatThrownBy(() -> service.refresh(new RefreshTokenRequest("bad")))
+        assertThatThrownBy(() -> service.refresh("bad"))
                 .isInstanceOf(UnauthorizedException.class)
                 .extracting("errorCode").isEqualTo(AuthServiceImpl.REFRESH_TOKEN_INVALID);
     }
@@ -342,7 +340,7 @@ class AuthServiceImplTest {
         when(jwtTokenService.parse("r1", TokenType.REFRESH)).thenReturn(refreshClaims(2, "jti-old"));
         when(userRepository.findByIdAndIsDeleted(10L, 0)).thenReturn(Optional.of(user("LOCKED")));
 
-        assertThatThrownBy(() -> service.refresh(new RefreshTokenRequest("r1")))
+        assertThatThrownBy(() -> service.refresh("r1"))
                 .isInstanceOf(UnauthorizedException.class)
                 .extracting("errorCode").isEqualTo(AuthServiceImpl.ACCOUNT_LOCKED);
     }
@@ -380,6 +378,35 @@ class AuthServiceImplTest {
     }
 
     @Test
+    void logout_withExpiredAccessToken_revokesSessionOfRefreshCookie() {
+        when(jwtTokenService.parse("r1", TokenType.REFRESH))
+                .thenReturn(new JwtClaims(10L, "teacher1", 2, TokenType.REFRESH, null, "jti", "sid-of-refresh"));
+
+        service.logout(null, null, "r1");
+
+        verify(refreshTokenService).revokeSession(10L, "sid-of-refresh");
+    }
+
+    @Test
+    void logout_anonymousWithInvalidRefreshToken_revokesNothing() {
+        when(jwtTokenService.parse("forged", TokenType.REFRESH))
+                .thenThrow(new InvalidTokenException(InvalidTokenException.TOKEN_INVALID, "bad"));
+
+        service.logout(null, "sid-ignored", "forged");
+        service.logout(null, null, null);
+
+        verify(refreshTokenService, never()).revokeSession(any(), any());
+    }
+
+    @Test
+    void refresh_missingToken_rejectedWithoutParsing() {
+        assertThatThrownBy(() -> service.refresh(" "))
+                .isInstanceOf(UnauthorizedException.class)
+                .extracting("errorCode").isEqualTo(AuthServiceImpl.REFRESH_TOKEN_INVALID);
+        verify(jwtTokenService, never()).parse(any(), any());
+    }
+
+    @Test
     void logout_legacyTokenWithoutSession_revokesNothing() {
         service.logout(10L, null, null);
 
@@ -395,7 +422,7 @@ class AuthServiceImplTest {
         when(userRepository.findByIdAndIsDeleted(10L, 0)).thenReturn(Optional.of(user));
         when(userRepository.findTokenVersionById(10L)).thenReturn(Optional.of(3));
 
-        AuthTokenResponse response = service.changePassword(10L, new ChangePasswordRequest(PASSWORD, "NewPass@456"));
+        AuthTokens response = service.changePassword(10L, new ChangePasswordRequest(PASSWORD, "NewPass@456"));
 
         assertThat(ENCODER.matches("NewPass@456", user.getPasswordHash())).isTrue();
         assertThat(user.getMustChangePassword()).isZero();

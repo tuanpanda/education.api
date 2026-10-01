@@ -1,5 +1,6 @@
 package com.education.base.config;
 
+import com.education.base.security.AuthCookieService;
 import com.education.base.security.JwtAuthenticationFilter;
 import com.education.base.security.JwtTokenService;
 import com.education.base.security.RestAccessDeniedHandler;
@@ -33,9 +34,11 @@ import java.time.Clock;
 import java.util.Arrays;
 
 /**
- * Bảo mật API bằng JWT stateless.
+ * Bảo mật API bằng JWT stateless trong cookie HttpOnly.
  * <ul>
- *     <li>Công khai: đăng nhập, làm mới token, health check, Swagger/OpenAPI.</li>
+ *     <li>Công khai: đăng nhập, làm mới token, đăng xuất, health check, Swagger/OpenAPI.</li>
+ *     <li>Access token đọc từ cookie {@value AuthCookieService#ACCESS_COOKIE} ({@link JwtAuthenticationFilter});
+ *     header {@code Authorization: Bearer} không còn được chấp nhận.</li>
  *     <li>Mọi {@code /api/**} khác cần access token hợp lệ; quyền chi tiết theo menu x chức năng được
  *     {@code PermissionInterceptor} kiểm tra qua {@code @RequirePermission}.</li>
  *     <li>Ngoài {@code /api/**} chỉ mở {@code /}, {@code /favicon.ico}, {@code /error} và Swagger/OpenAPI
@@ -48,7 +51,7 @@ import java.util.Arrays;
  */
 @Configuration
 @EnableWebSecurity
-@EnableConfigurationProperties(JwtProperties.class)
+@EnableConfigurationProperties({JwtProperties.class, AuthCookieProperties.class})
 public class SecurityConfig {
 
     static final String[] PUBLIC_DOC_PATHS = {
@@ -101,7 +104,8 @@ public class SecurityConfig {
                                 new StaticHeadersWriter("Content-Security-Policy", SWAGGER_UI_CSP))))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/refresh").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/refresh",
+                                "/api/v1/auth/logout").permitAll()
                         .requestMatchers("/api/v1/health").permitAll()
                         .requestMatchers(PUBLIC_DOC_PATHS).permitAll()
                         .requestMatchers("/api/**").authenticated()
@@ -113,6 +117,11 @@ public class SecurityConfig {
                                 refreshTokenService.getIfAvailable()),
                         UsernamePasswordAuthenticationFilter.class);
         return http.build();
+    }
+
+    @Bean
+    public AuthCookieService authCookieService(AuthCookieProperties cookieProperties) {
+        return new AuthCookieService(cookieProperties);
     }
 
     @Bean
