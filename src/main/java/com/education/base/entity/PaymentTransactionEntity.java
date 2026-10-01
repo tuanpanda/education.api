@@ -73,6 +73,31 @@ public class PaymentTransactionEntity {
     @Column(name = "NOTE", length = 255)
     private String note;
 
+    /** Số phiếu thu / phiếu chi (V14_2), sinh từ {@code SYS_CODE_RULES 'RECEIPT'}; duy nhất khi khác null. */
+    @Column(name = "RECEIPT_NO", length = 30)
+    private String receiptNo;
+
+    /** {@code PAYMENT} (thu) hoặc {@code REFUND} (hoàn tiền, số dương) - {@code CK_TRANS_TYPE} (V14_2). */
+    @Column(name = "TRANSACTION_TYPE", nullable = false, length = 20)
+    private String transactionType;
+
+    /** Người nộp tiền (thu) / người nhận tiền (hoàn). */
+    @Column(name = "PAYER_NAME", length = 150)
+    private String payerName;
+
+    @Column(name = "VOIDED_AT")
+    private LocalDateTime voidedAt;
+
+    @Column(name = "VOIDED_BY", length = 50)
+    private String voidedBy;
+
+    @Column(name = "VOID_REASON", length = 255)
+    private String voidReason;
+
+    /** Giao dịch thu gốc của một dòng hoàn tiền ({@code FK_TRANS_REF_TRANS}, V14_2). */
+    @Column(name = "REF_TRANSACTION_ID")
+    private Long refTransactionId;
+
     @Column(name = "IS_DELETED", nullable = false)
     private Integer isDeleted;
 
@@ -95,6 +120,9 @@ public class PaymentTransactionEntity {
         }
         if (status == null || status.isBlank()) {
             status = "PENDING";
+        }
+        if (transactionType == null || transactionType.isBlank()) {
+            transactionType = "PAYMENT";
         }
         if (paymentDate == null) {
             paymentDate = LocalDateTime.now();

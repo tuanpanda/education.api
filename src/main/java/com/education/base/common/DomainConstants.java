@@ -142,6 +142,27 @@ public class DomainConstants {
     // ---- Tài chính - Stream B: giao dịch, phiếu thu, hủy / hoàn tiền (feat/fin-payments) -------------
     // Chỉ Stream B thêm hằng số vào khối này (ví dụ TRANSACTION_TYPE_PATTERN).
 
+    /** Loại giao dịch - {@code CK_TRANS_TYPE} (V14_2). Hoàn tiền là số dương với loại {@code REFUND}. */
+    public static final String TRANSACTION_TYPE_PATTERN = "PAYMENT|REFUND";
+
+    public static final String TRANSACTION_TYPE_PAYMENT = "PAYMENT";
+
+    public static final String TRANSACTION_TYPE_REFUND = "REFUND";
+
+    /** Trạng thái giao dịch sau V14_2 ({@code CK_TRANS_STATUS} thêm {@code VOIDED}), dùng cho bộ lọc tra cứu. */
+    public static final String TRANSACTION_STATUS_FILTER_PATTERN = "PENDING|SUCCESS|FAILED|REFUNDED|VOIDED";
+
+    public static final String TRANSACTION_STATUS_SUCCESS = "SUCCESS";
+
+    /** Giao dịch thu đã bị hủy (void): không còn tính vào {@code PAID_AMOUNT}. */
+    public static final String TRANSACTION_STATUS_VOIDED = "VOIDED";
+
+    /** Giao dịch thu đã được hoàn tiền toàn bộ (vẫn tính vào tổng thu, bù trừ bởi các dòng REFUND). */
+    public static final String TRANSACTION_STATUS_REFUNDED = "REFUNDED";
+
+    /** {@code SYS_CODE_RULES.RULE_CODE} của số phiếu thu / phiếu chi (V14_2): PT{YYYY}{MM}{SEQ}. */
+    public static final String RECEIPT_RULE_CODE = "RECEIPT";
+
     // ---- Tài chính - Stream C: báo cáo, dashboard, xuất Excel (feat/fin-reports) ----------------------
     // Chỉ Stream C thêm hằng số vào khối này (ví dụ DEBT_AGING_BUCKETS).
 
