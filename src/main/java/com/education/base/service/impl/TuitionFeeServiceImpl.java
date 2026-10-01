@@ -28,6 +28,7 @@ import com.education.base.repository.TuitionFeeRepository;
 import com.education.base.repository.spec.TuitionFeeSpecifications;
 import com.education.base.service.BankAccountService;
 import com.education.base.service.FileStorageService;
+import com.education.base.service.PaymentService;
 import com.education.base.service.TuitionFeeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -71,6 +72,7 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
     private final FileMapper fileMapper;
     private final FinanceAcademicMapper financeAcademicMapper;
     private final BankAccountService bankAccountService;
+    private final PaymentService paymentService;
 
     @Override
     @Transactional(readOnly = true)
@@ -167,63 +169,7 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public PaymentTransactionDto confirmPayment(Long id, ConfirmPaymentRequest request) {
-        ConfirmPaymentRequest payload = request == null ? new ConfirmPaymentRequest() : request;
-        TuitionFeeEntity fee = requirePayable(lockActiveFee(id));
-        BigDecimal remaining = FeeStatusCalculator.remainingOf(fee);
-        BigDecimal amount = payload.getAmount() == null ? remaining : payload.getAmount();
-        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new OracleBusinessException("INVALID_PAYMENT_AMOUNT", "Số tiền thanh toán phải lớn hơn 0.");
-        }
-        if (amount.compareTo(remaining) > 0) {
-            throw new OracleBusinessException("PAYMENT_EXCEEDS_REMAINING",
-                    "Số tiền thanh toán vượt quá số còn phải thu (" + remaining + ").");
-        }
-
-        String transactionCode = payload.getTransactionCode();
-        if (transactionCode == null || transactionCode.isBlank()) {
-            transactionCode = "PAY" + fee.getId() + System.currentTimeMillis();
-        } else {
-            transactionCode = transactionCode.trim();
-            if (paymentTransactionRepository.existsByTransactionCode(transactionCode)) {
-                throw new OracleBusinessException("TRANSACTION_CODE_DUPLICATED",
-                        "Mã giao dịch '" + transactionCode + "' đã tồn tại.");
-            }
-        }
-
-        String bankRef = blankToNull(payload.getBankReferenceNo());
-        if (bankRef != null && paymentTransactionRepository.existsByBankReferenceNo(bankRef)) {
-            throw bankReferenceDuplicated(bankRef);
-        }
-
-        String method = firstNonBlank(payload.getPaymentMethod(), "VIETQR");
-        BankAccountResponseDto account = bankAccountService.requireActive();
-        PaymentTransactionEntity transaction;
-        try {
-            // saveAndFlush: vi phạm unique index (request đồng thời trên khoản phí khác) lộ ra ngay tại đây.
-            transaction = paymentTransactionRepository.saveAndFlush(PaymentTransactionEntity.builder()
-                    .transactionCode(transactionCode)
-                    .tuitionFeeId(fee.getId())
-                    .amount(amount)
-                    .paymentMethod(method.toUpperCase(Locale.ROOT))
-                    .bankBin(account.getBankBin())
-                    .accountNo(account.getAccountNo())
-                    .bankReferenceNo(bankRef)
-                    .status("SUCCESS")
-                    .note(payload.getNote())
-                    .isDeleted(PersistenceFlags.NOT_DELETED)
-                    .build());
-        } catch (DataIntegrityViolationException e) {
-            throw translatePaymentConstraint(e, bankRef, transactionCode);
-        }
-
-        BigDecimal newPaid = nvl(fee.getPaidAmount()).add(amount);
-        fee.setPaidAmount(newPaid);
-        fee.setStatus(FeeStatusCalculator.resolveFeeStatus(fee.getTotalAmount(), fee.getDiscountAmount(), newPaid, fee.getDueDate()));
-        tuitionFeeRepository.save(fee);
-
-        log.info("Đã xác nhận thanh toán {} cho khoản học phí id={}, status={}",
-                amount, fee.getId(), fee.getStatus());
-        return financeAcademicMapper.toPaymentDto(transaction);
+        return paymentService.confirmPayment(id, request);
     }
 
     private TuitionFeeEntity requireActiveFee(Long id) {
