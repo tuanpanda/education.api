@@ -40,6 +40,10 @@ services:
       AUTH_RATE_LIMIT_REFRESH_PER_USER: ${AUTH_RATE_LIMIT_REFRESH_PER_USER:-60}
       # IP thật của client từ X-Forwarded-For (API chạy sau nginx của UI); Tomcat chỉ tin header từ IP nội bộ.
       SERVER_FORWARD_HEADERS_STRATEGY: ${SERVER_FORWARD_HEADERS_STRATEGY:-native}
+      # Cookie đăng nhập HttpOnly: Secure (chỉ gửi qua HTTPS; trình duyệt vẫn chấp nhận trên http://localhost).
+      # Mở UI qua HTTP bằng IP / tên máy thì đặt AUTH_COOKIE_SECURE=false trong .env (hoặc dùng HTTPS).
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      AUTH_COOKIE_SAME_SITE: ${AUTH_COOKIE_SAME_SITE:-Strict}
     volumes:
       - education-outputs:/app/outputs
     extra_hosts:
