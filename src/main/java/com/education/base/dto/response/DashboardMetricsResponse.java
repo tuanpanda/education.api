@@ -41,14 +41,30 @@ public class DashboardMetricsResponse {
 
     private Long convertedLeads;
 
-    /** Tổng phải thu: {@code SUM(TOTAL_AMOUNT - DISCOUNT_AMOUNT)} của các khoản chưa bị hủy. */
+    /**
+     * Còn phải thu (B7, V14_3): {@code SUM(TOTAL_AMOUNT - DISCOUNT_AMOUNT - PAID_AMOUNT)} của các khoản đang mở
+     * ({@code UNPAID} / {@code PARTIAL} / {@code OVERDUE}) có hạn thu ({@code DUE_DATE}, không có thì ngày lập)
+     * trong khoảng lọc. Trước V14_3 là tổng đã lập mọi thời điểm - nay là {@link #totalBilled}.
+     */
     private BigDecimal totalReceivable;
+
+    /**
+     * Tổng đã lập sau miễn giảm ({@code SUM(TOTAL_AMOUNT - DISCOUNT_AMOUNT)}) của các khoản chưa hủy có hạn thu
+     * trong khoảng lọc. Cột mới của V14_3; {@code null} nếu Database chưa chạy V14_3.
+     */
+    private BigDecimal totalBilled;
 
     /** Tổng thực thu trong khoảng lọc, chỉ tính giao dịch {@code SUCCESS}. */
     private BigDecimal totalCollected;
 
-    /** Số khoản học phí quá hạn mà chưa thu đủ. */
+    /**
+     * Số khoản học phí quá hạn (B7, V14_3): {@code STATUS = 'OVERDUE'} hoặc {@code UNPAID} / {@code PARTIAL} có
+     * {@code DUE_DATE} trước hôm nay; không tính khoản đã xóa / đã hủy. Không phụ thuộc khoảng lọc.
+     */
     private Long overdueFees;
+
+    /** Còn phải thu của các khoản quá hạn (cùng định nghĩa {@link #overdueFees}). Cột mới của V14_3. */
+    private BigDecimal overdueAmount;
 
     @Builder.Default
     private List<RevenueByMonthDto> revenueByMonth = new ArrayList<>();
