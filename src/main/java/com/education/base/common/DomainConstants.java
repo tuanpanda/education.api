@@ -145,6 +145,34 @@ public class DomainConstants {
     // ---- Tài chính - Stream C: báo cáo, dashboard, xuất Excel (feat/fin-reports) ----------------------
     // Chỉ Stream C thêm hằng số vào khối này (ví dụ DEBT_AGING_BUCKETS).
 
+    /** Nhóm tuổi nợ của {@code PRC_RPT_DEBT_AGING}: chưa tới hạn (hoặc không có hạn thu). */
+    public static final String DEBT_AGING_NOT_DUE = "NOT_DUE";
+
+    /** Quá hạn 1-30 ngày. */
+    public static final String DEBT_AGING_D0_30 = "D0_30";
+
+    /** Quá hạn 31-60 ngày. */
+    public static final String DEBT_AGING_D31_60 = "D31_60";
+
+    /** Quá hạn 61-90 ngày. */
+    public static final String DEBT_AGING_D61_90 = "D61_90";
+
+    /** Quá hạn trên 90 ngày. */
+    public static final String DEBT_AGING_D90_PLUS = "D90_PLUS";
+
+    /** Thứ tự các nhóm tuổi nợ (cột trên báo cáo / file Excel). */
+    public static final java.util.List<String> DEBT_AGING_BUCKETS = java.util.List.of(
+            DEBT_AGING_NOT_DUE, DEBT_AGING_D0_30, DEBT_AGING_D31_60, DEBT_AGING_D61_90, DEBT_AGING_D90_PLUS);
+
+    /** Loại dòng trong sổ công nợ học sinh ({@code PRC_RPT_STUDENT_LEDGER.ENTRY_TYPE}): khoản phí (ghi nợ). */
+    public static final String LEDGER_ENTRY_FEE = "FEE";
+
+    /** Loại dòng trong sổ công nợ học sinh: giao dịch thanh toán (ghi có). */
+    public static final String LEDGER_ENTRY_PAYMENT = "PAYMENT";
+
+    /** Số dòng tối đa của một file Excel xuất danh sách (khoản phí / giao dịch); vượt quá thì yêu cầu thu hẹp bộ lọc. */
+    public static final int FINANCE_EXPORT_MAX_ROWS = 20_000;
+
     /** Tên module dùng khi lưu file đính kèm theo từng phân hệ. */
     @UtilityClass
     public static class Module {
