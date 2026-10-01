@@ -28,10 +28,16 @@ public class DomainConstants {
     /** Trạng thái điểm danh - {@code CK_ATTENDANCE_STATUS}. */
     public static final String ATTENDANCE_STATUS_PATTERN = "PRESENT|ABSENT|LATE|EXCUSED";
 
-    /** Chỉ buổi {@code PRESENT} mới được tính vào phiếu học phí. */
+    /**
+     * Có mặt. Buổi {@code PRESENT} được tính phí khi sinh phiếu học phí tháng
+     * (xem {@link #BILLABLE_ATTENDANCE_STATUSES}).
+     */
     public static final String ATTENDANCE_PRESENT = "PRESENT";
 
-    /** Đi trễ vẫn được tính là có mặt khi thống kê buổi học. */
+    /**
+     * Đi trễ: vẫn được tính là có mặt khi thống kê buổi học, và vẫn được tính phí như {@code PRESENT}
+     * (xem {@link #BILLABLE_ATTENDANCE_STATUSES}).
+     */
     public static final String ATTENDANCE_LATE = "LATE";
 
     /** Nhãn mặc định trên phiếu học phí điện tử. */
@@ -138,6 +144,34 @@ public class DomainConstants {
 
     // ---- Tài chính - Stream A: tính phí, khoản học phí, miễn giảm (feat/fin-billing) ----------------
     // Chỉ Stream A thêm hằng số vào khối này (ví dụ FEE_TYPE_PATTERN, DISCOUNT_TYPE_PATTERN).
+
+    /**
+     * Trạng thái điểm danh được tính phí khi sinh phiếu học phí tháng ({@code PRESENT} + {@code LATE}).
+     * {@code PRC_GET_TUITION_SLIP_DATA} (V14_1) dùng cùng quy tắc cho danh sách ngày đi học trên phiếu.
+     */
+    public static final java.util.List<String> BILLABLE_ATTENDANCE_STATUSES =
+            java.util.List.of(ATTENDANCE_PRESENT, ATTENDANCE_LATE);
+
+    /**
+     * Sinh bù phiếu cho tháng đã qua: nếu hạn thu mặc định (ngày cuối tháng) đã trước hôm nay thì hạn thu
+     * = hôm nay + số ngày này, để phiếu không bị {@code OVERDUE} ngay khi vừa tạo.
+     */
+    public static final int FEE_BACKBILL_GRACE_DAYS = 7;
+
+    /** Ghi chú / lý do khi hệ thống tự hủy khoản phí tháng không còn buổi tính phí (chưa thu đồng nào). */
+    public static final String FEE_AUTO_CANCEL_NO_SESSION_NOTE = "auto: không còn buổi tính phí";
+
+    /** Tiền tố lý do hủy do hệ thống tự sinh (phân biệt với hủy thủ công). */
+    public static final String FEE_AUTO_CANCEL_PREFIX = "auto:";
+
+    /** Loại miễn giảm - {@code CK_DISCOUNTS_TYPE} ({@code FIN_STUDENT_DISCOUNTS}, V14_1). */
+    public static final String DISCOUNT_TYPE_PATTERN = "PERCENT|AMOUNT";
+
+    /** Giảm theo % tổng tiền phiếu ({@code 0 < giá trị <= 100}). */
+    public static final String DISCOUNT_TYPE_PERCENT = "PERCENT";
+
+    /** Giảm một số tiền cố định cho mỗi phiếu tháng. */
+    public static final String DISCOUNT_TYPE_AMOUNT = "AMOUNT";
 
     // ---- Tài chính - Stream B: giao dịch, phiếu thu, hủy / hoàn tiền (feat/fin-payments) -------------
     // Chỉ Stream B thêm hằng số vào khối này (ví dụ TRANSACTION_TYPE_PATTERN).

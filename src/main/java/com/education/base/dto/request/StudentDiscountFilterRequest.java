@@ -13,43 +13,31 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDate;
 
 /**
- * Điều kiện tra cứu khoản học phí, có phân trang.
+ * Điều kiện tra cứu miễn giảm - học bổng, có phân trang.
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class TuitionFeeFilterRequest {
+public class StudentDiscountFilterRequest {
 
     public static final int DEFAULT_PAGE_NO = 1;
     public static final int DEFAULT_PAGE_SIZE = 20;
     public static final int MAX_PAGE_SIZE = 200;
 
-    /** Tìm theo mã khoản phí, mã học sinh hoặc họ tên học sinh. */
+    /** Tìm theo mã / họ tên học sinh hoặc lý do. */
     @Size(max = 100, message = "Từ khóa tìm kiếm không được vượt quá 100 ký tự")
     private String keyword;
 
-    @Pattern(regexp = DomainConstants.FEE_STATUS_PATTERN,
-            message = "Trạng thái chỉ nhận: UNPAID, PARTIAL, PAID, OVERDUE, CANCELLED")
-    private String status;
-
     private Long studentId;
-
-    /** Lọc theo trạng thái học sinh ({@code EDU_STUDENTS.STATUS}); bỏ trống = mọi trạng thái (B8). */
-    @Pattern(regexp = DomainConstants.STUDENT_STATUS_PATTERN,
-            message = "Trạng thái học sinh chỉ nhận: ACTIVE, INACTIVE, GRADUATED, SUSPENDED")
-    private String studentStatus;
 
     private Long classId;
 
-    /** Lọc theo khoảng hạn thu. */
-    private LocalDate dueFromDate;
+    @Pattern(regexp = DomainConstants.DISCOUNT_TYPE_PATTERN, message = "Loại miễn giảm chỉ nhận: PERCENT, AMOUNT")
+    private String discountType;
 
-    private LocalDate dueToDate;
-
-    /** Chỉ lấy các khoản đã quá hạn mà chưa thu đủ. */
-    @Builder.Default
-    private Boolean overdueOnly = Boolean.FALSE;
+    /** Chỉ lấy miễn giảm còn hiệu lực vào ngày này. */
+    private LocalDate activeOn;
 
     @Min(value = 1, message = "Số trang phải lớn hơn hoặc bằng 1")
     @Builder.Default

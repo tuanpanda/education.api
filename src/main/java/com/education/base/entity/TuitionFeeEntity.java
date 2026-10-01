@@ -99,6 +99,10 @@ public class TuitionFeeEntity {
     @Column(name = "SLIP_LABEL", length = 50)
     private String slipLabel;
 
+    /** Lý do hủy khoản phí ({@code STATUS = CANCELLED}, V14_1); {@code auto: ...} khi hệ thống tự hủy. */
+    @Column(name = "CANCEL_REASON", length = 255)
+    private String cancelReason;
+
     @Column(name = "IS_DELETED", nullable = false)
     private Integer isDeleted;
 

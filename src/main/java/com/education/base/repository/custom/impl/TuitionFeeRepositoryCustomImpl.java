@@ -9,6 +9,7 @@ import com.education.base.repository.custom.TuitionFeeRepositoryCustom;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import oracle.jdbc.OracleTypes;
+import org.springframework.jdbc.core.CallableStatementCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.SqlOutParameter;
@@ -86,6 +87,10 @@ public class TuitionFeeRepositoryCustomImpl implements TuitionFeeRepositoryCusto
                     .pricePerSession(JdbcValueReaders.getBigDecimal(rs, "PRICE_PER_SESSION"))
                     .totalSessions(JdbcValueReaders.getInteger(rs, "TOTAL_SESSIONS"))
                     .totalAmount(JdbcValueReaders.getBigDecimal(rs, "TOTAL_AMOUNT"))
+                    .discountAmount(JdbcValueReaders.getBigDecimal(rs, "DISCOUNT_AMOUNT"))
+                    .paidAmount(JdbcValueReaders.getBigDecimal(rs, "PAID_AMOUNT"))
+                    .status(rs.getString("STATUS"))
+                    .dueDate(JdbcValueReaders.getLocalDate(rs, "DUE_DATE"))
                     .teacherComment(rs.getString("TEACHER_COMMENT"))
                     .footerWish(rs.getString("FOOTER_WISH"))
                     .slipLabel(rs.getString("SLIP_LABEL"))
@@ -94,6 +99,11 @@ public class TuitionFeeRepositoryCustomImpl implements TuitionFeeRepositoryCusto
 
     private static final RowMapper<LocalDate> ATTENDANCE_DATE_ROW_MAPPER =
             (rs, rowNum) -> JdbcValueReaders.getLocalDate(rs, "ATTENDANCE_DATE");
+
+    /** Gọi hàm sinh mã như một lời gọi PL/SQL (không qua SELECT, xem {@link #nextTuitionFeeCode()}). */
+    static final String NEXT_FEE_CODE_CALL = "{? = call FN_NEXT_BIZ_CODE(?)}";
+
+    private static final String TUITION_CODE_RULE = "TUITION";
 
     private final OracleProcExecutor oracleProcExecutor;
     private final JdbcTemplate jdbcTemplate;
@@ -173,7 +183,14 @@ public class TuitionFeeRepositoryCustomImpl implements TuitionFeeRepositoryCusto
 
     @Override
     public String nextTuitionFeeCode() {
-        String code = jdbcTemplate.queryForObject("SELECT FN_NEXT_BIZ_CODE('TUITION') FROM DUAL", String.class);
+        // FN_NEXT_BIZ_CODE khóa + UPDATE SYS_CODE_RULES, nên KHÔNG gọi trong SELECT ... FROM DUAL (ORA-14551:
+        // không được DML trong truy vấn). Gọi như một lời gọi PL/SQL trong transaction hiện tại.
+        String code = jdbcTemplate.execute(NEXT_FEE_CODE_CALL, (CallableStatementCallback<String>) cs -> {
+            cs.registerOutParameter(1, Types.VARCHAR);
+            cs.setString(2, TUITION_CODE_RULE);
+            cs.execute();
+            return cs.getString(1);
+        });
         if (code == null || code.isBlank()) {
             throw new OracleBusinessException("FEE_CODE_GENERATE_FAILED",
                     "Không sinh được mã khoản học phí từ SYS_CODE_RULES.");

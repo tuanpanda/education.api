@@ -39,4 +39,13 @@ public interface TuitionFeeRepository extends JpaRepository<TuitionFeeEntity, Lo
 
     Optional<TuitionFeeEntity> findByStudentIdAndClassIdAndFeeYearAndFeeMonthAndIsDeleted(
             Long studentId, Long classId, Integer feeYear, Integer feeMonth, Integer isDeleted);
+
+    /**
+     * ID khoản phí tháng (chưa xóa mềm) của học sinh / lớp / kỳ thu - chỉ lấy ID, KHÔNG nạp entity, để lần nạp
+     * sau bằng {@link #findByIdAndIsDeletedForUpdate} luôn đọc {@code PAID_AMOUNT} mới nhất dưới khóa dòng.
+     */
+    @Query("SELECT f.id FROM TuitionFeeEntity f WHERE f.studentId = :studentId AND f.classId = :classId"
+            + " AND f.feeYear = :feeYear AND f.feeMonth = :feeMonth AND f.isDeleted = 0")
+    Optional<Long> findMonthlyFeeId(@Param("studentId") Long studentId, @Param("classId") Long classId,
+                                    @Param("feeYear") Integer feeYear, @Param("feeMonth") Integer feeMonth);
 }
