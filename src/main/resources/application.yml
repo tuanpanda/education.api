@@ -101,6 +101,9 @@ springdoc:
     path: /swagger-ui.html
     enabled: true
     disable-swagger-default-url: true
+    # Swagger UI đọc cookie XSRF-TOKEN và gửi header X-XSRF-TOKEN cho request ghi (CSRF bật cho cookie phiên).
+    csrf:
+      enabled: true
 
 # DEBUG/TRACE (SQL, bind parameter): SPRING_PROFILES_ACTIVE=dev,local-logging (xem README).
 logging:

@@ -4,6 +4,7 @@ import com.education.base.common.ApiResponse;
 import com.education.base.dto.request.ChangePasswordRequest;
 import com.education.base.dto.request.LoginRequest;
 import com.education.base.dto.response.AuthUserResponse;
+import com.education.base.dto.response.CsrfTokenResponse;
 import com.education.base.exception.UnauthorizedException;
 import com.education.base.security.AllowPendingPasswordChange;
 import com.education.base.security.AuthCookieService;
@@ -21,6 +22,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -32,7 +34,9 @@ import org.springframework.web.bind.annotation.RestController;
  * Đăng nhập / làm mới token / đăng xuất / đổi mật khẩu.
  * <p>
  * Access token và refresh token chỉ nằm trong cookie HttpOnly ({@link AuthCookieService}); body phản hồi
- * chỉ có thông tin người dùng ({@link AuthUserResponse}, gồm {@code mustChangePassword}).
+ * chỉ có thông tin người dùng ({@link AuthUserResponse}, gồm {@code mustChangePassword}). Mọi request
+ * POST/PUT/PATCH/DELETE (kể cả đăng nhập) phải gửi CSRF token trong header {@code X-XSRF-TOKEN}
+ * (lấy qua {@code GET /api/v1/auth/csrf}).
  */
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -46,6 +50,19 @@ public class AuthController {
 
     private final AuthService authService;
     private final AuthCookieService authCookieService;
+
+    @Operation(summary = "Lấy CSRF token",
+            description = "Trả token và tên header (X-XSRF-TOKEN) phải gửi kèm mọi request POST/PUT/PATCH/DELETE; "
+                    + "đồng thời đặt cookie XSRF-TOKEN nếu chưa có.")
+    @GetMapping("/csrf")
+    @PublicEndpoint
+    public ApiResponse<CsrfTokenResponse> csrf(HttpServletRequest request) {
+        Object attribute = request.getAttribute(CsrfToken.class.getName());
+        if (!(attribute instanceof CsrfToken token)) {
+            throw new IllegalStateException("CSRF protection chưa được bật");
+        }
+        return ApiResponse.success(new CsrfTokenResponse(token.getHeaderName(), token.getToken()));
+    }
 
     @Operation(summary = "Đăng nhập", description = "Đặt cookie HttpOnly access token + refresh token và trả thông "
             + "tin người dùng. Sai mật khẩu nhiều lần liên tiếp sẽ khóa tạm thời tài khoản "

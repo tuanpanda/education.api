@@ -113,7 +113,7 @@ class JwtSecurityFilterTest {
         mockMvc.perform(options("/api/v1/menus/user-navigation")
                         .header(HttpHeaders.ORIGIN, "http://localhost:5173")
                         .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "GET")
-                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type"))
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "x-xsrf-token"))
                 .andExpect(status().isOk())
                 .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "http://localhost:5173"));
     }

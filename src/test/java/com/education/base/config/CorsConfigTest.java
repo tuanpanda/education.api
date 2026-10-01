@@ -77,16 +77,16 @@ class CorsConfigTest {
         }
 
         @Test
-        void preflightFromAllowedOrigin_isAcceptedWithCredentials() throws Exception {
+        void preflightFromAllowedOrigin_isAcceptedWithCredentialsAndCsrfHeader() throws Exception {
             mockMvc.perform(options("/api/v1/health")
                             .header(HttpHeaders.ORIGIN, "https://edu.example.vn")
                             .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
-                            .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type"))
+                            .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type, x-xsrf-token"))
                     .andExpect(status().isOk())
                     .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "https://edu.example.vn"))
                     .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS, "true"))
                     .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS,
-                            org.hamcrest.Matchers.containsStringIgnoringCase("content-type")));
+                            org.hamcrest.Matchers.containsStringIgnoringCase("x-xsrf-token")));
         }
 
         @Test

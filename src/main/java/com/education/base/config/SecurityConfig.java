@@ -1,6 +1,7 @@
 package com.education.base.config;
 
 import com.education.base.security.AuthCookieService;
+import com.education.base.security.CsrfCookieFilter;
 import com.education.base.security.JwtAuthenticationFilter;
 import com.education.base.security.JwtTokenService;
 import com.education.base.security.RestAccessDeniedHandler;
@@ -23,6 +24,9 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfFilter;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.header.writers.DelegatingRequestMatcherHeaderWriter;
 import org.springframework.security.web.header.writers.StaticHeadersWriter;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
@@ -36,9 +40,13 @@ import java.util.Arrays;
 /**
  * Bảo mật API bằng JWT stateless trong cookie HttpOnly.
  * <ul>
- *     <li>Công khai: đăng nhập, làm mới token, đăng xuất, health check, Swagger/OpenAPI.</li>
+ *     <li>Công khai: lấy CSRF token, đăng nhập, làm mới token, đăng xuất, health check, Swagger/OpenAPI.</li>
  *     <li>Access token đọc từ cookie {@value AuthCookieService#ACCESS_COOKIE} ({@link JwtAuthenticationFilter});
  *     header {@code Authorization: Bearer} không còn được chấp nhận.</li>
+ *     <li>CSRF: cookie tự động gửi kèm nên mọi request POST/PUT/PATCH/DELETE (kể cả đăng nhập - chống login CSRF)
+ *     phải có header {@value #CSRF_HEADER} trùng cookie {@value #CSRF_COOKIE} (double-submit,
+ *     {@link CookieCsrfTokenRepository}). Header tùy biến còn buộc trình duyệt preflight CORS nên origin lạ không
+ *     gửi được; cookie phiên thêm {@code SameSite}. Thiếu / sai token -> 403 {@code CSRF_TOKEN_INVALID}.</li>
  *     <li>Mọi {@code /api/**} khác cần access token hợp lệ; quyền chi tiết theo menu x chức năng được
  *     {@code PermissionInterceptor} kiểm tra qua {@code @RequirePermission}.</li>
  *     <li>Ngoài {@code /api/**} chỉ mở {@code /}, {@code /favicon.ico}, {@code /error} và Swagger/OpenAPI
@@ -70,6 +78,9 @@ public class SecurityConfig {
             + "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
             + "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
 
+    static final String CSRF_COOKIE = "XSRF-TOKEN";
+    static final String CSRF_HEADER = "X-XSRF-TOKEN";
+
     /** HSTS 1 năm; Spring Security chỉ gửi header khi request là HTTPS ({@code request.isSecure()}). */
     static final long HSTS_MAX_AGE_SECONDS = 31_536_000L;
 
@@ -78,14 +89,18 @@ public class SecurityConfig {
                                                    JwtTokenService jwtTokenService,
                                                    AccessControlService accessControlService,
                                                    ObjectMapper objectMapper,
-                                                   ObjectProvider<RefreshTokenService> refreshTokenService)
+                                                   ObjectProvider<RefreshTokenService> refreshTokenService,
+                                                   AuthCookieProperties cookieProperties)
             throws Exception {
         SecurityErrorWriter errorWriter = new SecurityErrorWriter(objectMapper);
         RequestMatcher swaggerUi = new OrRequestMatcher(Arrays.stream(SWAGGER_UI_PATHS)
                 .map(AntPathRequestMatcher::antMatcher)
                 .toArray(RequestMatcher[]::new));
         http
-                .csrf(AbstractHttpConfigurer::disable)
+                .csrf(csrf -> csrf
+                        .csrfTokenRepository(csrfTokenRepository(cookieProperties))
+                        // Token gửi nguyên văn trong header (SPA), không dùng biến thể XOR cho form HTML.
+                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()))
                 .cors(Customizer.withDefaults())
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
@@ -104,6 +119,7 @@ public class SecurityConfig {
                                 new StaticHeadersWriter("Content-Security-Policy", SWAGGER_UI_CSP))))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/auth/csrf").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/refresh",
                                 "/api/v1/auth/logout").permitAll()
                         .requestMatchers("/api/v1/health").permitAll()
@@ -115,8 +131,25 @@ public class SecurityConfig {
                         .accessDeniedHandler(new RestAccessDeniedHandler(errorWriter)))
                 .addFilterBefore(new JwtAuthenticationFilter(jwtTokenService, accessControlService,
                                 refreshTokenService.getIfAvailable()),
-                        UsernamePasswordAuthenticationFilter.class);
+                        UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class);
         return http.build();
+    }
+
+    /**
+     * Cookie {@value #CSRF_COOKIE}: JavaScript đọc được (Swagger UI cần), {@code Path=/}, cùng {@code Secure} /
+     * {@code SameSite} với cookie phiên. Token không phải bí mật với chính origin của ứng dụng; origin khác không
+     * đọc được cookie lẫn phản hồi {@code /api/v1/auth/csrf} (CORS).
+     */
+    static CookieCsrfTokenRepository csrfTokenRepository(AuthCookieProperties cookieProperties) {
+        CookieCsrfTokenRepository repository = CookieCsrfTokenRepository.withHttpOnlyFalse();
+        repository.setCookieName(CSRF_COOKIE);
+        repository.setHeaderName(CSRF_HEADER);
+        repository.setCookiePath("/");
+        repository.setCookieCustomizer(cookie -> cookie
+                .secure(cookieProperties.isSecure())
+                .sameSite(cookieProperties.normalizedSameSite()));
+        return repository;
     }
 
     @Bean

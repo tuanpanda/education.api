@@ -16,7 +16,7 @@ import java.util.List;
  * <p>
  * JWT nằm trong cookie HttpOnly nên bật {@code allowCredentials} (frontend gọi {@code fetch} với
  * {@code credentials: 'include'}); vì vậy chỉ chấp nhận origin khai báo tường minh ({@link CorsProperties} từ chối
- * {@code *}) và chỉ cho phép các header cần thiết ({@link #ALLOWED_HEADERS}). Khi không
+ * {@code *}) và chỉ cho phép các header cần thiết ({@link #ALLOWED_HEADERS}, gồm {@code X-XSRF-TOKEN}). Khi không
  * cấu hình origin nào thì không đăng ký CORS mapping: request same-origin vẫn chạy bình thường, trình duyệt chặn
  * mọi request cross-origin.
  */
@@ -27,7 +27,8 @@ public class WebConfig implements WebMvcConfigurer {
 
     /** Header request được phép gửi cross-origin. */
     static final String[] ALLOWED_HEADERS = {
-            HttpHeaders.ACCEPT, HttpHeaders.ACCEPT_LANGUAGE, HttpHeaders.CONTENT_TYPE, "X-Requested-With"
+            HttpHeaders.ACCEPT, HttpHeaders.ACCEPT_LANGUAGE, HttpHeaders.CONTENT_TYPE, "X-XSRF-TOKEN",
+            "X-Requested-With"
     };
 
     private final CorsProperties corsProperties;

@@ -48,7 +48,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Đăng nhập / làm mới / đăng xuất / đổi mật khẩu bằng cookie HttpOnly: token chỉ nằm trong Set-Cookie (đúng thuộc
- * tính), body chỉ có thông tin người dùng.
+ * tính), body chỉ có thông tin người dùng. CSRF token được MockMvc gắn sẵn (xem {@link WebMvcSecurityTestConfig});
+ * hành vi CSRF thật nằm ở {@code CsrfProtectionTest}.
  */
 @WebMvcTest(AuthController.class)
 @Import(WebMvcSecurityTestConfig.class)

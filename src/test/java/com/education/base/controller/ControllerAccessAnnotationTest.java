@@ -31,6 +31,7 @@ class ControllerAccessAnnotationTest {
 
     /** Endpoint công khai hợp lệ - phải khớp {@code permitAll} trong {@code SecurityConfig}. */
     private static final Set<String> EXPECTED_PUBLIC = Set.of(
+            "AuthController#csrf",
             "AuthController#login",
             "AuthController#logout",
             "AuthController#refresh",
