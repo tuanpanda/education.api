@@ -49,6 +49,7 @@ Oracle tren may host: container ket noi `host.docker.internal:1521`. Copy `.env.
 | --- | --- | --- |
 | `CORS_ALLOWED_ORIGINS` | non-prod: `http://localhost:5173,http://localhost:8088,http://localhost:3000`; prod: rỗng | Origin được gọi `/api/**` cross-origin, phân tách bằng dấu phẩy (hỗ trợ pattern `*` trong phần host, ví dụ `http://192.168.1.*:8081`; pattern khớp mọi host như `*`, `http://*` bị từ chối khi khởi động). Rỗng = chỉ same-origin |
 | `TZ` | `Asia/Ho_Chi_Minh` (Dockerfile, compose) | Múi giờ OS trong container |
+| `RECEIPT_CENTER_NAME`, `RECEIPT_CENTER_ADDRESS`, `RECEIPT_CENTER_PHONE` | rỗng | Tên / địa chỉ / điện thoại trung tâm in trên phiếu thu (`app.receipt.*`). Tên rỗng thì dùng tên chủ tài khoản ngân hàng đang dùng; địa chỉ / điện thoại rỗng thì không in |
 
 - **CORS**: UI Docker gọi `/api` qua nginx cùng origin nên prod để trống. UI deploy riêng (IIS, domain/cổng khác
   gọi thẳng API, ví dụ `env.home.js` / `env.production.js` của `education_ui`) **phải** khai báo origin của UI, nếu không
@@ -210,11 +211,10 @@ sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migrati
 
 | Thứ tự | Script | Nhánh | Nội dung |
 | --- | --- | --- | --- |
-| 1 | `V14_1__fin_billing.sql` | `feat/fin-billing` | Cách tính phí theo lớp (`EDU_CLASSES.FEE_TYPE`), hủy khoản phí, miễn giảm (`FIN_STUDENT_DISCOUNTS`), menu `MENU_FEE_DISCOUNT`, chức năng `MENU_TUITION_FEE:CANCEL` |
+| 1 | `V14_1__fin_billing.sql` | `feat/fin-billing` | Lý do hủy khoản phí (`FIN_TUITION_FEES.CANCEL_REASON`), miễn giảm (`FIN_STUDENT_DISCOUNTS`), `PRC_GET_TUITION_SLIP_DATA` tính PRESENT + LATE, menu `MENU_FEE_DISCOUNT`, chức năng `MENU_TUITION_FEE:CANCEL` |
 | 2 | `V14_2__fin_payments.sql` | `feat/fin-payments` | Số phiếu thu, loại giao dịch, hủy / hoàn tiền trên `FIN_PAYMENT_TRANSACTIONS`; chức năng `MENU_PAYMENT_HISTORY:VOID`, `:REFUND` |
 | 3 | `V14_3__fin_reports.sql` | `feat/fin-reports` | Procedure báo cáo tài chính (chỉ đọc), sửa `PRC_RPT_DASHBOARD_METRICS`; menu `MENU_FINANCE_DASHBOARD`, `MENU_FINANCE_REPORT` |
 
 Quy ước (kiểm tra tự động bởi `V14ScriptConventionTest`): `WHENEVER SQLERROR EXIT ... ROLLBACK` trước lệnh đầu tiên,
 kết thúc bằng `COMMIT` + `EXIT`, idempotent; menu seed bằng `MERGE ... ON (t.MENU_CODE = s.MENU_CODE)` với
 `SEQ_SYS_MENUS.NEXTVAL` (không dùng ID cố định); `ROLE_ADMIN` được cấp mọi chức năng của menu mà script tạo.
-Bản khởi tạo (Stream 0) của ba script chỉ có khung (PROMPT / COMMIT), chạy không thay đổi gì.
