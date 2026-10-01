@@ -25,6 +25,7 @@ public interface FinanceAcademicMapper {
     @Mapping(target = "createdBy", ignore = true)
     @Mapping(target = "updatedBy", ignore = true)
     @Mapping(target = "transactions", ignore = true)
+    @Mapping(target = "cancelReason", ignore = true)
     TuitionFeeEntity toFeeEntity(TuitionFeeCreateRequest request);
 
     @Mapping(target = "studentCode", ignore = true)

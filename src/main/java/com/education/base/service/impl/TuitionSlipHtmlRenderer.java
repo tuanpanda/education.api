@@ -31,6 +31,12 @@ final class TuitionSlipHtmlRenderer {
         String qrSrc = safeDataUrl(data.getQrBase64());
         String price = formatVnd(data.getPricePerSession());
         String total = formatVnd(data.getTotalAmount());
+        String status = data.getStatus() == null ? "" : data.getStatus().trim();
+        String amountRows = amountRows(data);
+        String statusText = esc(statusLabel(status));
+        String qrBlock = qrSrc.isEmpty()
+                ? "<div class=\"no-qr\">" + esc(noQrText(status)) + "</div>"
+                : "<img alt=\"VietQR\" src=\"" + qrSrc + "\"/>";
         int sessions = data.getTotalSessions() == null ? 0 : data.getTotalSessions();
 
         StringBuilder badges = new StringBuilder();
@@ -69,6 +75,15 @@ final class TuitionSlipHtmlRenderer {
                     .total-box { border: 2px solid #99f6e4; background: #f0fdfa; border-radius: 18px; padding: 14px 16px; margin: 14px 0 18px; text-align: center; }
                     .total-box .cap { font-size: 12px; font-weight: 800; letter-spacing: .08em; color: #0f766e; }
                     .total-box .money { font-size: 32px; font-weight: 900; color: #0f766e; margin-top: 4px; }
+                    .amounts { margin: -6px 0 16px; }
+                    .amounts .remain .value { color: #b91c1c; }
+                    .status { display: inline-block; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 800;
+                              background: #e5e7eb; color: #374151; margin-bottom: 12px; }
+                    .status.PAID { background: #dcfce7; color: #166534; }
+                    .status.PARTIAL { background: #fef3c7; color: #92400e; }
+                    .status.OVERDUE { background: #fee2e2; color: #991b1b; }
+                    .status.CANCELLED { background: #e5e7eb; color: #4b5563; }
+                    .no-qr { padding: 18px 8px; font-size: 14px; font-weight: 800; color: #0f766e; }
                     .section { font-size: 13px; font-weight: 800; margin: 8px 0 10px; }
                     .days { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
                     .day { display: inline-flex; align-items: center; justify-content: center; background: #ccfbf1;
@@ -95,19 +110,21 @@ final class TuitionSlipHtmlRenderer {
                       </header>
                       <div class="body">
                         <p class="student">📚 %s <span style="font-size:13px;color:#6b7280;font-weight:700">(%s)</span></p>
+                        <div class="status %s">%s</div>
                         <div class="row"><span class="label">Học phí / buổi</span><span class="value">%s</span></div>
                         <div class="row"><span class="label">Số buổi học</span><span class="value">%d buổi</span></div>
                         <div class="total-box">
                           <div class="cap">💎 TỔNG HỌC PHÍ</div>
                           <div class="money">%s</div>
                         </div>
+                        <div class="amounts">%s</div>
                         <div class="section">📝 Ngày đi học</div>
                         <div class="days">%s</div>
                         <div class="comment">%s</div>
                         <div class="wish">%s</div>
                         <div class="qr-box">
                           <div class="vietqr">VietQR</div>
-                          <img alt="VietQR" src="%s"/>
+                          %s
                           <div class="bank">
                             <div><strong>%s</strong></div>
                             <div>STK: <strong>%s</strong></div>
@@ -126,16 +143,61 @@ final class TuitionSlipHtmlRenderer {
                 titleMonth,
                 studentName,
                 studentCode,
+                esc(status),
+                statusText,
                 price,
                 sessions,
                 total,
+                amountRows,
                 badges,
                 comment,
                 wish,
-                qrSrc,
+                qrBlock,
                 bankName,
                 accountNo,
                 accountName);
+    }
+
+    /** Dòng miễn giảm / đã thu / còn phải đóng (B6); bỏ qua dòng giảm / đã thu khi bằng 0. */
+    private static String amountRows(TuitionSlipResponseDto data) {
+        StringBuilder rows = new StringBuilder();
+        if (positive(data.getDiscountAmount())) {
+            rows.append(row("", "Miễn giảm", "-" + formatVnd(data.getDiscountAmount())));
+        }
+        if (positive(data.getPaidAmount())) {
+            rows.append(row("", "Đã thu", formatVnd(data.getPaidAmount())));
+        }
+        if (data.getRemainingAmount() != null) {
+            rows.append(row("remain", "Còn phải đóng", formatVnd(data.getRemainingAmount())));
+        }
+        return rows.toString();
+    }
+
+    private static String row(String cssClass, String label, String value) {
+        return "<div class=\"row " + cssClass + "\"><span class=\"label\">" + esc(label)
+                + "</span><span class=\"value\">" + esc(value) + "</span></div>";
+    }
+
+    private static boolean positive(BigDecimal value) {
+        return value != null && value.signum() > 0;
+    }
+
+    static String statusLabel(String status) {
+        return switch (status) {
+            case "UNPAID" -> "Chưa đóng";
+            case "PARTIAL" -> "Đóng một phần";
+            case "PAID" -> "Đã đóng đủ";
+            case "OVERDUE" -> "Quá hạn";
+            case "CANCELLED" -> "Đã hủy";
+            default -> status;
+        };
+    }
+
+    private static String noQrText(String status) {
+        if ("CANCELLED".equals(status)) {
+            return "Khoản học phí đã hủy - không cần thanh toán.";
+        }
+        return "Đã thanh toán đủ - không cần chuyển khoản.";
     }
 
     static String formatVnd(BigDecimal amount) {

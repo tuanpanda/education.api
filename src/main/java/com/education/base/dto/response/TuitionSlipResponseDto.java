@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -35,6 +36,23 @@ public class TuitionSlipResponseDto {
     private BigDecimal pricePerSession;
     private Integer totalSessions;
     private BigDecimal totalAmount;
+
+    /** Số tiền giảm (miễn giảm / học bổng) của khoản phí. */
+    private BigDecimal discountAmount;
+
+    /** Số tiền đã thu. */
+    private BigDecimal paidAmount;
+
+    /**
+     * Số tiền còn phải thu ({@code FeeStatusCalculator.remainingOf}), cũng là số tiền trên VietQR.
+     * Không có QR khi số này {@code <= 0} hoặc khoản phí {@code PAID} / {@code CANCELLED}.
+     */
+    private BigDecimal remainingAmount;
+
+    /** {@code UNPAID}, {@code PARTIAL}, {@code PAID}, {@code OVERDUE}, {@code CANCELLED}. */
+    private String status;
+
+    private LocalDate dueDate;
 
     @Builder.Default
     private List<String> attendedDates = new ArrayList<>();
