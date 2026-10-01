@@ -71,4 +71,32 @@ class FeeStatusCalculatorTest {
         assertThat(FeeStatusCalculator.resolveFeeStatus(vnd(500_000), vnd(0), vnd(0), yesterday))
                 .isEqualTo("OVERDUE");
     }
+
+    @Test
+    void paidEffect_followsNetPaidRule() {
+        assertThat(FeeStatusCalculator.paidEffect("PAYMENT", "SUCCESS", vnd(100))).isEqualByComparingTo("100");
+        assertThat(FeeStatusCalculator.paidEffect(null, "SUCCESS", vnd(100))).isEqualByComparingTo("100");
+        assertThat(FeeStatusCalculator.paidEffect("PAYMENT", "REFUNDED", vnd(100))).isEqualByComparingTo("100");
+        assertThat(FeeStatusCalculator.paidEffect("PAYMENT", "VOIDED", vnd(100))).isEqualByComparingTo("0");
+        assertThat(FeeStatusCalculator.paidEffect("PAYMENT", "PENDING", vnd(100))).isEqualByComparingTo("0");
+        assertThat(FeeStatusCalculator.paidEffect("REFUND", "SUCCESS", vnd(40))).isEqualByComparingTo("-40");
+        assertThat(FeeStatusCalculator.paidEffect("REFUND", "VOIDED", vnd(40))).isEqualByComparingTo("0");
+        assertThat(FeeStatusCalculator.paidEffect("OTHER", "SUCCESS", vnd(40))).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void netPaid_sumsEffectsSkipsDeletedAndNeverNegative() {
+        com.education.base.entity.PaymentTransactionEntity pay = com.education.base.entity.PaymentTransactionEntity
+                .builder().transactionType("PAYMENT").status("REFUNDED").amount(vnd(300)).isDeleted(0).build();
+        com.education.base.entity.PaymentTransactionEntity refund = com.education.base.entity.PaymentTransactionEntity
+                .builder().transactionType("REFUND").status("SUCCESS").amount(vnd(300)).isDeleted(0).build();
+        com.education.base.entity.PaymentTransactionEntity deleted = com.education.base.entity.PaymentTransactionEntity
+                .builder().transactionType("PAYMENT").status("SUCCESS").amount(vnd(999)).isDeleted(1).build();
+        com.education.base.entity.PaymentTransactionEntity extraRefund = com.education.base.entity.PaymentTransactionEntity
+                .builder().transactionType("REFUND").status("SUCCESS").amount(vnd(50)).isDeleted(0).build();
+
+        assertThat(FeeStatusCalculator.netPaid(java.util.List.of(pay, refund, deleted))).isEqualByComparingTo("0");
+        assertThat(FeeStatusCalculator.netPaid(java.util.List.of(pay, refund, extraRefund))).isEqualByComparingTo("0");
+        assertThat(FeeStatusCalculator.netPaid(java.util.List.of(pay))).isEqualByComparingTo("300");
+    }
 }

@@ -1,5 +1,6 @@
 package com.education.base.dto.response;
 
+import com.education.base.common.FeeStatusCalculator;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -78,12 +79,6 @@ public class TransactionExportRowDto {
      * {@code SUCCESS}, {@code 0} với {@code VOIDED}/{@code PENDING}/{@code FAILED} (cùng quy tắc {@code PAID_AMOUNT}).
      */
     public BigDecimal getNetAmount() {
-        if (amount == null) {
-            return null;
-        }
-        if ("REFUND".equals(transactionType)) {
-            return "SUCCESS".equals(status) ? amount.negate() : BigDecimal.ZERO;
-        }
-        return "SUCCESS".equals(status) || "REFUNDED".equals(status) ? amount : BigDecimal.ZERO;
+        return amount == null ? null : FeeStatusCalculator.paidEffect(transactionType, status, amount);
     }
 }

@@ -416,21 +416,7 @@ public class PaymentServiceImpl implements PaymentService {
      * không âm. Dòng {@code VOIDED} / {@code PENDING} / {@code FAILED} không được tính.
      */
     static BigDecimal netPaid(Collection<PaymentTransactionEntity> transactions) {
-        BigDecimal paid = BigDecimal.ZERO;
-        for (PaymentTransactionEntity row : transactions) {
-            if (Objects.equals(row.getIsDeleted(), PersistenceFlags.DELETED)) {
-                continue;
-            }
-            if (isPayment(row)) {
-                if (DomainConstants.TRANSACTION_STATUS_SUCCESS.equals(row.getStatus())
-                        || DomainConstants.TRANSACTION_STATUS_REFUNDED.equals(row.getStatus())) {
-                    paid = paid.add(nvl(row.getAmount()));
-                }
-            } else if (isActiveRefund(row)) {
-                paid = paid.subtract(nvl(row.getAmount()));
-            }
-        }
-        return paid.compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO : paid;
+        return FeeStatusCalculator.netPaid(transactions);
     }
 
     private static boolean isPayment(PaymentTransactionEntity row) {
