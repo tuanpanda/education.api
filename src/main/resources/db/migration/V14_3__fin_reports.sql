@@ -3,16 +3,42 @@
 --
 -- Stream C (feat/fin-reports). CHI Stream C sua file nay; stream khac khong sua.
 --
--- Pham vi (Stream C, du kien) - CHI procedure / menu, KHONG doi bang:
---   * Sua PRC_RPT_DASHBOARD_METRICS: OVERDUE_FEES tinh ca STATUS = 'OVERDUE'; TOTAL_RECEIVABLE ro nghia (B7).
---   * Procedure moi: PRC_RPT_FINANCE_SUMMARY, PRC_RPT_DEBT_AGING, PRC_RPT_CLASS_COLLECTION,
---     PRC_RPT_STUDENT_LEDGER (chi doc FIN_TUITION_FEES / FIN_PAYMENT_TRANSACTIONS / EDU_*).
+-- Pham vi (Stream C) - CHI procedure / menu, KHONG doi bang, KHONG ghi bang nghiep vu:
+--   * Sua PRC_RPT_DASHBOARD_METRICS (B7): giu nguyen tham so va cac cot cu, them cot moi (chi tiet ben duoi).
+--   * Procedure moi (chi SELECT FIN_TUITION_FEES / FIN_PAYMENT_TRANSACTIONS / EDU_STUDENTS / EDU_CLASSES):
+--       PRC_RPT_FINANCE_SUMMARY, PRC_RPT_DEBT_AGING, PRC_RPT_CLASS_COLLECTION, PRC_RPT_STUDENT_LEDGER.
 --   * Menu MENU_FINANCE_DASHBOARD (/finance/dashboard) va MENU_FINANCE_REPORT (/finance/reports) duoi DIR_FINANCE.
+--
+-- DINH NGHIA SO LIEU (dung chung cho moi procedure trong file nay):
+--   * Khoan phi hop le: FIN_TUITION_FEES.IS_DELETED = 0. Khoan CANCELLED khong tinh vao phai thu / da lap.
+--   * Khoan con mo (open): STATUS IN ('UNPAID', 'PARTIAL', 'OVERDUE').
+--   * Con phai thu cua mot khoan: GREATEST(TOTAL_AMOUNT - DISCOUNT_AMOUNT - PAID_AMOUNT, 0).
+--   * Qua han (OVERDUE, B7): STATUS = 'OVERDUE'
+--                        OR (STATUS IN ('UNPAID', 'PARTIAL') AND DUE_DATE < TRUNC(SYSDATE)),
+--     loai IS_DELETED = 1 va CANCELLED. Tinh theo ngay hien tai (khong theo khoang loc).
+--   * Ky cua khoan phi khi loc theo khoang ngay (dashboard, tong hop): theo DUE_DATE;
+--     khoan khong co DUE_DATE thi lay TRUNC(CREATED_AT). Khoan thuoc khoang neu ngay do nam trong [tu ngay, den ngay].
+--   * Ky cua khoan phi khi loc theo nam / thang (thu tien theo lop): FEE_YEAR / FEE_MONTH (phieu thang, V10);
+--     khoan khong co FEE_YEAR / FEE_MONTH thi lay nam / thang cua NVL(DUE_DATE, TRUNC(CREATED_AT)).
+--   * Thuc thu: SUM(AMOUNT) cua FIN_PAYMENT_TRANSACTIONS co STATUS = 'SUCCESS', IS_DELETED = 0, loc theo
+--     TRUNC(PAYMENT_DATE). Chua xu ly TRANSACTION_TYPE = 'REFUND' / STATUS = 'VOIDED' (cot / ma cua V14_2,
+--     Stream B): script nay KHONG phu thuoc V14_2; Stream C se sua lai sau khi Stream B merge.
+--
+-- PRC_RPT_DASHBOARD_METRICS (B7):
+--   * OVERDUE_FEES  : dem theo dinh nghia qua han o tren (truoc day bo sot STATUS = 'OVERDUE').
+--   * TOTAL_RECEIVABLE: DOI NGHIA - truoc la SUM(TOTAL - DISCOUNT) moi khoan chua huy tu truoc toi nay;
+--     nay la SUM(con phai thu) cua cac khoan con mo co ky (DUE_DATE) trong khoang loc.
+--   * Cot MOI: TOTAL_BILLED = SUM(TOTAL - DISCOUNT) cac khoan chua huy co ky trong khoang loc;
+--             OVERDUE_AMOUNT = SUM(con phai thu) cua cac khoan qua han.
+--   * TOTAL_COLLECTED, O_REVENUE_CURSOR va cac chi so hoc sinh / lop / lead giu nguyen.
+--
+-- Tuoi no (PRC_RPT_DEBT_AGING), so ngay qua han = ngay chot - TRUNC(DUE_DATE):
+--   NOT_DUE (chua toi han hoac khong co DUE_DATE), D0_30 (1-30 ngay), D31_60, D61_90, D90_PLUS (> 90 ngay).
+--   Gom ca hoc sinh khong con ACTIVE / da xoa mem (B8 - phia bao cao). So du lay theo PAID_AMOUNT hien tai.
 --
 -- QUY UOC CHUNG CHO V14_x (kiem tra tu dong boi V14ScriptConventionTest):
 --   * WHENEVER SQLERROR EXIT ... ROLLBACK truoc lenh dau tien; script ket thuc bang COMMIT + EXIT.
---   * Chay lai nhieu lan an toan (idempotent): DDL bat loi "da ton tai" (ORA-00955 / -01430 / -02260 /
---     -02275 / -01408), seed dung MERGE.
+--   * Chay lai nhieu lan an toan (idempotent): procedure dung CREATE OR REPLACE, seed dung MERGE.
 --   * Menu: MERGE ON (MENU_CODE) va ID = SEQ_SYS_MENUS.NEXTVAL - KHONG dung ID co dinh.
 --     Chuc nang: SEQ_SYS_FUNCTIONS.NEXTVAL; phan quyen: SEQ_SYS_ROLE_MENU_PERM.NEXTVAL.
 --   * ROLE_ADMIN duoc cap moi chuc nang cua menu do script nay tao; vai tro khac liet ke tuong minh.
@@ -29,7 +55,104 @@ SET SERVEROUTPUT ON SIZE UNLIMITED
 
 PROMPT ============ V14_3.1 Procedure bao cao ============
 
--- TODO(Stream C): CREATE OR REPLACE PROCEDURE PRC_RPT_DASHBOARD_METRICS / PRC_RPT_FINANCE_* ...
+-- ----------------------------------------------------------------------------
+-- PRC_RPT_DASHBOARD_METRICS - Bao cao & Thong ke (sua B7, xem header)
+--     O_SUMMARY_CURSOR: 1 dong cac chi so tong hop
+--     O_REVENUE_CURSOR: doanh thu thuc thu theo thang trong khoang loc
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE PRC_RPT_DASHBOARD_METRICS(
+    P_FROM_DATE      IN  DATE,
+    P_TO_DATE        IN  DATE,
+    O_SUMMARY_CURSOR OUT SYS_REFCURSOR,
+    O_REVENUE_CURSOR OUT SYS_REFCURSOR,
+    O_ERR_CODE       OUT VARCHAR2,
+    O_ERR_MSG        OUT VARCHAR2
+) AS
+    V_FROM  DATE;
+    V_TO    DATE;
+    V_TODAY DATE := TRUNC(SYSDATE);
+BEGIN
+    -- Mac dinh 12 thang gan nhat neu client khong truyen khoang thoi gian
+    V_FROM := NVL(TRUNC(P_FROM_DATE), ADD_MONTHS(TRUNC(SYSDATE, 'MM'), -11));
+    V_TO   := NVL(TRUNC(P_TO_DATE), TRUNC(SYSDATE));
+
+    IF V_TO < V_FROM THEN
+        O_ERR_CODE := 'INVALID_DATE_RANGE';
+        O_ERR_MSG  := 'Tu ngay phai nho hon hoac bang den ngay.';
+        RETURN;
+    END IF;
+
+    OPEN O_SUMMARY_CURSOR FOR
+        WITH FEES AS (
+            SELECT f.STATUS,
+                   f.TOTAL_AMOUNT - f.DISCOUNT_AMOUNT                             AS NET_AMOUNT,
+                   GREATEST(f.TOTAL_AMOUNT - f.DISCOUNT_AMOUNT - f.PAID_AMOUNT, 0) AS REMAINING_AMOUNT,
+                   NVL(TRUNC(f.DUE_DATE), TRUNC(f.CREATED_AT))                    AS PERIOD_DATE,
+                   CASE
+                       WHEN f.STATUS = 'OVERDUE' THEN 1
+                       WHEN f.STATUS IN ('UNPAID', 'PARTIAL') AND f.DUE_DATE < V_TODAY THEN 1
+                       ELSE 0
+                   END                                                            AS IS_OVERDUE
+              FROM FIN_TUITION_FEES f
+             WHERE f.IS_DELETED = 0
+               AND f.STATUS <> 'CANCELLED'
+        ),
+        FEE_AGG AS (
+            SELECT NVL(SUM(CASE WHEN STATUS IN ('UNPAID', 'PARTIAL', 'OVERDUE')
+                                 AND PERIOD_DATE BETWEEN V_FROM AND V_TO
+                                THEN REMAINING_AMOUNT END), 0)                    AS TOTAL_RECEIVABLE,
+                   NVL(SUM(CASE WHEN PERIOD_DATE BETWEEN V_FROM AND V_TO
+                                THEN NET_AMOUNT END), 0)                          AS TOTAL_BILLED,
+                   COUNT(CASE WHEN IS_OVERDUE = 1 THEN 1 END)                     AS OVERDUE_FEES,
+                   NVL(SUM(CASE WHEN IS_OVERDUE = 1 THEN REMAINING_AMOUNT END), 0) AS OVERDUE_AMOUNT
+              FROM FEES
+        )
+        SELECT
+            (SELECT COUNT(*) FROM EDU_STUDENTS WHERE IS_DELETED = 0)                        AS TOTAL_STUDENTS,
+            (SELECT COUNT(*) FROM EDU_STUDENTS WHERE IS_DELETED = 0 AND STATUS = 'ACTIVE')  AS ACTIVE_STUDENTS,
+            (SELECT COUNT(*) FROM EDU_CLASSES  WHERE IS_DELETED = 0)                        AS TOTAL_CLASSES,
+            (SELECT COUNT(*) FROM EDU_CLASSES  WHERE IS_DELETED = 0
+                                                AND STATUS IN ('OPEN', 'ONGOING'))          AS ACTIVE_CLASSES,
+            (SELECT COUNT(*) FROM EDU_LEADS    WHERE IS_DELETED = 0
+                                                AND TRUNC(CREATED_AT) BETWEEN V_FROM AND V_TO) AS NEW_LEADS,
+            (SELECT COUNT(*) FROM EDU_LEADS    WHERE IS_DELETED = 0
+                                                AND STATUS = 'CONVERTED'
+                                                AND TRUNC(UPDATED_AT) BETWEEN V_FROM AND V_TO) AS CONVERTED_LEADS,
+            a.TOTAL_RECEIVABLE,
+            (SELECT NVL(SUM(AMOUNT), 0) FROM FIN_PAYMENT_TRANSACTIONS
+              WHERE IS_DELETED = 0 AND STATUS = 'SUCCESS'
+                AND TRUNC(PAYMENT_DATE) BETWEEN V_FROM AND V_TO)                            AS TOTAL_COLLECTED,
+            a.OVERDUE_FEES,
+            a.TOTAL_BILLED,
+            a.OVERDUE_AMOUNT,
+            V_FROM AS FROM_DATE,
+            V_TO   AS TO_DATE
+          FROM FEE_AGG a;
+
+    OPEN O_REVENUE_CURSOR FOR
+        SELECT TO_CHAR(t.PAYMENT_DATE, 'YYYY-MM') AS REVENUE_MONTH,
+               SUM(t.AMOUNT)                      AS COLLECTED_AMOUNT,
+               COUNT(*)                           AS TRANSACTION_COUNT
+          FROM FIN_PAYMENT_TRANSACTIONS t
+         WHERE t.IS_DELETED = 0
+           AND t.STATUS = 'SUCCESS'
+           AND TRUNC(t.PAYMENT_DATE) BETWEEN V_FROM AND V_TO
+         GROUP BY TO_CHAR(t.PAYMENT_DATE, 'YYYY-MM')
+         ORDER BY 1;
+
+    O_ERR_CODE := '0';
+    O_ERR_MSG  := 'SUCCESS';
+EXCEPTION
+    WHEN OTHERS THEN
+        IF O_SUMMARY_CURSOR IS NOT NULL AND O_SUMMARY_CURSOR%ISOPEN THEN CLOSE O_SUMMARY_CURSOR; END IF;
+        IF O_REVENUE_CURSOR IS NOT NULL AND O_REVENUE_CURSOR%ISOPEN THEN CLOSE O_REVENUE_CURSOR; END IF;
+        O_ERR_CODE := TO_CHAR(SQLCODE);
+        O_ERR_MSG  := SUBSTR(SQLERRM, 1, 255);
+END PRC_RPT_DASHBOARD_METRICS;
+/
+SHOW ERRORS PROCEDURE PRC_RPT_DASHBOARD_METRICS
+
+-- TODO(Stream C): CREATE OR REPLACE PROCEDURE PRC_RPT_FINANCE_SUMMARY / PRC_RPT_DEBT_AGING / ...
 
 PROMPT ============ V14_3.2 Menu bao cao tai chinh ============
 
