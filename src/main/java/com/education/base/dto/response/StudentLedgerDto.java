@@ -27,10 +27,13 @@ public class StudentLedgerDto {
     /** Trạng thái học sinh; {@code DELETED} nếu đã xóa mềm. */
     private String studentStatus;
 
-    /** Tổng ghi nợ (phải thu sau miễn giảm). */
+    /** Tổng ghi nợ: phải thu sau miễn giảm + tiền đã hoàn (dòng {@code REFUND}). */
     private BigDecimal totalDebit;
 
-    /** Tổng ghi có (đã thu). */
+    /** Phần của {@link #totalDebit} là tiền đã hoàn cho học sinh. */
+    private BigDecimal totalRefund;
+
+    /** Tổng ghi có (đã thu, gồm cả giao dịch sau đó được hoàn; không tính giao dịch đã hủy). */
     private BigDecimal totalCredit;
 
     /** Số dư cuối: dương là còn nợ, âm là học sinh trả dư. */

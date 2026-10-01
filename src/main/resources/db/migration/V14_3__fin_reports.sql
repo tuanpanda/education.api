@@ -20,9 +20,12 @@
 --     khoan khong co DUE_DATE thi lay TRUNC(CREATED_AT). Khoan thuoc khoang neu ngay do nam trong [tu ngay, den ngay].
 --   * Ky cua khoan phi khi loc theo nam / thang (thu tien theo lop): FEE_YEAR / FEE_MONTH (phieu thang, V10);
 --     khoan khong co FEE_YEAR / FEE_MONTH thi lay nam / thang cua NVL(DUE_DATE, TRUNC(CREATED_AT)).
---   * Thuc thu: SUM(AMOUNT) cua FIN_PAYMENT_TRANSACTIONS co STATUS = 'SUCCESS', IS_DELETED = 0, loc theo
---     TRUNC(PAYMENT_DATE). Chua xu ly TRANSACTION_TYPE = 'REFUND' / STATUS = 'VOIDED' (cot / ma cua V14_2,
---     Stream B): script nay KHONG phu thuoc V14_2; Stream C se sua lai sau khi Stream B merge.
+--   * Thuc thu (theo ngay tien vao / ra, loc theo TRUNC(PAYMENT_DATE)), cung quy tac PAID_AMOUNT cua V14_2:
+--       + AMOUNT cua dong TRANSACTION_TYPE = 'PAYMENT' co STATUS IN ('SUCCESS', 'REFUNDED')
+--       - AMOUNT cua dong TRANSACTION_TYPE = 'REFUND'  co STATUS = 'SUCCESS'   (ngay hoan = PAYMENT_DATE cua dong REFUND)
+--     IS_DELETED = 0. Dong 'VOIDED' / 'PENDING' / 'FAILED' KHONG tinh. Thang chi co hoan tien co the am.
+--     Da hoan (TOTAL_REFUNDED / REFUNDED_AMOUNT) = tong AMOUNT dong REFUND 'SUCCESS' trong khoang.
+--     So giao dich (TRANSACTION_COUNT) = so dong PAYMENT duoc tinh (khong dem dong REFUND).
 --
 -- PRC_RPT_DASHBOARD_METRICS (B7):
 --   * OVERDUE_FEES  : dem theo dinh nghia qua han o tren (truoc day bo sot STATUS = 'OVERDUE').
@@ -30,7 +33,8 @@
 --     nay la SUM(con phai thu) cua cac khoan con mo co ky (DUE_DATE) trong khoang loc.
 --   * Cot MOI: TOTAL_BILLED = SUM(TOTAL - DISCOUNT) cac khoan chua huy co ky trong khoang loc;
 --             OVERDUE_AMOUNT = SUM(con phai thu) cua cac khoan qua han.
---   * TOTAL_COLLECTED, O_REVENUE_CURSOR va cac chi so hoc sinh / lop / lead giu nguyen.
+--   * TOTAL_COLLECTED / O_REVENUE_CURSOR: thuc thu SAU hoan tien theo dinh nghia o tren (truoc: SUM STATUS = 'SUCCESS',
+--     cong nham dong REFUND va bo sot thu da hoan toan bo). Cac chi so hoc sinh / lop / lead giu nguyen.
 --
 -- Tuoi no (PRC_RPT_DEBT_AGING), so ngay qua han = ngay chot - TRUNC(DUE_DATE):
 --   NOT_DUE (chua toi han hoac khong co DUE_DATE), D0_30 (1-30 ngay), D31_60, D61_90, D90_PLUS (> 90 ngay).
@@ -43,8 +47,9 @@
 --     Chuc nang: SEQ_SYS_FUNCTIONS.NEXTVAL; phan quyen: SEQ_SYS_ROLE_MENU_PERM.NEXTVAL.
 --   * ROLE_ADMIN duoc cap moi chuc nang cua menu do script nay tao; vai tro khac liet ke tuong minh.
 --   * File UTF-8 co dau tieng Viet: chay voi NLS_LANG=AMERICAN_AMERICA.AL32UTF8.
---   * Thu tu chay: V14_1 -> V14_2 -> V14_3 (sau V13_3). Moi script doc lap, khong phu thuoc doi tuong
---     cua script V14 khac.
+--   * Thu tu chay: V14_1 -> V14_2 -> V14_3 (sau V13_3).
+--   * PHU THUOC V14_2: cac procedure doc FIN_PAYMENT_TRANSACTIONS.TRANSACTION_TYPE / RECEIPT_NO va ma 'VOIDED'.
+--     Muc V14_3.0 dung script (khong thay doi gi) neu chua chay V14_2. Khong phu thuoc doi tuong cua V14_1.
 --   * Sau phan procedure, kiem tra 5 procedure o trang thai VALID (loi bien dich -> dung script, chua seed menu).
 --
 --   sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V14_3__fin_reports.sql
@@ -53,6 +58,23 @@
 WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
 SET DEFINE OFF
 SET SERVEROUTPUT ON SIZE UNLIMITED
+
+PROMPT ============ V14_3.0 Kiem tra phu thuoc V14_2 ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT
+      FROM USER_TAB_COLUMNS
+     WHERE TABLE_NAME = 'FIN_PAYMENT_TRANSACTIONS'
+       AND COLUMN_NAME IN ('TRANSACTION_TYPE', 'RECEIPT_NO');
+    IF V_COUNT < 2 THEN
+        RAISE_APPLICATION_ERROR(-20002,
+            'V14_3: chua co FIN_PAYMENT_TRANSACTIONS.TRANSACTION_TYPE / RECEIPT_NO - chay V14_2__fin_payments.sql truoc.');
+    END IF;
+    DBMS_OUTPUT.PUT_LINE('V14_2 columns: OK');
+END;
+/
 
 PROMPT ============ V14_3.1 Procedure bao cao ============
 
@@ -120,8 +142,11 @@ BEGIN
                                                 AND STATUS = 'CONVERTED'
                                                 AND TRUNC(UPDATED_AT) BETWEEN V_FROM AND V_TO) AS CONVERTED_LEADS,
             a.TOTAL_RECEIVABLE,
-            (SELECT NVL(SUM(AMOUNT), 0) FROM FIN_PAYMENT_TRANSACTIONS
-              WHERE IS_DELETED = 0 AND STATUS = 'SUCCESS'
+            (SELECT NVL(SUM(CASE WHEN TRANSACTION_TYPE = 'REFUND' THEN -AMOUNT ELSE AMOUNT END), 0)
+               FROM FIN_PAYMENT_TRANSACTIONS
+              WHERE IS_DELETED = 0
+                AND ((TRANSACTION_TYPE = 'PAYMENT' AND STATUS IN ('SUCCESS', 'REFUNDED'))
+                  OR (TRANSACTION_TYPE = 'REFUND' AND STATUS = 'SUCCESS'))
                 AND TRUNC(PAYMENT_DATE) BETWEEN V_FROM AND V_TO)                            AS TOTAL_COLLECTED,
             a.OVERDUE_FEES,
             a.TOTAL_BILLED,
@@ -131,12 +156,13 @@ BEGIN
           FROM FEE_AGG a;
 
     OPEN O_REVENUE_CURSOR FOR
-        SELECT TO_CHAR(t.PAYMENT_DATE, 'YYYY-MM') AS REVENUE_MONTH,
-               SUM(t.AMOUNT)                      AS COLLECTED_AMOUNT,
-               COUNT(*)                           AS TRANSACTION_COUNT
+        SELECT TO_CHAR(t.PAYMENT_DATE, 'YYYY-MM')                                        AS REVENUE_MONTH,
+               SUM(CASE WHEN t.TRANSACTION_TYPE = 'REFUND' THEN -t.AMOUNT ELSE t.AMOUNT END) AS COLLECTED_AMOUNT,
+               COUNT(CASE WHEN t.TRANSACTION_TYPE = 'PAYMENT' THEN 1 END)                 AS TRANSACTION_COUNT
           FROM FIN_PAYMENT_TRANSACTIONS t
          WHERE t.IS_DELETED = 0
-           AND t.STATUS = 'SUCCESS'
+           AND ((t.TRANSACTION_TYPE = 'PAYMENT' AND t.STATUS IN ('SUCCESS', 'REFUNDED'))
+             OR (t.TRANSACTION_TYPE = 'REFUND' AND t.STATUS = 'SUCCESS'))
            AND TRUNC(t.PAYMENT_DATE) BETWEEN V_FROM AND V_TO
          GROUP BY TO_CHAR(t.PAYMENT_DATE, 'YYYY-MM')
          ORDER BY 1;
@@ -155,9 +181,9 @@ SHOW ERRORS PROCEDURE PRC_RPT_DASHBOARD_METRICS
 
 -- ----------------------------------------------------------------------------
 -- PRC_RPT_FINANCE_SUMMARY - Tong hop tai chinh trong khoang ngay
---     O_SUMMARY_CURSOR: 1 dong - da lap, mien giam, thuc thu, con phai thu, qua han
+--     O_SUMMARY_CURSOR: 1 dong - da lap, mien giam, thuc thu (sau hoan), da hoan, con phai thu, qua han
 --     O_STATUS_CURSOR : so khoan / so tien theo trang thai hieu luc (UNPAID/PARTIAL qua han tinh la OVERDUE)
---     O_MONTHLY_CURSOR: tung thang trong khoang (ke ca thang 0 dong) - da lap (theo ky) va thuc thu
+--     O_MONTHLY_CURSOR: tung thang trong khoang (ke ca thang 0 dong) - da lap (theo ky), thuc thu, da hoan
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE PRC_RPT_FINANCE_SUMMARY(
     P_FROM_DATE      IN  DATE,
@@ -216,17 +242,21 @@ BEGIN
               FROM FEES
         ),
         TRANS_AGG AS (
-            SELECT NVL(SUM(t.AMOUNT), 0) AS TOTAL_COLLECTED,
-                   COUNT(*)              AS TRANSACTION_COUNT
+            SELECT NVL(SUM(CASE WHEN t.TRANSACTION_TYPE = 'REFUND' THEN -t.AMOUNT ELSE t.AMOUNT END), 0)
+                                                                          AS TOTAL_COLLECTED,
+                   NVL(SUM(CASE WHEN t.TRANSACTION_TYPE = 'REFUND' THEN t.AMOUNT END), 0) AS TOTAL_REFUNDED,
+                   COUNT(CASE WHEN t.TRANSACTION_TYPE = 'PAYMENT' THEN 1 END)          AS TRANSACTION_COUNT
               FROM FIN_PAYMENT_TRANSACTIONS t
              WHERE t.IS_DELETED = 0
-               AND t.STATUS = 'SUCCESS'
+               AND ((t.TRANSACTION_TYPE = 'PAYMENT' AND t.STATUS IN ('SUCCESS', 'REFUNDED'))
+                 OR (t.TRANSACTION_TYPE = 'REFUND' AND t.STATUS = 'SUCCESS'))
                AND TRUNC(t.PAYMENT_DATE) BETWEEN V_FROM AND V_TO
         )
         SELECT a.TOTAL_BILLED,
                a.TOTAL_DISCOUNT,
                a.NET_BILLED,
                tr.TOTAL_COLLECTED,
+               tr.TOTAL_REFUNDED,
                tr.TRANSACTION_COUNT,
                a.TOTAL_OUTSTANDING,
                a.OVERDUE_AMOUNT,
@@ -277,12 +307,14 @@ BEGIN
              GROUP BY TRUNC(NVL(TRUNC(f.DUE_DATE), TRUNC(f.CREATED_AT)), 'MM')
         ),
         COLLECTED AS (
-            SELECT TRUNC(t.PAYMENT_DATE, 'MM') AS MONTH_START,
-                   SUM(t.AMOUNT)               AS COLLECTED_AMOUNT,
-                   COUNT(*)                    AS TRANSACTION_COUNT
+            SELECT TRUNC(t.PAYMENT_DATE, 'MM')                                                 AS MONTH_START,
+                   SUM(CASE WHEN t.TRANSACTION_TYPE = 'REFUND' THEN -t.AMOUNT ELSE t.AMOUNT END) AS COLLECTED_AMOUNT,
+                   SUM(CASE WHEN t.TRANSACTION_TYPE = 'REFUND' THEN t.AMOUNT ELSE 0 END)        AS REFUNDED_AMOUNT,
+                   COUNT(CASE WHEN t.TRANSACTION_TYPE = 'PAYMENT' THEN 1 END)                  AS TRANSACTION_COUNT
               FROM FIN_PAYMENT_TRANSACTIONS t
              WHERE t.IS_DELETED = 0
-               AND t.STATUS = 'SUCCESS'
+               AND ((t.TRANSACTION_TYPE = 'PAYMENT' AND t.STATUS IN ('SUCCESS', 'REFUNDED'))
+                 OR (t.TRANSACTION_TYPE = 'REFUND' AND t.STATUS = 'SUCCESS'))
                AND TRUNC(t.PAYMENT_DATE) BETWEEN V_FROM AND V_TO
              GROUP BY TRUNC(t.PAYMENT_DATE, 'MM')
         )
@@ -290,6 +322,7 @@ BEGIN
                NVL(b.BILLED_AMOUNT, 0)           AS BILLED_AMOUNT,
                NVL(b.FEE_COUNT, 0)               AS FEE_COUNT,
                NVL(c.COLLECTED_AMOUNT, 0)        AS COLLECTED_AMOUNT,
+               NVL(c.REFUNDED_AMOUNT, 0)         AS REFUNDED_AMOUNT,
                NVL(c.TRANSACTION_COUNT, 0)       AS TRANSACTION_COUNT
           FROM MONTHS m
           LEFT JOIN BILLED b    ON b.MONTH_START = m.MONTH_START
@@ -448,7 +481,7 @@ SHOW ERRORS PROCEDURE PRC_RPT_DEBT_AGING
 -- ----------------------------------------------------------------------------
 -- PRC_RPT_CLASS_COLLECTION - Thu tien theo lop cua mot nam (va thang, neu co)
 --     O_DATA_CURSOR: moi lop 1 dong (khoan khong gan lop gom vao dong CLASS_ID = NULL)
---     Thuc thu = SUM giao dich SUCCESS cua cac khoan thuoc ky (moi ngay thanh toan).
+--     Thuc thu = so thuc thu (thu - hoan, khong tinh VOIDED) cua cac khoan thuoc ky (moi ngay thanh toan).
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE PRC_RPT_CLASS_COLLECTION(
     P_YEAR        IN  NUMBER,
@@ -496,10 +529,11 @@ BEGIN
         ),
         PAYMENTS AS (
             SELECT t.TUITION_FEE_ID,
-                   SUM(t.AMOUNT) AS COLLECTED_AMOUNT
+                   SUM(CASE WHEN t.TRANSACTION_TYPE = 'REFUND' THEN -t.AMOUNT ELSE t.AMOUNT END) AS COLLECTED_AMOUNT
               FROM FIN_PAYMENT_TRANSACTIONS t
              WHERE t.IS_DELETED = 0
-               AND t.STATUS = 'SUCCESS'
+               AND ((t.TRANSACTION_TYPE = 'PAYMENT' AND t.STATUS IN ('SUCCESS', 'REFUNDED'))
+                 OR (t.TRANSACTION_TYPE = 'REFUND' AND t.STATUS = 'SUCCESS'))
              GROUP BY t.TUITION_FEE_ID
         )
         SELECT f.CLASS_ID,
@@ -541,8 +575,11 @@ SHOW ERRORS PROCEDURE PRC_RPT_CLASS_COLLECTION
 -- ----------------------------------------------------------------------------
 -- PRC_RPT_STUDENT_LEDGER - So cong no cua mot hoc sinh
 --     O_STUDENT_CURSOR: 1 dong thong tin hoc sinh (ke ca khong con ACTIVE / da xoa mem)
---     O_DATA_CURSOR   : theo thoi gian - khoan phi (ghi no = TOTAL - DISCOUNT, theo CREATED_AT; khoan CANCELLED
---                       ghi no 0) va giao dich SUCCESS (ghi co = AMOUNT, theo PAYMENT_DATE), kem so du luy ke.
+--     O_DATA_CURSOR   : theo thoi gian, kem so du luy ke (no - co):
+--                       FEE     - khoan phi: ghi no = TOTAL - DISCOUNT, theo CREATED_AT; khoan CANCELLED ghi no 0;
+--                       PAYMENT - thu tien SUCCESS / REFUNDED: ghi co = AMOUNT, theo PAYMENT_DATE;
+--                       REFUND  - hoan tien SUCCESS: ghi NO = AMOUNT (tien tra lai lam tang so con no), theo PAYMENT_DATE.
+--                       Giao dich VOIDED / PENDING / FAILED khong xuat hien. RECEIPT_NO: so phieu thu / phieu chi.
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE PRC_RPT_STUDENT_LEDGER(
     P_STUDENT_ID     IN  NUMBER,
@@ -589,6 +626,7 @@ BEGIN
                    c.CLASS_CODE,
                    c.CLASS_NAME,
                    CAST(NULL AS VARCHAR2(20))                  AS PAYMENT_METHOD,
+                   CAST(NULL AS VARCHAR2(30))                  AS RECEIPT_NO,
                    f.STATUS,
                    f.NOTE,
                    CASE WHEN f.STATUS = 'CANCELLED' THEN 0
@@ -599,7 +637,7 @@ BEGIN
              WHERE f.STUDENT_ID = P_STUDENT_ID
                AND f.IS_DELETED = 0
             UNION ALL
-            SELECT 'PAYMENT',
+            SELECT CASE WHEN t.TRANSACTION_TYPE = 'REFUND' THEN 'REFUND' ELSE 'PAYMENT' END,
                    t.PAYMENT_DATE,
                    2,
                    t.ID,
@@ -612,17 +650,19 @@ BEGIN
                    c.CLASS_CODE,
                    c.CLASS_NAME,
                    t.PAYMENT_METHOD,
+                   t.RECEIPT_NO,
                    t.STATUS,
                    t.NOTE,
-                   0,
-                   t.AMOUNT
+                   CASE WHEN t.TRANSACTION_TYPE = 'REFUND' THEN t.AMOUNT ELSE 0 END,
+                   CASE WHEN t.TRANSACTION_TYPE = 'REFUND' THEN 0 ELSE t.AMOUNT END
               FROM FIN_PAYMENT_TRANSACTIONS t
               JOIN FIN_TUITION_FEES f ON f.ID = t.TUITION_FEE_ID
               LEFT JOIN EDU_CLASSES c ON c.ID = f.CLASS_ID
              WHERE f.STUDENT_ID = P_STUDENT_ID
                AND f.IS_DELETED = 0
                AND t.IS_DELETED = 0
-               AND t.STATUS = 'SUCCESS'
+               AND ((t.TRANSACTION_TYPE = 'PAYMENT' AND t.STATUS IN ('SUCCESS', 'REFUNDED'))
+                 OR (t.TRANSACTION_TYPE = 'REFUND' AND t.STATUS = 'SUCCESS'))
         )
         SELECT e.ENTRY_TYPE,
                e.ENTRY_DATE,
@@ -636,6 +676,7 @@ BEGIN
                e.CLASS_CODE,
                e.CLASS_NAME,
                e.PAYMENT_METHOD,
+               e.RECEIPT_NO,
                e.STATUS,
                e.NOTE,
                e.DEBIT_AMOUNT,

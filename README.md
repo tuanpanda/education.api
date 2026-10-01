@@ -213,7 +213,11 @@ sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migrati
 | --- | --- | --- | --- |
 | 1 | `V14_1__fin_billing.sql` | `feat/fin-billing` | Lý do hủy khoản phí (`FIN_TUITION_FEES.CANCEL_REASON`), miễn giảm (`FIN_STUDENT_DISCOUNTS`), `PRC_GET_TUITION_SLIP_DATA` tính PRESENT + LATE, menu `MENU_FEE_DISCOUNT`, chức năng `MENU_TUITION_FEE:CANCEL` |
 | 2 | `V14_2__fin_payments.sql` | `feat/fin-payments` | Số phiếu thu, loại giao dịch, hủy / hoàn tiền trên `FIN_PAYMENT_TRANSACTIONS`; chức năng `MENU_PAYMENT_HISTORY:VOID`, `:REFUND` |
-| 3 | `V14_3__fin_reports.sql` | `feat/fin-reports` | Procedure báo cáo tài chính (chỉ đọc), sửa `PRC_RPT_DASHBOARD_METRICS`; menu `MENU_FINANCE_DASHBOARD`, `MENU_FINANCE_REPORT` |
+| 3 | `V14_3__fin_reports.sql` | `feat/fin-reports` | Procedure báo cáo tài chính (chỉ đọc), sửa `PRC_RPT_DASHBOARD_METRICS`; menu `MENU_FINANCE_DASHBOARD`, `MENU_FINANCE_REPORT`. **Cần V14_2** (dùng `TRANSACTION_TYPE`, `RECEIPT_NO`, trạng thái `VOIDED`; script dừng với ORA-20002 nếu chưa chạy V14_2) |
+
+**Phụ thuộc:** V14_3 đọc các cột V14_2 nên bắt buộc chạy sau V14_2. Mọi báo cáo dùng chung quy tắc thực thu với
+`PAID_AMOUNT`: Σ thu (`PAYMENT` có `STATUS` `SUCCESS`/`REFUNDED`) − Σ hoàn (`REFUND` `SUCCESS`); giao dịch `VOIDED`,
+`PENDING`, `FAILED` không được tính. Sổ công nợ học sinh ghi dòng hoàn tiền là ghi nợ (`REFUND`).
 
 Quy ước (kiểm tra tự động bởi `V14ScriptConventionTest`): `WHENEVER SQLERROR EXIT ... ROLLBACK` trước lệnh đầu tiên,
 kết thúc bằng `COMMIT` + `EXIT`, idempotent; menu seed bằng `MERGE ... ON (t.MENU_CODE = s.MENU_CODE)` với

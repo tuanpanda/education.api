@@ -154,6 +154,26 @@ class ReportServiceImplTest {
         assertThat(result.getTotalDebit()).isEqualByComparingTo("1500000");
         assertThat(result.getTotalCredit()).isEqualByComparingTo("400000");
         assertThat(result.getBalance()).isEqualByComparingTo("1100000");
+        assertThat(result.getTotalRefund()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void getStudentLedger_refundIsDebitAndRaisesBalance() {
+        StudentLedgerDto ledger = StudentLedgerDto.builder()
+                .studentId(9L)
+                .entries(new ArrayList<>(List.of(
+                        entry(DomainConstants.LEDGER_ENTRY_FEE, "1000000", "0", "1000000"),
+                        entry(DomainConstants.LEDGER_ENTRY_PAYMENT, "0", "1000000", "0"),
+                        entry(DomainConstants.LEDGER_ENTRY_REFUND, "300000", "0", "300000"))))
+                .build();
+        when(reportRepository.getStudentLedger(9L)).thenReturn(ledger);
+
+        StudentLedgerDto result = service.getStudentLedger(9L);
+
+        assertThat(result.getTotalDebit()).isEqualByComparingTo("1300000");
+        assertThat(result.getTotalRefund()).isEqualByComparingTo("300000");
+        assertThat(result.getTotalCredit()).isEqualByComparingTo("1000000");
+        assertThat(result.getBalance()).isEqualByComparingTo("300000");
     }
 
     @Test

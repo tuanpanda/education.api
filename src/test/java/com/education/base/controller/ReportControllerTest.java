@@ -404,6 +404,35 @@ class ReportControllerTest {
     }
 
     @Test
+    @WithAuthUser(roles = "ROLE_ACCOUNTANT", permissions = Permissions.PAYMENT_HISTORY_EXPORT)
+    void exportPaymentTransactions_bindsTypeReceiptAndVoidedStatus() throws Exception {
+        when(reportService.exportPaymentTransactions(any(TransactionListExportFilterRequest.class)))
+                .thenReturn(new ExportFileDto("danh_sach_giao_dich_20261002.xlsx", XLSX,
+                        excel.paymentTransactionsWorkbook(List.of(), "Lọc")));
+
+        mockMvc.perform(get("/api/v1/reports/export/payment-transactions")
+                        .param("status", "VOIDED")
+                        .param("transactionType", "REFUND")
+                        .param("receiptNo", "PC2609"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<TransactionListExportFilterRequest> captor =
+                ArgumentCaptor.forClass(TransactionListExportFilterRequest.class);
+        verify(reportService).exportPaymentTransactions(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo("VOIDED");
+        assertThat(captor.getValue().getTransactionType()).isEqualTo("REFUND");
+        assertThat(captor.getValue().getReceiptNo()).isEqualTo("PC2609");
+    }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_ACCOUNTANT", permissions = Permissions.PAYMENT_HISTORY_EXPORT)
+    void exportPaymentTransactions_invalidType_returns400() throws Exception {
+        mockMvc.perform(get("/api/v1/reports/export/payment-transactions").param("transactionType", "BONUS"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(reportService);
+    }
+
+    @Test
     @WithAuthUser(roles = "ROLE_ACCOUNTANT", permissions = Permissions.PAYMENT_HISTORY_VIEW)
     void exportPaymentTransactions_withOnlyView_returns403() throws Exception {
         mockMvc.perform(get("/api/v1/reports/export/payment-transactions"))

@@ -47,6 +47,7 @@ class FinanceExportServiceImplTest {
                 .totalDiscount(new BigDecimal("1000000"))
                 .netBilled(new BigDecimal("9000000"))
                 .totalCollected(new BigDecimal("6000000"))
+                .totalRefunded(new BigDecimal("200000"))
                 .transactionCount(6L)
                 .totalOutstanding(new BigDecimal("3000000"))
                 .overdueAmount(new BigDecimal("1000000"))
@@ -59,7 +60,8 @@ class FinanceExportServiceImplTest {
                         FinanceMonthlyDto.builder().month("2026-08").billedAmount(BigDecimal.ZERO)
                                 .collectedAmount(BigDecimal.ZERO).feeCount(0L).transactionCount(0L).build(),
                         FinanceMonthlyDto.builder().month("2026-09").billedAmount(new BigDecimal("9000000"))
-                                .collectedAmount(new BigDecimal("6000000")).feeCount(9L).transactionCount(6L).build()))
+                                .collectedAmount(new BigDecimal("6000000")).refundedAmount(new BigDecimal("200000"))
+                                .feeCount(9L).transactionCount(6L).build()))
                 .build();
 
         try (XSSFWorkbook workbook = open(service.financeSummaryWorkbook(summary))) {
@@ -76,15 +78,22 @@ class FinanceExportServiceImplTest {
             assertThat(first.getCell(0).getStringCellValue()).isEqualTo("Tổng tiền đã lập");
             assertThat(first.getCell(1).getNumericCellValue()).isEqualTo(10_000_000d);
             assertThat(first.getCell(1).getCellStyle().getDataFormatString()).isEqualTo("#,##0");
+            Row collected = sheet.getRow(HEADER + 4);
+            assertThat(collected.getCell(0).getStringCellValue()).isEqualTo("Thực thu (sau hoàn tiền)");
+            Row refunded = sheet.getRow(HEADER + 5);
+            assertThat(refunded.getCell(0).getStringCellValue()).isEqualTo("Đã hoàn tiền");
+            assertThat(refunded.getCell(1).getNumericCellValue()).isEqualTo(200_000d);
 
             Sheet status = workbook.getSheet(FinanceExportService.SHEET_STATUS);
             assertThat(headers(status)).containsExactly("Trạng thái", "Số khoản", "Phải thu sau miễn giảm", "Còn phải thu");
             assertThat(status.getRow(HEADER + 1).getCell(0).getStringCellValue()).isEqualTo("Quá hạn");
 
             Sheet monthly = workbook.getSheet(FinanceExportService.SHEET_MONTHLY);
-            assertThat(headers(monthly)).containsExactly("Tháng", "Phải thu (theo kỳ)", "Số khoản", "Thực thu", "Số giao dịch");
+            assertThat(headers(monthly)).containsExactly(
+                    "Tháng", "Phải thu (theo kỳ)", "Số khoản", "Thực thu", "Đã hoàn", "Số giao dịch thu");
             assertThat(monthly.getLastRowNum()).isEqualTo(HEADER + 2);
             assertThat(monthly.getRow(HEADER + 2).getCell(3).getNumericCellValue()).isEqualTo(6_000_000d);
+            assertThat(monthly.getRow(HEADER + 2).getCell(4).getNumericCellValue()).isEqualTo(200_000d);
         }
     }
 
@@ -202,18 +211,47 @@ class FinanceExportServiceImplTest {
         TransactionExportRowDto row = TransactionExportRowDto.builder()
                 .id(5L).transactionCode("GD0005").feeCode("HP001").studentCode("HS001").studentName("Nguyễn Văn A")
                 .amount(new BigDecimal("500000")).paymentMethod("VIETQR").status("SUCCESS")
-                .paymentDate(LocalDateTime.of(2026, 9, 15, 9, 30)).createdBy("accountant1").build();
+                .paymentDate(LocalDateTime.of(2026, 9, 15, 9, 30)).createdBy("accountant1")
+                .receiptNo("PT2609-0005").transactionType("PAYMENT").payerName("Phụ huynh A").build();
+        TransactionExportRowDto refund = TransactionExportRowDto.builder()
+                .id(6L).transactionCode("GD0006").feeCode("HP001").amount(new BigDecimal("200000"))
+                .paymentMethod("CASH").status("SUCCESS").transactionType("REFUND").receiptNo("PC2609-0001")
+                .refTransactionCode("GD0005").paymentDate(LocalDateTime.of(2026, 9, 16, 9, 0)).build();
+        TransactionExportRowDto voided = TransactionExportRowDto.builder()
+                .id(7L).transactionCode("GD0007").feeCode("HP001").amount(new BigDecimal("300000"))
+                .paymentMethod("CASH").status("VOIDED").transactionType("PAYMENT")
+                .voidedAt(LocalDateTime.of(2026, 9, 17, 10, 0)).voidReason("Nhập nhầm")
+                .paymentDate(LocalDateTime.of(2026, 9, 17, 9, 0)).build();
 
-        try (XSSFWorkbook workbook = open(service.paymentTransactionsWorkbook(List.of(row), "Tất cả giao dịch"))) {
+        try (XSSFWorkbook workbook = open(
+                service.paymentTransactionsWorkbook(List.of(row, refund, voided), "Tất cả giao dịch"))) {
             Sheet sheet = workbook.getSheet(FinanceExportService.SHEET_TRANSACTIONS);
-            assertThat(headers(sheet)).startsWith("Mã giao dịch", "Ngày thanh toán", "Số tiền", "Hình thức", "Trạng thái");
+            assertThat(headers(sheet)).startsWith("Mã giao dịch", "Số phiếu", "Loại", "Ngày thanh toán", "Số tiền",
+                    "Thực thu (+/-)", "Hình thức", "Trạng thái", "Người nộp / nhận", "Giao dịch gốc");
+            assertThat(headers(sheet)).endsWith("Người tạo", "Ngày hủy", "Lý do hủy");
             Row data = sheet.getRow(HEADER + 1);
             assertThat(data.getCell(0).getStringCellValue()).isEqualTo("GD0005");
-            assertThat(data.getCell(1).getLocalDateTimeCellValue()).isEqualTo(LocalDateTime.of(2026, 9, 15, 9, 30));
-            assertThat(data.getCell(2).getNumericCellValue()).isEqualTo(500_000d);
-            assertThat(data.getCell(3).getStringCellValue()).isEqualTo("VietQR");
-            assertThat(data.getCell(4).getStringCellValue()).isEqualTo("Thành công");
-            assertThat(data.getCell(14).getStringCellValue()).isEqualTo("accountant1");
+            assertThat(data.getCell(1).getStringCellValue()).isEqualTo("PT2609-0005");
+            assertThat(data.getCell(2).getStringCellValue()).isEqualTo("Thu tiền");
+            assertThat(data.getCell(3).getLocalDateTimeCellValue()).isEqualTo(LocalDateTime.of(2026, 9, 15, 9, 30));
+            assertThat(data.getCell(4).getNumericCellValue()).isEqualTo(500_000d);
+            assertThat(data.getCell(5).getNumericCellValue()).isEqualTo(500_000d);
+            assertThat(data.getCell(6).getStringCellValue()).isEqualTo("VietQR");
+            assertThat(data.getCell(7).getStringCellValue()).isEqualTo("Thành công");
+            assertThat(data.getCell(8).getStringCellValue()).isEqualTo("Phụ huynh A");
+            assertThat(data.getCell(19).getStringCellValue()).isEqualTo("accountant1");
+
+            Row refundRow = sheet.getRow(HEADER + 2);
+            assertThat(refundRow.getCell(2).getStringCellValue()).isEqualTo("Hoàn tiền");
+            assertThat(refundRow.getCell(4).getNumericCellValue()).isEqualTo(200_000d);
+            assertThat(refundRow.getCell(5).getNumericCellValue()).isEqualTo(-200_000d);
+            assertThat(refundRow.getCell(9).getStringCellValue()).isEqualTo("GD0005");
+
+            Row voidedRow = sheet.getRow(HEADER + 3);
+            assertThat(voidedRow.getCell(5).getNumericCellValue()).isZero();
+            assertThat(voidedRow.getCell(7).getStringCellValue()).isEqualTo("Đã hủy");
+            assertThat(voidedRow.getCell(20).getLocalDateTimeCellValue()).isEqualTo(LocalDateTime.of(2026, 9, 17, 10, 0));
+            assertThat(voidedRow.getCell(21).getStringCellValue()).isEqualTo("Nhập nhầm");
         }
     }
 
@@ -222,7 +260,7 @@ class FinanceExportServiceImplTest {
         try (XSSFWorkbook workbook = open(service.paymentTransactionsWorkbook(List.of(), null))) {
             Sheet sheet = workbook.getSheet(FinanceExportService.SHEET_TRANSACTIONS);
             assertThat(sheet.getRow(1)).isNull();
-            assertThat(headers(sheet)).hasSize(15);
+            assertThat(headers(sheet)).hasSize(22);
             assertThat(sheet.getLastRowNum()).isEqualTo(HEADER);
         }
     }
@@ -230,7 +268,9 @@ class FinanceExportServiceImplTest {
     @Test
     void unknownCodesFallBackToRawValue() {
         assertThat(FinanceExportServiceImpl.label(FinanceExportServiceImpl.TRANSACTION_STATUS_LABELS, "VOIDED"))
-                .isEqualTo("VOIDED");
+                .isEqualTo("Đã hủy");
+        assertThat(FinanceExportServiceImpl.label(FinanceExportServiceImpl.TRANSACTION_STATUS_LABELS, "EXPIRED"))
+                .isEqualTo("EXPIRED");
         assertThat(FinanceExportServiceImpl.label(FinanceExportServiceImpl.TRANSACTION_STATUS_LABELS, null)).isNull();
         assertThat(FinanceExportServiceImpl.periodOf(2026, null)).isNull();
     }

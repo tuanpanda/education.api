@@ -98,6 +98,7 @@ public class ReportRepositoryImpl implements ReportRepository {
                     .totalDiscount(JdbcValueReaders.getBigDecimal(rs, "TOTAL_DISCOUNT"))
                     .netBilled(JdbcValueReaders.getBigDecimal(rs, "NET_BILLED"))
                     .totalCollected(JdbcValueReaders.getBigDecimal(rs, "TOTAL_COLLECTED"))
+                    .totalRefunded(JdbcValueReaders.getBigDecimal(rs, "TOTAL_REFUNDED"))
                     .transactionCount(JdbcValueReaders.getLong(rs, "TRANSACTION_COUNT"))
                     .totalOutstanding(JdbcValueReaders.getBigDecimal(rs, "TOTAL_OUTSTANDING"))
                     .overdueAmount(JdbcValueReaders.getBigDecimal(rs, "OVERDUE_AMOUNT"))
@@ -121,6 +122,7 @@ public class ReportRepositoryImpl implements ReportRepository {
                     .billedAmount(JdbcValueReaders.getBigDecimal(rs, "BILLED_AMOUNT"))
                     .feeCount(JdbcValueReaders.getLong(rs, "FEE_COUNT"))
                     .collectedAmount(JdbcValueReaders.getBigDecimal(rs, "COLLECTED_AMOUNT"))
+                    .refundedAmount(JdbcValueReaders.getBigDecimal(rs, "REFUNDED_AMOUNT"))
                     .transactionCount(JdbcValueReaders.getLong(rs, "TRANSACTION_COUNT"))
                     .build();
 
@@ -214,6 +216,7 @@ public class ReportRepositoryImpl implements ReportRepository {
                     .classCode(rs.getString("CLASS_CODE"))
                     .className(rs.getString("CLASS_NAME"))
                     .paymentMethod(rs.getString("PAYMENT_METHOD"))
+                    .receiptNo(rs.getString("RECEIPT_NO"))
                     .status(rs.getString("STATUS"))
                     .note(rs.getString("NOTE"))
                     .debitAmount(JdbcValueReaders.getBigDecimal(rs, "DEBIT_AMOUNT"))
@@ -265,6 +268,12 @@ public class ReportRepositoryImpl implements ReportRepository {
                     .status(rs.getString("STATUS"))
                     .note(rs.getString("NOTE"))
                     .createdBy(rs.getString("CREATED_BY"))
+                    .receiptNo(rs.getString("RECEIPT_NO"))
+                    .transactionType(rs.getString("TRANSACTION_TYPE"))
+                    .payerName(rs.getString("PAYER_NAME"))
+                    .refTransactionCode(rs.getString("REF_TRANSACTION_CODE"))
+                    .voidedAt(JdbcValueReaders.getLocalDateTime(rs, "VOIDED_AT"))
+                    .voidReason(rs.getString("VOID_REASON"))
                     .build();
 
     static final String FEE_EXPORT_SELECT = """
@@ -283,8 +292,11 @@ public class ReportRepositoryImpl implements ReportRepository {
             SELECT t.ID, t.TRANSACTION_CODE, t.TUITION_FEE_ID, f.FEE_CODE, f.STUDENT_ID, s.STUDENT_CODE,
                    s.FULL_NAME AS STUDENT_NAME, f.CLASS_ID, c.CLASS_CODE, c.CLASS_NAME,
                    t.AMOUNT, t.PAYMENT_METHOD, t.PAYMENT_DATE, t.BANK_BIN, t.ACCOUNT_NO, t.BANK_REFERENCE_NO,
-                   t.STATUS, t.NOTE, t.CREATED_BY
+                   t.STATUS, t.NOTE, t.CREATED_BY,
+                   t.RECEIPT_NO, t.TRANSACTION_TYPE, t.PAYER_NAME, r.TRANSACTION_CODE AS REF_TRANSACTION_CODE,
+                   t.VOIDED_AT, t.VOID_REASON
               FROM FIN_PAYMENT_TRANSACTIONS t
+              LEFT JOIN FIN_PAYMENT_TRANSACTIONS r ON r.ID = t.REF_TRANSACTION_ID
               JOIN FIN_TUITION_FEES f ON f.ID = t.TUITION_FEE_ID
               JOIN EDU_STUDENTS s ON s.ID = f.STUDENT_ID
               LEFT JOIN EDU_CLASSES c ON c.ID = f.CLASS_ID
@@ -525,6 +537,10 @@ public class ReportRepositoryImpl implements ReportRepository {
             sql.append("\n   AND t.STATUS = ?");
             args.add(criteria.getStatus().trim());
         }
+        if (hasText(criteria.getTransactionType())) {
+            sql.append("\n   AND t.TRANSACTION_TYPE = ?");
+            args.add(criteria.getTransactionType().trim());
+        }
         if (criteria.getStudentId() != null) {
             sql.append("\n   AND f.STUDENT_ID = ?");
             args.add(criteria.getStudentId());
@@ -537,16 +553,21 @@ public class ReportRepositoryImpl implements ReportRepository {
             sql.append("\n   AND LOWER(f.FEE_CODE) LIKE ? ESCAPE '\\'");
             args.add(contains(criteria.getFeeCode()));
         }
+        if (hasText(criteria.getReceiptNo())) {
+            sql.append("\n   AND LOWER(NVL(t.RECEIPT_NO, ' ')) LIKE ? ESCAPE '\\'");
+            args.add(contains(criteria.getReceiptNo()));
+        }
         if (hasText(criteria.getKeyword())) {
             String like = contains(criteria.getKeyword());
             sql.append("\n   AND (LOWER(t.TRANSACTION_CODE) LIKE ? ESCAPE '\\'")
+                    .append(" OR LOWER(NVL(t.RECEIPT_NO, ' ')) LIKE ? ESCAPE '\\'")
                     .append(" OR LOWER(NVL(t.BANK_REFERENCE_NO, ' ')) LIKE ? ESCAPE '\\'")
+                    .append(" OR LOWER(NVL(t.PAYER_NAME, ' ')) LIKE ? ESCAPE '\\'")
                     .append(" OR LOWER(s.STUDENT_CODE) LIKE ? ESCAPE '\\'")
                     .append(" OR LOWER(s.FULL_NAME) LIKE ? ESCAPE '\\')");
-            args.add(like);
-            args.add(like);
-            args.add(like);
-            args.add(like);
+            for (int i = 0; i < 6; i++) {
+                args.add(like);
+            }
         }
         sql.append("\n ORDER BY t.PAYMENT_DATE DESC, t.ID DESC\n FETCH FIRST ? ROWS ONLY");
         args.add(limit);

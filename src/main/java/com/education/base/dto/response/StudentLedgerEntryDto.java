@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
 @Builder
 public class StudentLedgerEntryDto {
 
-    /** {@code FEE} (ghi nợ) hoặc {@code PAYMENT} (ghi có). */
+    /** {@code FEE} (ghi nợ), {@code PAYMENT} (ghi có) hoặc {@code REFUND} (hoàn tiền, ghi nợ). */
     private String entryType;
 
     /** Ngày lập khoản phí / ngày thanh toán. */
@@ -45,6 +45,9 @@ public class StudentLedgerEntryDto {
     private String className;
 
     private String paymentMethod;
+
+    /** Số phiếu thu / phiếu chi (dòng {@code PAYMENT} / {@code REFUND}). */
+    private String receiptNo;
 
     private String status;
 

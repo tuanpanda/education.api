@@ -24,8 +24,11 @@ public class FinanceMonthlyDto {
 
     private Long feeCount;
 
-    /** Thực thu (giao dịch {@code SUCCESS}) trong tháng. */
+    /** Thực thu sau hoàn tiền trong tháng (thu {@code SUCCESS}/{@code REFUNDED} − hoàn {@code SUCCESS}); có thể âm. */
     private BigDecimal collectedAmount;
+
+    /** Tiền đã hoàn trong tháng (đã trừ trong {@link #collectedAmount}). */
+    private BigDecimal refundedAmount;
 
     private Long transactionCount;
 }

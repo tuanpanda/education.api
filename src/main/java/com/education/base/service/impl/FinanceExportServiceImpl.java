@@ -58,7 +58,12 @@ public class FinanceExportServiceImpl implements FinanceExportService {
             "PENDING", "Chờ xử lý",
             "SUCCESS", "Thành công",
             "FAILED", "Thất bại",
-            "REFUNDED", "Đã hoàn tiền");
+            "REFUNDED", "Đã hoàn tiền",
+            "VOIDED", "Đã hủy");
+
+    static final Map<String, String> TRANSACTION_TYPE_LABELS = Map.of(
+            "PAYMENT", "Thu tiền",
+            "REFUND", "Hoàn tiền");
 
     static final Map<String, String> PAYMENT_METHOD_LABELS = Map.of(
             "CASH", "Tiền mặt",
@@ -133,8 +138,9 @@ public class FinanceExportServiceImpl implements FinanceExportService {
                     new Metric("Tổng tiền đã lập", data.getTotalBilled(), CellKind.MONEY),
                     new Metric("Miễn giảm", data.getTotalDiscount(), CellKind.MONEY),
                     new Metric("Phải thu sau miễn giảm", data.getNetBilled(), CellKind.MONEY),
-                    new Metric("Thực thu (giao dịch thành công)", data.getTotalCollected(), CellKind.MONEY),
-                    new Metric("Số giao dịch thành công", data.getTransactionCount(), CellKind.NUMBER),
+                    new Metric("Thực thu (sau hoàn tiền)", data.getTotalCollected(), CellKind.MONEY),
+                    new Metric("Đã hoàn tiền", data.getTotalRefunded(), CellKind.MONEY),
+                    new Metric("Số giao dịch thu", data.getTransactionCount(), CellKind.NUMBER),
                     new Metric("Còn phải thu", data.getTotalOutstanding(), CellKind.MONEY),
                     new Metric("Còn phải thu quá hạn", data.getOverdueAmount(), CellKind.MONEY),
                     new Metric("Số khoản quá hạn", data.getOverdueFees(), CellKind.NUMBER),
@@ -155,7 +161,8 @@ public class FinanceExportServiceImpl implements FinanceExportService {
                     Column.<FinanceMonthlyDto>money("Phải thu (theo kỳ)", FinanceMonthlyDto::getBilledAmount),
                     Column.<FinanceMonthlyDto>number("Số khoản", FinanceMonthlyDto::getFeeCount),
                     Column.<FinanceMonthlyDto>money("Thực thu", FinanceMonthlyDto::getCollectedAmount),
-                    Column.<FinanceMonthlyDto>number("Số giao dịch", FinanceMonthlyDto::getTransactionCount)),
+                    Column.<FinanceMonthlyDto>money("Đã hoàn", FinanceMonthlyDto::getRefundedAmount),
+                    Column.<FinanceMonthlyDto>number("Số giao dịch thu", FinanceMonthlyDto::getTransactionCount)),
                     nullSafe(data.getMonthly()), null);
         });
     }
@@ -266,10 +273,15 @@ public class FinanceExportServiceImpl implements FinanceExportService {
             Styles styles = styles(workbook);
             writeTable(workbook, styles, SHEET_TRANSACTIONS, "Danh sách giao dịch thanh toán", filterDescription, List.of(
                     Column.<TransactionExportRowDto>text("Mã giao dịch", TransactionExportRowDto::getTransactionCode, 20),
+                    Column.<TransactionExportRowDto>text("Số phiếu", TransactionExportRowDto::getReceiptNo, 16),
+                    Column.<TransactionExportRowDto>text("Loại", r -> label(TRANSACTION_TYPE_LABELS, r.getTransactionType()), 12),
                     Column.<TransactionExportRowDto>dateTime("Ngày thanh toán", TransactionExportRowDto::getPaymentDate),
                     Column.<TransactionExportRowDto>money("Số tiền", TransactionExportRowDto::getAmount),
+                    Column.<TransactionExportRowDto>money("Thực thu (+/-)", TransactionExportRowDto::getNetAmount),
                     Column.<TransactionExportRowDto>text("Hình thức", r -> label(PAYMENT_METHOD_LABELS, r.getPaymentMethod()), 14),
                     Column.<TransactionExportRowDto>text("Trạng thái", r -> label(TRANSACTION_STATUS_LABELS, r.getStatus()), 14),
+                    Column.<TransactionExportRowDto>text("Người nộp / nhận", TransactionExportRowDto::getPayerName, 22),
+                    Column.<TransactionExportRowDto>text("Giao dịch gốc", TransactionExportRowDto::getRefTransactionCode, 20),
                     Column.<TransactionExportRowDto>text("Mã khoản phí", TransactionExportRowDto::getFeeCode, 16),
                     Column.<TransactionExportRowDto>text("Mã học sinh", TransactionExportRowDto::getStudentCode, 14),
                     Column.<TransactionExportRowDto>text("Họ và tên", TransactionExportRowDto::getStudentName, 26),
@@ -279,7 +291,9 @@ public class FinanceExportServiceImpl implements FinanceExportService {
                     Column.<TransactionExportRowDto>text("Số tài khoản", TransactionExportRowDto::getAccountNo, 16),
                     Column.<TransactionExportRowDto>text("Mã tham chiếu NH", TransactionExportRowDto::getBankReferenceNo, 20),
                     Column.<TransactionExportRowDto>text("Ghi chú", TransactionExportRowDto::getNote, 30),
-                    Column.<TransactionExportRowDto>text("Người tạo", TransactionExportRowDto::getCreatedBy, 14)),
+                    Column.<TransactionExportRowDto>text("Người tạo", TransactionExportRowDto::getCreatedBy, 14),
+                    Column.<TransactionExportRowDto>dateTime("Ngày hủy", TransactionExportRowDto::getVoidedAt),
+                    Column.<TransactionExportRowDto>text("Lý do hủy", TransactionExportRowDto::getVoidReason, 30)),
                     nullSafe(rows), null);
         });
     }

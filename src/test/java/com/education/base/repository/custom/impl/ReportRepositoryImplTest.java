@@ -6,6 +6,10 @@ import com.education.base.dto.response.ClassCollectionDto;
 import com.education.base.dto.response.DashboardMetricsResponse;
 import com.education.base.dto.response.DebtAgingFeeDto;
 import com.education.base.dto.response.StudentLedgerEntryDto;
+import com.education.base.dto.response.TransactionExportRowDto;
+import com.education.base.dto.response.FinanceMonthlyDto;
+import com.education.base.dto.response.FinanceSummaryDto;
+import com.education.base.common.DomainConstants;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -114,6 +118,67 @@ class ReportRepositoryImplTest {
     }
 
     @Test
+    void ledgerEntryMapper_mapsRefundRowWithReceiptNo() throws SQLException {
+        Map<String, Object> row = new HashMap<>();
+        row.put("ENTRY_TYPE", "REFUND");
+        row.put("ENTRY_DATE", Timestamp.valueOf("2026-09-20 08:00:00"));
+        row.put("REF_ID", new BigDecimal("90"));
+        row.put("REF_CODE", "GD090");
+        row.put("RECEIPT_NO", "PC2609-0001");
+        row.put("STATUS", "SUCCESS");
+        row.put("DEBIT_AMOUNT", new BigDecimal("100000"));
+        row.put("CREDIT_AMOUNT", BigDecimal.ZERO);
+        row.put("BALANCE", new BigDecimal("700000"));
+
+        StudentLedgerEntryDto entry = ReportRepositoryImpl.LEDGER_ENTRY_ROW_MAPPER.mapRow(resultSet(row), 0);
+
+        assertThat(entry.getEntryType()).isEqualTo(DomainConstants.LEDGER_ENTRY_REFUND);
+        assertThat(entry.getReceiptNo()).isEqualTo("PC2609-0001");
+        assertThat(entry.getDebitAmount()).isEqualByComparingTo("100000");
+    }
+
+    @Test
+    void financeSummaryAndMonthlyMappers_readRefundColumns() throws SQLException {
+        Map<String, Object> row = new HashMap<>();
+        row.put("TOTAL_COLLECTED", new BigDecimal("900000"));
+        row.put("TOTAL_REFUNDED", new BigDecimal("100000"));
+        row.put("TRANSACTION_COUNT", new BigDecimal("2"));
+        FinanceSummaryDto summary = ReportRepositoryImpl.FINANCE_SUMMARY_ROW_MAPPER.mapRow(resultSet(row), 0);
+        assertThat(summary.getTotalCollected()).isEqualByComparingTo("900000");
+        assertThat(summary.getTotalRefunded()).isEqualByComparingTo("100000");
+
+        Map<String, Object> month = new HashMap<>();
+        month.put("PERIOD_MONTH", "2026-09");
+        month.put("COLLECTED_AMOUNT", new BigDecimal("-50000"));
+        month.put("REFUNDED_AMOUNT", new BigDecimal("50000"));
+        FinanceMonthlyDto monthly = ReportRepositoryImpl.FINANCE_MONTHLY_ROW_MAPPER.mapRow(resultSet(month), 0);
+        assertThat(monthly.getCollectedAmount()).isEqualByComparingTo("-50000");
+        assertThat(monthly.getRefundedAmount()).isEqualByComparingTo("50000");
+    }
+
+    @Test
+    void transactionExportMapper_readsV14_2Columns() throws SQLException {
+        Map<String, Object> row = new HashMap<>();
+        row.put("ID", new BigDecimal("6"));
+        row.put("TRANSACTION_CODE", "GD006");
+        row.put("AMOUNT", new BigDecimal("200000"));
+        row.put("STATUS", "SUCCESS");
+        row.put("TRANSACTION_TYPE", "REFUND");
+        row.put("RECEIPT_NO", "PC2609-0001");
+        row.put("PAYER_NAME", "Phụ huynh A");
+        row.put("REF_TRANSACTION_CODE", "GD005");
+        row.put("VOID_REASON", null);
+
+        TransactionExportRowDto dto = ReportRepositoryImpl.TRANSACTION_EXPORT_ROW_MAPPER.mapRow(resultSet(row), 0);
+
+        assertThat(dto.getTransactionType()).isEqualTo("REFUND");
+        assertThat(dto.getReceiptNo()).isEqualTo("PC2609-0001");
+        assertThat(dto.getPayerName()).isEqualTo("Phụ huynh A");
+        assertThat(dto.getRefTransactionCode()).isEqualTo("GD005");
+        assertThat(dto.getNetAmount()).isEqualByComparingTo("-200000");
+    }
+
+    @Test
     void feeExportQuery_withoutFilter_onlyLimits() {
         ReportRepositoryImpl.ExportQuery query = ReportRepositoryImpl.buildFeeExportQuery(null, 20001);
 
@@ -159,8 +224,10 @@ class ReportRepositoryImplTest {
                 .fromDate(LocalDate.of(2026, 9, 1))
                 .toDate(LocalDate.of(2026, 9, 30))
                 .paymentMethod("BANK_TRANSFER")
-                .status("SUCCESS")
+                .status("VOIDED")
+                .transactionType("REFUND")
                 .feeCode("HP")
+                .receiptNo("PC26")
                 .keyword("an")
                 .build();
 
@@ -172,13 +239,19 @@ class ReportRepositoryImplTest {
                 .contains("t.PAYMENT_DATE < ?")
                 .contains("t.PAYMENT_METHOD = ?")
                 .contains("t.STATUS = ?")
+                .contains("t.TRANSACTION_TYPE = ?")
+                .contains("LOWER(NVL(t.RECEIPT_NO, ' ')) LIKE ?")
+                .contains("LOWER(NVL(t.PAYER_NAME, ' ')) LIKE ?")
                 .contains("LOWER(t.TRANSACTION_CODE) LIKE ?")
                 .endsWith("FETCH FIRST ? ROWS ONLY");
+        assertThat(ReportRepositoryImpl.TRANSACTION_EXPORT_SELECT)
+                .contains("t.RECEIPT_NO", "t.TRANSACTION_TYPE", "t.PAYER_NAME", "t.VOID_REASON",
+                        "LEFT JOIN FIN_PAYMENT_TRANSACTIONS r ON r.ID = t.REF_TRANSACTION_ID");
         List<Object> expected = new ArrayList<>(List.of(
                 Timestamp.valueOf("2026-09-01 00:00:00"),
                 Timestamp.valueOf("2026-10-01 00:00:00"),
-                "BANK_TRANSFER", "SUCCESS", "%hp%",
-                "%an%", "%an%", "%an%", "%an%",
+                "BANK_TRANSFER", "VOIDED", "REFUND", "%hp%", "%pc26%",
+                "%an%", "%an%", "%an%", "%an%", "%an%", "%an%",
                 5));
         assertThat(query.args()).containsExactlyElementsOf(expected);
     }

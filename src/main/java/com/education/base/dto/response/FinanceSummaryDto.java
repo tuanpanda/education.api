@@ -36,10 +36,16 @@ public class FinanceSummaryDto {
     /** Phải thu sau miễn giảm: {@code totalBilled - totalDiscount}. */
     private BigDecimal netBilled;
 
-    /** Thực thu: tổng giao dịch {@code SUCCESS} có ngày thanh toán trong kỳ. */
+    /**
+     * Thực thu sau hoàn tiền theo ngày giao dịch trong kỳ: Σ thu ({@code PAYMENT} {@code SUCCESS} / {@code REFUNDED})
+     * − Σ hoàn ({@code REFUND} {@code SUCCESS}); không tính {@code VOIDED} (cùng quy tắc {@code PAID_AMOUNT}, V14_2).
+     */
     private BigDecimal totalCollected;
 
-    /** Số giao dịch {@code SUCCESS} trong kỳ. */
+    /** Tổng tiền đã hoàn ({@code REFUND} {@code SUCCESS}) có ngày hoàn trong kỳ; đã trừ trong {@link #totalCollected}. */
+    private BigDecimal totalRefunded;
+
+    /** Số giao dịch thu ({@code PAYMENT} {@code SUCCESS} / {@code REFUNDED}) trong kỳ, không đếm dòng hoàn. */
     private Long transactionCount;
 
     /** Còn phải thu của các khoản đang mở (UNPAID/PARTIAL/OVERDUE) trong kỳ. */

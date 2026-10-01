@@ -225,6 +225,9 @@ public class DomainConstants {
     /** Loại dòng trong sổ công nợ học sinh: giao dịch thanh toán (ghi có). */
     public static final String LEDGER_ENTRY_PAYMENT = "PAYMENT";
 
+    /** Loại dòng trong sổ công nợ học sinh: hoàn tiền (ghi nợ - tiền trả lại làm tăng số còn nợ). */
+    public static final String LEDGER_ENTRY_REFUND = "REFUND";
+
     /** Số dòng tối đa của một file Excel xuất danh sách (khoản phí / giao dịch); vượt quá thì yêu cầu thu hẹp bộ lọc. */
     public static final int FINANCE_EXPORT_MAX_ROWS = 20_000;
 

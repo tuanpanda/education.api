@@ -90,7 +90,12 @@ public class ReportServiceImpl implements ReportService {
         List<StudentLedgerEntryDto> entries = ledger.getEntries() == null ? List.of() : ledger.getEntries();
         BigDecimal debit = sum(entries, StudentLedgerEntryDto::getDebitAmount);
         BigDecimal credit = sum(entries, StudentLedgerEntryDto::getCreditAmount);
+        BigDecimal refund = sum(entries.stream()
+                        .filter(e -> DomainConstants.LEDGER_ENTRY_REFUND.equals(e.getEntryType()))
+                        .toList(),
+                StudentLedgerEntryDto::getDebitAmount);
         ledger.setTotalDebit(debit);
+        ledger.setTotalRefund(refund);
         ledger.setTotalCredit(credit);
         ledger.setBalance(debit.subtract(credit));
         return ledger;
@@ -218,9 +223,11 @@ public class ReportServiceImpl implements ReportService {
         addPart(parts, "Đến ngày", formatDate(filter.getToDate()));
         addPart(parts, "Hình thức", filter.getPaymentMethod());
         addPart(parts, "Trạng thái", filter.getStatus());
+        addPart(parts, "Loại giao dịch", filter.getTransactionType());
         addPart(parts, "Học sinh ID", filter.getStudentId());
         addPart(parts, "Lớp ID", filter.getClassId());
         addPart(parts, "Mã khoản phí", filter.getFeeCode());
+        addPart(parts, "Số phiếu", filter.getReceiptNo());
         addPart(parts, "Từ khóa", filter.getKeyword());
         return parts.isEmpty() ? "Tất cả giao dịch" : String.join("; ", parts);
     }
