@@ -191,4 +191,36 @@ class CsrfProtectionTest {
                 .andExpect(jsonPath("$.data.token").value(token))
                 .andExpect(cookie().doesNotExist(CSRF_COOKIE));
     }
+
+    /**
+     * Phiên JWT không trạng thái: request đã xác thực KHÔNG được xóa / xoay cookie {@code XSRF-TOKEN}
+     * (mặc định Spring gắn CsrfAuthenticationStrategy vào SessionManagementFilter, chạy ở MỌI request có JWT,
+     * xóa cookie khiến POST kế tiếp bị 403 CSRF_TOKEN_INVALID).
+     */
+    @Test
+    @WithAuthUser(id = 3L, username = "teacher1", roles = "ROLE_TEACHER")
+    void authenticatedRequests_keepExistingCsrfCookie() throws Exception {
+        when(authService.changePassword(any(), any())).thenReturn(AuthTokens.builder()
+                .accessToken("a2").refreshToken("r2").accessTokenTtlSeconds(900).refreshTokenTtlSeconds(3600)
+                .user(AuthUserResponse.builder().id(3L).username("teacher1").build())
+                .build());
+        String token = fetchCsrfToken();
+        Cookie csrfCookie = new Cookie(CSRF_COOKIE, token);
+
+        mockMvc.perform(get("/api/v1/auth/me").cookie(csrfCookie))
+                .andExpect(status().isOk())
+                .andExpect(cookie().doesNotExist(CSRF_COOKIE));
+
+        mockMvc.perform(post("/api/v1/auth/change-password").cookie(csrfCookie).header(CSRF_HEADER, token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"oldPassword\":\"Old@1234\",\"newPassword\":\"NewPass@456\"}"))
+                .andExpect(status().isOk())
+                .andExpect(cookie().value(AuthCookieService.ACCESS_COOKIE, "a2"))
+                .andExpect(cookie().doesNotExist(CSRF_COOKIE));
+
+        mockMvc.perform(get("/api/v1/auth/csrf").cookie(csrfCookie))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.token").value(token))
+                .andExpect(cookie().doesNotExist(CSRF_COOKIE));
+    }
 }

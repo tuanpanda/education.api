@@ -24,6 +24,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.authentication.session.NullAuthenticatedSessionStrategy;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
@@ -100,7 +101,12 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf
                         .csrfTokenRepository(csrfTokenRepository(cookieProperties))
                         // Token gửi nguyên văn trong header (SPA), không dùng biến thể XOR cho form HTML.
-                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()))
+                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+                        // Mặc định CsrfAuthenticationStrategy xóa cookie XSRF-TOKEN mỗi khi SessionManagementFilter
+                        // thấy một Authentication "mới" - với JWT không trạng thái là MỌI request đã đăng nhập, khiến
+                        // POST kế tiếp luôn 403 CSRF_TOKEN_INVALID. Token giữ ổn định suốt vòng đời cookie (double-submit
+                        // không cần xoay khi đăng nhập: origin khác không đặt / đọc được cookie của host này).
+                        .sessionAuthenticationStrategy(new NullAuthenticatedSessionStrategy()))
                 .cors(Customizer.withDefaults())
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
