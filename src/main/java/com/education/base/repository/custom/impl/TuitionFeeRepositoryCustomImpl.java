@@ -59,7 +59,7 @@ public class TuitionFeeRepositoryCustomImpl implements TuitionFeeRepositoryCusto
                     .updatedAt(JdbcValueReaders.getLocalDateTime(rs, "UPDATED_AT"))
                     .build();
 
-    private static final RowMapper<PaymentTransactionDto> TRANSACTION_ROW_MAPPER = (rs, rowNum) ->
+    static final RowMapper<PaymentTransactionDto> TRANSACTION_ROW_MAPPER = (rs, rowNum) ->
             PaymentTransactionDto.builder()
                     .id(rs.getLong("ID"))
                     .transactionCode(rs.getString("TRANSACTION_CODE"))
@@ -72,6 +72,16 @@ public class TuitionFeeRepositoryCustomImpl implements TuitionFeeRepositoryCusto
                     .bankReferenceNo(rs.getString("BANK_REFERENCE_NO"))
                     .status(rs.getString("STATUS"))
                     .note(rs.getString("NOTE"))
+                    // Cột V14_2 (PRC_GET_TUITION_FEE_DETAIL bản V14_2.8): loại, số phiếu, hủy / hoàn tiền.
+                    .receiptNo(rs.getString("RECEIPT_NO"))
+                    .transactionType(rs.getString("TRANSACTION_TYPE"))
+                    .payerName(rs.getString("PAYER_NAME"))
+                    .voidedAt(JdbcValueReaders.getLocalDateTime(rs, "VOIDED_AT"))
+                    .voidedBy(rs.getString("VOIDED_BY"))
+                    .voidReason(rs.getString("VOID_REASON"))
+                    .refTransactionId(JdbcValueReaders.getLong(rs, "REF_TRANSACTION_ID"))
+                    .createdBy(rs.getString("CREATED_BY"))
+                    .createdAt(JdbcValueReaders.getLocalDateTime(rs, "CREATED_AT"))
                     .build();
 
     private static final RowMapper<TuitionSlipResponseDto> SLIP_INFO_ROW_MAPPER = (rs, rowNum) ->

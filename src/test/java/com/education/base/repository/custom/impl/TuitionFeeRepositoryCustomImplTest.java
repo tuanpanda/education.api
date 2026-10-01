@@ -7,8 +7,16 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.CallableStatementCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import com.education.base.dto.response.PaymentTransactionDto;
+
+import java.math.BigDecimal;
 import java.sql.CallableStatement;
+import java.sql.ResultSet;
+import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -53,5 +61,39 @@ class TuitionFeeRepositoryCustomImplTest {
         assertThatThrownBy(repository::nextTuitionFeeCode)
                 .isInstanceOf(OracleBusinessException.class)
                 .extracting("errorCode").isEqualTo("FEE_CODE_GENERATE_FAILED");
+    }
+
+    @Test
+    void transactionRowMapper_readsV14_2Columns() throws Exception {
+        Map<String, Object> row = new HashMap<>();
+        row.put("ID", 9L);
+        row.put("TRANSACTION_CODE", "RFD9");
+        row.put("TUITION_FEE_ID", new BigDecimal("4"));
+        row.put("AMOUNT", new BigDecimal("200000"));
+        row.put("STATUS", "SUCCESS");
+        row.put("RECEIPT_NO", "PT20261000009");
+        row.put("TRANSACTION_TYPE", "REFUND");
+        row.put("PAYER_NAME", "Phụ huynh A");
+        row.put("REF_TRANSACTION_ID", new BigDecimal("7"));
+        row.put("VOID_REASON", null);
+        row.put("CREATED_BY", "ketoan");
+        row.put("CREATED_AT", Timestamp.valueOf("2026-10-01 09:00:00"));
+
+        ResultSet rs = mock(ResultSet.class);
+        when(rs.getLong(anyString())).thenAnswer(inv -> ((Number) row.get(inv.<String>getArgument(0))).longValue());
+        when(rs.getObject(anyString())).thenAnswer(inv -> row.get(inv.<String>getArgument(0)));
+        when(rs.getString(anyString())).thenAnswer(inv -> (String) row.get(inv.<String>getArgument(0)));
+        when(rs.getBigDecimal(anyString())).thenAnswer(inv -> (BigDecimal) row.get(inv.<String>getArgument(0)));
+        when(rs.getTimestamp(anyString())).thenAnswer(inv -> (Timestamp) row.get(inv.<String>getArgument(0)));
+
+        PaymentTransactionDto dto = TuitionFeeRepositoryCustomImpl.TRANSACTION_ROW_MAPPER.mapRow(rs, 0);
+
+        assertThat(dto.getTransactionType()).isEqualTo("REFUND");
+        assertThat(dto.getReceiptNo()).isEqualTo("PT20261000009");
+        assertThat(dto.getPayerName()).isEqualTo("Phụ huynh A");
+        assertThat(dto.getRefTransactionId()).isEqualTo(7L);
+        assertThat(dto.getCreatedBy()).isEqualTo("ketoan");
+        assertThat(dto.getCreatedAt()).isEqualTo(LocalDateTime.of(2026, 10, 1, 9, 0));
+        assertThat(dto.getVoidedAt()).isNull();
     }
 }

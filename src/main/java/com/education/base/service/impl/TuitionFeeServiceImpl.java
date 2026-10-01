@@ -91,6 +91,9 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
     public TuitionFeeDetailResponse getDetail(Long id) {
         TuitionFeeEntity fee = requireActiveFee(id);
         TuitionFeeDetailResponse detail = tuitionFeeRepository.getFeeDetail(id);
+        // Cùng quy tắc với danh sách / phiếu thu / QR: còn phải thu không âm.
+        detail.setRemainingAmount(FeeStatusCalculator.remaining(
+                detail.getTotalAmount(), detail.getDiscountAmount(), detail.getPaidAmount()));
         detail.setCancelReason(fee.getCancelReason());
         if (fee.getStudentId() != null) {
             studentRepository.findById(fee.getStudentId())

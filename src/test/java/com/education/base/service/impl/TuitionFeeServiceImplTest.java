@@ -357,6 +357,19 @@ class TuitionFeeServiceImplTest {
         return request;
     }
 
+    @Test
+    void getDetail_recomputesRemainingNeverNegative() {
+        TuitionFeeEntity stored = unpaidFee();
+        stored.setId(4L);
+        when(tuitionFeeRepository.findByIdAndIsDeleted(4L, 0)).thenReturn(Optional.of(stored));
+        when(tuitionFeeRepository.getFeeDetail(4L)).thenReturn(TuitionFeeDetailResponse.builder()
+                .id(4L).totalAmount(new BigDecimal("1000000")).discountAmount(new BigDecimal("100000"))
+                .paidAmount(new BigDecimal("950000")).remainingAmount(new BigDecimal("-50000")).build());
+        when(fileStorageService.getFilesByRef(any(), any())).thenReturn(List.of());
+
+        assertThat(service.getDetail(4L).getRemainingAmount()).isEqualByComparingTo("0");
+    }
+
     private void stubDetail(Long id) {
         TuitionFeeEntity stored = unpaidFee();
         stored.setId(id);

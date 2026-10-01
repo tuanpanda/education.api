@@ -20,6 +20,9 @@
 --   * Backfill TRANSACTION_TYPE = 'PAYMENT' cho cac dong cu.
 --   * SYS_CODE_RULES 'RECEIPT': PT{YYYY}{MM}{SEQ}, SEQ 5 chu so, reset theo thang (mau V10.2 'TUITION').
 --     Ung dung cap so qua FN_NEXT_BIZ_CODE('RECEIPT') cho ca phieu thu (PAYMENT) va phieu chi (REFUND).
+--   * PRC_GET_TUITION_FEE_DETAIL (CREATE OR REPLACE, ban V1 muc 4.3): O_TRANSACTION_CURSOR them RECEIPT_NO,
+--     TRANSACTION_TYPE, PAYER_NAME, VOIDED_AT/BY, VOID_REASON, REF_TRANSACTION_ID, CREATED_BY, CREATED_AT;
+--     REMAINING_AMOUNT khong am. Tham so / ma loi giu nguyen; kiem tra VALID sau khi bien dich.
 --   * SYS_FUNCTIONS: MENU_PAYMENT_HISTORY:VOID, MENU_PAYMENT_HISTORY:REFUND (khong tao menu moi);
 --     cap cho ROLE_ADMIN (toan bo chuc nang cua menu) va ROLE_ACCOUNTANT (THEM VOID,REFUND vao quyen hien co,
 --     khong ghi de cac chuc nang khac).
@@ -258,6 +261,120 @@ WHEN NOT MATCHED THEN INSERT (ID, ROLE_ID, MENU_ID, ALLOWED_FUNCTIONS, CREATED_B
                               'VIEW,CREATE,APPROVE,EXPORT,VOID,REFUND', 'V14_2_MIGRATION');
 
 COMMIT;
+
+PROMPT ============ V14_2.8 PRC_GET_TUITION_FEE_DETAIL them cot giao dich ============
+
+-- ----------------------------------------------------------------------------
+-- PRC_GET_TUITION_FEE_DETAIL - Chi tiet mot khoan hoc phi (thay the ban V1, muc 4.3)
+--     Giu nguyen tham so, ma loi va O_FEE_CURSOR cua V1; REMAINING_AMOUNT khong am (GREATEST(..., 0), cung
+--     quy tac FeeStatusCalculator.remaining).
+--     O_TRANSACTION_CURSOR them cac cot V14_2: RECEIPT_NO, TRANSACTION_TYPE, PAYER_NAME, VOIDED_AT, VOIDED_BY,
+--     VOID_REASON, REF_TRANSACTION_ID, CREATED_BY, CREATED_AT - de man hinh chi tiet khoan phi hien dung loai
+--     (thu / hoan), trang thai (VOIDED) va so phieu. Dong REFUND co AMOUNT duong: ung dung tu hien dau tru.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE PRC_GET_TUITION_FEE_DETAIL(
+    P_TUITION_FEE_ID     IN  NUMBER,
+    O_FEE_CURSOR         OUT SYS_REFCURSOR,
+    O_TRANSACTION_CURSOR OUT SYS_REFCURSOR,
+    O_ERR_CODE           OUT VARCHAR2,
+    O_ERR_MSG            OUT VARCHAR2
+) AS
+    V_EXISTS NUMBER;
+BEGIN
+    IF P_TUITION_FEE_ID IS NULL THEN
+        O_ERR_CODE := 'FEE_ID_REQUIRED';
+        O_ERR_MSG  := 'Thieu ID khoan hoc phi.';
+        RETURN;
+    END IF;
+
+    SELECT COUNT(*)
+      INTO V_EXISTS
+      FROM FIN_TUITION_FEES
+     WHERE ID = P_TUITION_FEE_ID
+       AND IS_DELETED = 0;
+
+    IF V_EXISTS = 0 THEN
+        O_ERR_CODE := 'FEE_NOT_FOUND';
+        O_ERR_MSG  := 'Khong tim thay khoan hoc phi ID: ' || P_TUITION_FEE_ID;
+        RETURN;
+    END IF;
+
+    OPEN O_FEE_CURSOR FOR
+        SELECT f.ID,
+               f.FEE_CODE,
+               f.STUDENT_ID,
+               s.STUDENT_CODE,
+               s.FULL_NAME AS STUDENT_NAME,
+               f.CLASS_ID,
+               c.CLASS_CODE,
+               c.CLASS_NAME,
+               f.TOTAL_AMOUNT,
+               f.DISCOUNT_AMOUNT,
+               f.PAID_AMOUNT,
+               GREATEST(f.TOTAL_AMOUNT - f.DISCOUNT_AMOUNT - f.PAID_AMOUNT, 0) AS REMAINING_AMOUNT,
+               f.DUE_DATE,
+               f.STATUS,
+               f.NOTE,
+               f.CREATED_AT,
+               f.UPDATED_AT
+          FROM FIN_TUITION_FEES f
+          JOIN EDU_STUDENTS s ON s.ID = f.STUDENT_ID
+          LEFT JOIN EDU_CLASSES c ON c.ID = f.CLASS_ID
+         WHERE f.ID = P_TUITION_FEE_ID
+           AND f.IS_DELETED = 0;
+
+    OPEN O_TRANSACTION_CURSOR FOR
+        SELECT t.ID,
+               t.TRANSACTION_CODE,
+               t.TUITION_FEE_ID,
+               t.AMOUNT,
+               t.PAYMENT_METHOD,
+               t.PAYMENT_DATE,
+               t.BANK_BIN,
+               t.ACCOUNT_NO,
+               t.BANK_REFERENCE_NO,
+               t.STATUS,
+               t.NOTE,
+               t.RECEIPT_NO,
+               t.TRANSACTION_TYPE,
+               t.PAYER_NAME,
+               t.VOIDED_AT,
+               t.VOIDED_BY,
+               t.VOID_REASON,
+               t.REF_TRANSACTION_ID,
+               t.CREATED_BY,
+               t.CREATED_AT
+          FROM FIN_PAYMENT_TRANSACTIONS t
+         WHERE t.TUITION_FEE_ID = P_TUITION_FEE_ID
+           AND t.IS_DELETED = 0
+         ORDER BY t.PAYMENT_DATE DESC, t.ID DESC;
+
+    O_ERR_CODE := '0';
+    O_ERR_MSG  := 'SUCCESS';
+EXCEPTION
+    WHEN OTHERS THEN
+        IF O_FEE_CURSOR IS NOT NULL AND O_FEE_CURSOR%ISOPEN THEN CLOSE O_FEE_CURSOR; END IF;
+        IF O_TRANSACTION_CURSOR IS NOT NULL AND O_TRANSACTION_CURSOR%ISOPEN THEN CLOSE O_TRANSACTION_CURSOR; END IF;
+        O_ERR_CODE := TO_CHAR(SQLCODE);
+        O_ERR_MSG  := SUBSTR(SQLERRM, 1, 255);
+END PRC_GET_TUITION_FEE_DETAIL;
+/
+SHOW ERRORS PROCEDURE PRC_GET_TUITION_FEE_DETAIL
+
+-- CREATE OR REPLACE PROCEDURE loi bien dich chi bao Warning (khong kich hoat WHENEVER SQLERROR): kiem tra tuong minh.
+DECLARE
+    V_STATUS VARCHAR2(10);
+BEGIN
+    SELECT NVL(MAX(STATUS), 'MISSING') INTO V_STATUS
+      FROM USER_OBJECTS
+     WHERE OBJECT_NAME = 'PRC_GET_TUITION_FEE_DETAIL'
+       AND OBJECT_TYPE = 'PROCEDURE';
+    DBMS_OUTPUT.PUT_LINE('PRC_GET_TUITION_FEE_DETAIL: ' || V_STATUS);
+    IF V_STATUS <> 'VALID' THEN
+        RAISE_APPLICATION_ERROR(-20001, 'V14_2: PRC_GET_TUITION_FEE_DETAIL khong hop le (' || V_STATUS || ').');
+    END IF;
+END;
+/
 
 PROMPT ============ V14_2 Kiem tra ============
 

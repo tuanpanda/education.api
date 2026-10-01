@@ -212,7 +212,7 @@ sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migrati
 | Thứ tự | Script | Nhánh | Nội dung |
 | --- | --- | --- | --- |
 | 1 | `V14_1__fin_billing.sql` | `feat/fin-billing` | Lý do hủy khoản phí (`FIN_TUITION_FEES.CANCEL_REASON`), miễn giảm (`FIN_STUDENT_DISCOUNTS`), `PRC_GET_TUITION_SLIP_DATA` tính PRESENT + LATE, menu `MENU_FEE_DISCOUNT`, chức năng `MENU_TUITION_FEE:CANCEL` |
-| 2 | `V14_2__fin_payments.sql` | `feat/fin-payments` | Số phiếu thu, loại giao dịch, hủy / hoàn tiền trên `FIN_PAYMENT_TRANSACTIONS`; chức năng `MENU_PAYMENT_HISTORY:VOID`, `:REFUND` |
+| 2 | `V14_2__fin_payments.sql` | `feat/fin-payments` | Số phiếu thu, loại giao dịch, hủy / hoàn tiền trên `FIN_PAYMENT_TRANSACTIONS`; chức năng `MENU_PAYMENT_HISTORY:VOID`, `:REFUND`; `PRC_GET_TUITION_FEE_DETAIL` trả thêm loại / số phiếu / thông tin hủy của giao dịch |
 | 3 | `V14_3__fin_reports.sql` | `feat/fin-reports` | Procedure báo cáo tài chính (chỉ đọc), sửa `PRC_RPT_DASHBOARD_METRICS`; menu `MENU_FINANCE_DASHBOARD`, `MENU_FINANCE_REPORT`. **Cần V14_2** (dùng `TRANSACTION_TYPE`, `RECEIPT_NO`, trạng thái `VOIDED`; script dừng với ORA-20002 nếu chưa chạy V14_2) |
 
 **Phụ thuộc:** V14_3 đọc các cột V14_2 nên bắt buộc chạy sau V14_2. Mọi báo cáo dùng chung quy tắc thực thu với
