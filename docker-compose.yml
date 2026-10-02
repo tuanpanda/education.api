@@ -23,6 +23,10 @@ services:
       DB_USERNAME: ${DB_USERNAME:-EDUCATION}
       DB_PASSWORD: ${DB_PASSWORD:-EDUCATION}
       APP_STORAGE_DIR: /app/outputs
+      # Thông tin trung tâm in trên phiếu thu (rỗng = tên chủ tài khoản ngân hàng đang dùng, không in địa chỉ / SĐT).
+      RECEIPT_CENTER_NAME: ${RECEIPT_CENTER_NAME:-}
+      RECEIPT_CENTER_ADDRESS: ${RECEIPT_CENTER_ADDRESS:-}
+      RECEIPT_CENTER_PHONE: ${RECEIPT_CENTER_PHONE:-}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (>= 32 characters)}
       JWT_ISSUER: ${JWT_ISSUER:-education-api}
       JWT_ACCESS_TOKEN_TTL: ${JWT_ACCESS_TOKEN_TTL:-15m}

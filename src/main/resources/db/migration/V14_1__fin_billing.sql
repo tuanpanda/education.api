@@ -1,0 +1,350 @@
+-- =============================================================================
+-- EDUCATION - MIGRATION V14_1: TAI CHINH - TINH PHI, KHOAN HOC PHI, MIEN GIAM
+--
+-- Stream A (feat/fin-billing). CHI Stream A sua file nay; stream khac khong sua.
+--
+-- Script nay lam:
+--   V14_1.1 FIN_TUITION_FEES.CANCEL_REASON (ly do huy khoan phi - POST /tuition-fees/{id}/cancel).
+--   V14_1.2 Bang FIN_STUDENT_DISCOUNTS (mien giam / hoc bong theo hoc sinh, tuy chon theo lop):
+--           SEQ_FIN_STUDENT_DISCOUNTS, CHECK (loai PERCENT | AMOUNT, gia tri, khoang hieu luc),
+--           FK EDU_STUDENTS / EDU_CLASSES, index tra cuu, trigger TRG_FIN_STUDENT_DISCOUNTS_BI_ID.
+--   V14_1.3 PRC_GET_TUITION_SLIP_DATA: danh sach ngay di hoc tren phieu dem PRESENT + LATE (B1),
+--           giong DomainConstants.BILLABLE_ATTENDANCE_STATUSES. Phan con lai giu nguyen ban V10.
+--   V14_1.4 Menu MENU_FEE_DISCOUNT (/finance/discounts) duoi DIR_FINANCE.
+--   V14_1.5 Chuc nang MENU_FEE_DISCOUNT: VIEW/CREATE/UPDATE/DELETE; MENU_TUITION_FEE: CANCEL.
+--   V14_1.6 Phan quyen: ROLE_ADMIN toan quyen MENU_FEE_DISCOUNT + MENU_TUITION_FEE;
+--           ROLE_ACCOUNTANT: MENU_FEE_DISCOUNT = VIEW,CREATE,UPDATE,DELETE va them CANCEL vao
+--           MENU_TUITION_FEE (giu nguyen cac chuc nang da cap, chi them neu chua co).
+--
+-- Khong doi ten cot / ma trang thai hien co (UNPAID/PARTIAL/PAID/OVERDUE/CANCELLED).
+--
+-- QUY UOC CHUNG CHO V14_x (kiem tra tu dong boi V14ScriptConventionTest):
+--   * WHENEVER SQLERROR EXIT ... ROLLBACK truoc lenh dau tien; script ket thuc bang COMMIT + EXIT.
+--   * Chay lai nhieu lan an toan (idempotent): DDL kiem tra USER_TAB_COLUMNS / USER_TABLES /
+--     USER_CONSTRAINTS / USER_INDEXES / USER_SEQUENCES truoc khi tao; seed dung MERGE;
+--     procedure / trigger dung CREATE OR REPLACE.
+--   * Menu: MERGE ON (MENU_CODE) va ID = SEQ_SYS_MENUS.NEXTVAL - KHONG dung ID co dinh.
+--     Chuc nang: SEQ_SYS_FUNCTIONS.NEXTVAL; phan quyen: SEQ_SYS_ROLE_MENU_PERM.NEXTVAL.
+--   * ROLE_ADMIN duoc cap moi chuc nang cua menu do script nay tao; vai tro khac liet ke tuong minh.
+--   * File UTF-8 co dau tieng Viet: chay voi NLS_LANG=AMERICAN_AMERICA.AL32UTF8.
+--   * Thu tu chay: V14_1 -> V14_2 -> V14_3 (sau V13_3). Moi script doc lap, khong phu thuoc doi tuong
+--     cua script V14 khac.
+--
+--   sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V14_1__fin_billing.sql
+-- =============================================================================
+
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+SET DEFINE OFF
+SET SERVEROUTPUT ON SIZE UNLIMITED
+
+PROMPT ============ V14_1.1 FIN_TUITION_FEES.CANCEL_REASON ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*)
+      INTO V_COUNT
+      FROM USER_TAB_COLUMNS
+     WHERE TABLE_NAME = 'FIN_TUITION_FEES'
+       AND COLUMN_NAME = 'CANCEL_REASON';
+
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE 'ALTER TABLE FIN_TUITION_FEES ADD CANCEL_REASON VARCHAR2(255)';
+        DBMS_OUTPUT.PUT_LINE('FIN_TUITION_FEES.CANCEL_REASON: added');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('FIN_TUITION_FEES.CANCEL_REASON: already exists');
+    END IF;
+END;
+/
+
+COMMENT ON COLUMN FIN_TUITION_FEES.CANCEL_REASON IS 'Ly do huy khoan phi (STATUS = CANCELLED); auto: ... khi he thong tu huy';
+
+PROMPT ============ V14_1.2 Bang FIN_STUDENT_DISCOUNTS ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_SEQUENCES WHERE SEQUENCE_NAME = 'SEQ_FIN_STUDENT_DISCOUNTS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE 'CREATE SEQUENCE SEQ_FIN_STUDENT_DISCOUNTS START WITH 1 INCREMENT BY 1 NOCACHE NOCYCLE';
+        DBMS_OUTPUT.PUT_LINE('SEQ_FIN_STUDENT_DISCOUNTS: created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('SEQ_FIN_STUDENT_DISCOUNTS: already exists');
+    END IF;
+
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'FIN_STUDENT_DISCOUNTS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE FIN_STUDENT_DISCOUNTS (
+                ID              NUMBER(19)    NOT NULL,
+                STUDENT_ID      NUMBER(19)    NOT NULL,
+                CLASS_ID        NUMBER(19),
+                DISCOUNT_TYPE   VARCHAR2(20)  NOT NULL,
+                DISCOUNT_VALUE  NUMBER(15,2)  NOT NULL,
+                VALID_FROM      DATE          NOT NULL,
+                VALID_TO        DATE,
+                REASON          VARCHAR2(255),
+                IS_DELETED      NUMBER(1)     DEFAULT 0 NOT NULL,
+                CREATED_AT      TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP NOT NULL,
+                UPDATED_AT      TIMESTAMP(6)  DEFAULT CURRENT_TIMESTAMP,
+                CREATED_BY      VARCHAR2(50),
+                UPDATED_BY      VARCHAR2(50),
+                CONSTRAINT PK_FIN_STUDENT_DISCOUNTS PRIMARY KEY (ID),
+                CONSTRAINT FK_DISCOUNTS_STUDENT FOREIGN KEY (STUDENT_ID) REFERENCES EDU_STUDENTS (ID),
+                CONSTRAINT FK_DISCOUNTS_CLASS FOREIGN KEY (CLASS_ID) REFERENCES EDU_CLASSES (ID),
+                CONSTRAINT CK_DISCOUNTS_DELETED CHECK (IS_DELETED IN (0, 1)),
+                CONSTRAINT CK_DISCOUNTS_TYPE CHECK (DISCOUNT_TYPE IN ('PERCENT', 'AMOUNT')),
+                CONSTRAINT CK_DISCOUNTS_VALUE CHECK (DISCOUNT_VALUE > 0
+                    AND (DISCOUNT_TYPE <> 'PERCENT' OR DISCOUNT_VALUE <= 100)),
+                CONSTRAINT CK_DISCOUNTS_PERIOD CHECK (VALID_TO IS NULL OR VALID_TO >= VALID_FROM)
+            )
+        ]';
+        DBMS_OUTPUT.PUT_LINE('FIN_STUDENT_DISCOUNTS: created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('FIN_STUDENT_DISCOUNTS: already exists');
+    END IF;
+
+    SELECT COUNT(*) INTO V_COUNT FROM USER_INDEXES WHERE INDEX_NAME = 'IDX_DISCOUNTS_STUDENT';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE 'CREATE INDEX IDX_DISCOUNTS_STUDENT ON FIN_STUDENT_DISCOUNTS (STUDENT_ID, IS_DELETED)';
+        DBMS_OUTPUT.PUT_LINE('IDX_DISCOUNTS_STUDENT: created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('IDX_DISCOUNTS_STUDENT: already exists');
+    END IF;
+
+    SELECT COUNT(*) INTO V_COUNT FROM USER_INDEXES WHERE INDEX_NAME = 'IDX_DISCOUNTS_CLASS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE 'CREATE INDEX IDX_DISCOUNTS_CLASS ON FIN_STUDENT_DISCOUNTS (CLASS_ID)';
+        DBMS_OUTPUT.PUT_LINE('IDX_DISCOUNTS_CLASS: created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('IDX_DISCOUNTS_CLASS: already exists');
+    END IF;
+END;
+/
+
+COMMENT ON TABLE FIN_STUDENT_DISCOUNTS IS 'Mien giam / hoc bong cua hoc sinh; ap vao DISCOUNT_AMOUNT khi sinh phieu hoc phi thang';
+COMMENT ON COLUMN FIN_STUDENT_DISCOUNTS.CLASS_ID IS 'NULL = ap dung cho moi lop cua hoc sinh';
+COMMENT ON COLUMN FIN_STUDENT_DISCOUNTS.DISCOUNT_TYPE IS 'PERCENT = % tong tien phieu; AMOUNT = so tien giam moi phieu thang';
+COMMENT ON COLUMN FIN_STUDENT_DISCOUNTS.DISCOUNT_VALUE IS 'PERCENT: 0 < x <= 100; AMOUNT: so tien VND > 0';
+COMMENT ON COLUMN FIN_STUDENT_DISCOUNTS.VALID_FROM IS 'Ngay bat dau hieu luc (ap cho ky thu co giao voi khoang hieu luc)';
+COMMENT ON COLUMN FIN_STUDENT_DISCOUNTS.VALID_TO IS 'Ngay het hieu luc; NULL = khong thoi han';
+
+CREATE OR REPLACE TRIGGER TRG_FIN_STUDENT_DISCOUNTS_BI_ID
+BEFORE INSERT ON FIN_STUDENT_DISCOUNTS
+FOR EACH ROW
+BEGIN
+    IF :NEW.ID IS NULL THEN
+        SELECT SEQ_FIN_STUDENT_DISCOUNTS.NEXTVAL INTO :NEW.ID FROM DUAL;
+    END IF;
+END;
+/
+SHOW ERRORS TRIGGER TRG_FIN_STUDENT_DISCOUNTS_BI_ID
+
+PROMPT ============ V14_1.3 PRC_GET_TUITION_SLIP_DATA (PRESENT + LATE) ============
+
+CREATE OR REPLACE PROCEDURE PRC_GET_TUITION_SLIP_DATA(
+    P_INVOICE_ID        IN  NUMBER,
+    O_INFO_CURSOR       OUT SYS_REFCURSOR,
+    O_ATTENDANCE_CURSOR OUT SYS_REFCURSOR,
+    O_ERR_CODE          OUT VARCHAR2,
+    O_ERR_MSG           OUT VARCHAR2
+) AS
+    V_EXISTS NUMBER;
+    V_MONTH  NUMBER(2);
+    V_YEAR   NUMBER(4);
+    V_CLASS  NUMBER(19);
+    V_STUD   NUMBER(19);
+BEGIN
+    IF P_INVOICE_ID IS NULL THEN
+        O_ERR_CODE := 'FEE_ID_REQUIRED';
+        O_ERR_MSG  := 'Thieu ID khoan hoc phi.';
+        RETURN;
+    END IF;
+
+    SELECT COUNT(*)
+      INTO V_EXISTS
+      FROM FIN_TUITION_FEES
+     WHERE ID = P_INVOICE_ID
+       AND IS_DELETED = 0;
+
+    IF V_EXISTS = 0 THEN
+        O_ERR_CODE := 'FEE_NOT_FOUND';
+        O_ERR_MSG  := 'Khong tim thay khoan hoc phi ID: ' || P_INVOICE_ID;
+        RETURN;
+    END IF;
+
+    SELECT NVL(f.FEE_MONTH, EXTRACT(MONTH FROM NVL(f.DUE_DATE, f.CREATED_AT))),
+           NVL(f.FEE_YEAR,  EXTRACT(YEAR  FROM NVL(f.DUE_DATE, f.CREATED_AT))),
+           f.CLASS_ID,
+           f.STUDENT_ID
+      INTO V_MONTH, V_YEAR, V_CLASS, V_STUD
+      FROM FIN_TUITION_FEES f
+     WHERE f.ID = P_INVOICE_ID
+       AND f.IS_DELETED = 0;
+
+    OPEN O_INFO_CURSOR FOR
+        SELECT f.ID,
+               f.FEE_CODE,
+               V_MONTH AS FEE_MONTH,
+               V_YEAR  AS FEE_YEAR,
+               f.CLASS_ID,
+               c.CLASS_CODE,
+               c.CLASS_NAME,
+               f.STUDENT_ID,
+               s.STUDENT_CODE,
+               s.FULL_NAME AS STUDENT_NAME,
+               f.PRICE_PER_SESSION,
+               f.TOTAL_SESSIONS,
+               f.TOTAL_AMOUNT,
+               f.DISCOUNT_AMOUNT,
+               f.PAID_AMOUNT,
+               (f.TOTAL_AMOUNT - f.DISCOUNT_AMOUNT - f.PAID_AMOUNT) AS REMAINING_AMOUNT,
+               f.TEACHER_COMMENT,
+               f.FOOTER_WISH,
+               NVL(f.SLIP_LABEL, 'Mặc Định') AS SLIP_LABEL,
+               f.STATUS,
+               f.DUE_DATE
+          FROM FIN_TUITION_FEES f
+          JOIN EDU_STUDENTS s ON s.ID = f.STUDENT_ID
+          LEFT JOIN EDU_CLASSES c ON c.ID = f.CLASS_ID
+         WHERE f.ID = P_INVOICE_ID
+           AND f.IS_DELETED = 0;
+
+    -- B1: buoi tinh phi = PRESENT + LATE (DomainConstants.BILLABLE_ATTENDANCE_STATUSES).
+    OPEN O_ATTENDANCE_CURSOR FOR
+        SELECT a.ATTENDANCE_DATE
+          FROM EDU_ATTENDANCE a
+         WHERE a.IS_DELETED = 0
+           AND a.STATUS IN ('PRESENT', 'LATE')
+           AND a.STUDENT_ID = V_STUD
+           AND (V_CLASS IS NULL OR a.CLASS_ID = V_CLASS)
+           AND EXTRACT(MONTH FROM a.ATTENDANCE_DATE) = V_MONTH
+           AND EXTRACT(YEAR  FROM a.ATTENDANCE_DATE) = V_YEAR
+         ORDER BY a.ATTENDANCE_DATE ASC, a.ID ASC;
+
+    O_ERR_CODE := '0';
+    O_ERR_MSG  := 'SUCCESS';
+EXCEPTION
+    WHEN OTHERS THEN
+        IF O_INFO_CURSOR IS NOT NULL AND O_INFO_CURSOR%ISOPEN THEN CLOSE O_INFO_CURSOR; END IF;
+        IF O_ATTENDANCE_CURSOR IS NOT NULL AND O_ATTENDANCE_CURSOR%ISOPEN THEN CLOSE O_ATTENDANCE_CURSOR; END IF;
+        O_ERR_CODE := TO_CHAR(SQLCODE);
+        O_ERR_MSG  := SUBSTR(SQLERRM, 1, 255);
+END PRC_GET_TUITION_SLIP_DATA;
+/
+SHOW ERRORS PROCEDURE PRC_GET_TUITION_SLIP_DATA
+
+-- CREATE OR REPLACE loi bien dich chi bao Warning (khong kich hoat WHENEVER SQLERROR): kiem tra VALID tuong minh
+-- truoc khi seed menu / phan quyen.
+DECLARE
+    V_INVALID VARCHAR2(4000);
+BEGIN
+    FOR r IN (SELECT n.OBJECT_NAME, n.OBJECT_TYPE, NVL(o.STATUS, 'MISSING') STATUS
+                FROM (SELECT 'TRG_FIN_STUDENT_DISCOUNTS_BI_ID' OBJECT_NAME, 'TRIGGER' OBJECT_TYPE FROM DUAL UNION ALL
+                      SELECT 'PRC_GET_TUITION_SLIP_DATA', 'PROCEDURE' FROM DUAL) n
+                LEFT JOIN USER_OBJECTS o ON o.OBJECT_NAME = n.OBJECT_NAME AND o.OBJECT_TYPE = n.OBJECT_TYPE) LOOP
+        DBMS_OUTPUT.PUT_LINE('  ' || RPAD(r.OBJECT_NAME, 32) || r.STATUS);
+        IF r.STATUS <> 'VALID' THEN
+            V_INVALID := V_INVALID || ' ' || r.OBJECT_NAME;
+        END IF;
+    END LOOP;
+    IF V_INVALID IS NOT NULL THEN
+        RAISE_APPLICATION_ERROR(-20001, 'V14_1: doi tuong khong hop le:' || V_INVALID);
+    END IF;
+END;
+/
+
+PROMPT ============ V14_1.4 Menu MENU_FEE_DISCOUNT ============
+
+MERGE INTO SYS_MENUS t
+USING (
+    SELECT x.MENU_CODE, x.MENU_NAME, x.PATH, x.ICON, x.SORT_ORDER, p.ID PARENT_ID
+      FROM (
+            SELECT 'MENU_FEE_DISCOUNT' MENU_CODE, 'Miễn giảm học phí' MENU_NAME, '/finance/discounts' PATH,
+                   'percent' ICON, 4 SORT_ORDER FROM DUAL
+           ) x
+      JOIN SYS_MENUS p ON p.MENU_CODE = 'DIR_FINANCE'
+) s ON (t.MENU_CODE = s.MENU_CODE)
+WHEN MATCHED THEN UPDATE SET t.PARENT_ID = s.PARENT_ID, t.MENU_NAME = s.MENU_NAME, t.PATH = s.PATH,
+                             t.ICON = s.ICON, t.SORT_ORDER = s.SORT_ORDER, t.MENU_TYPE = 'MENU',
+                             t.IS_HIDDEN = 0, t.IS_DELETED = 0, t.STATUS = 'ACTIVE',
+                             t.UPDATED_AT = SYSTIMESTAMP, t.UPDATED_BY = 'V14_1_MIGRATION'
+WHEN NOT MATCHED THEN INSERT (ID, PARENT_ID, MENU_CODE, MENU_NAME, MENU_TYPE, PATH, ICON, SORT_ORDER,
+                              IS_HIDDEN, STATUS, IS_DELETED, CREATED_BY)
+                      VALUES (SEQ_SYS_MENUS.NEXTVAL, s.PARENT_ID, s.MENU_CODE, s.MENU_NAME, 'MENU', s.PATH, s.ICON,
+                              s.SORT_ORDER, 0, 'ACTIVE', 0, 'V14_1_MIGRATION');
+
+PROMPT ============ V14_1.5 Chuc nang ============
+
+MERGE INTO SYS_FUNCTIONS t
+USING (
+    SELECT m.ID AS MENU_ID, x.FUNCTION_CODE, x.FUNCTION_NAME
+      FROM SYS_MENUS m
+      JOIN (
+            SELECT 'MENU_FEE_DISCOUNT' MENU_CODE, 'VIEW' FUNCTION_CODE, 'Xem danh sách' FUNCTION_NAME FROM DUAL UNION ALL
+            SELECT 'MENU_FEE_DISCOUNT', 'CREATE', 'Thêm mới' FROM DUAL UNION ALL
+            SELECT 'MENU_FEE_DISCOUNT', 'UPDATE', 'Cập nhật' FROM DUAL UNION ALL
+            SELECT 'MENU_FEE_DISCOUNT', 'DELETE', 'Xóa' FROM DUAL UNION ALL
+            SELECT 'MENU_TUITION_FEE', 'CANCEL', 'Hủy khoản phí' FROM DUAL
+           ) x ON x.MENU_CODE = m.MENU_CODE
+     WHERE m.IS_DELETED = 0
+) s ON (t.MENU_ID = s.MENU_ID AND t.FUNCTION_CODE = s.FUNCTION_CODE)
+WHEN MATCHED THEN UPDATE SET t.FUNCTION_NAME = s.FUNCTION_NAME, t.IS_DELETED = 0
+WHEN NOT MATCHED THEN INSERT (ID, MENU_ID, FUNCTION_CODE, FUNCTION_NAME, IS_DELETED)
+                      VALUES (SEQ_SYS_FUNCTIONS.NEXTVAL, s.MENU_ID, s.FUNCTION_CODE, s.FUNCTION_NAME, 0);
+
+PROMPT ============ V14_1.6 Phan quyen ============
+
+-- ROLE_ADMIN: toan quyen tren cac menu cua script nay (sinh tu SYS_FUNCTIONS, khong liet ke tay).
+MERGE INTO SYS_ROLE_MENU_PERMISSIONS t
+USING (
+    SELECT r.ID AS ROLE_ID,
+           f.MENU_ID,
+           LISTAGG(f.FUNCTION_CODE, ',') WITHIN GROUP (ORDER BY f.ID) AS ALLOWED_FUNCTIONS
+      FROM SYS_FUNCTIONS f
+      JOIN SYS_MENUS m ON m.ID = f.MENU_ID AND m.IS_DELETED = 0
+                      AND m.MENU_CODE IN ('MENU_FEE_DISCOUNT', 'MENU_TUITION_FEE')
+      CROSS JOIN SYS_ROLES r
+     WHERE r.ROLE_CODE = 'ROLE_ADMIN'
+       AND f.IS_DELETED = 0
+     GROUP BY r.ID, f.MENU_ID
+) s ON (t.ROLE_ID = s.ROLE_ID AND t.MENU_ID = s.MENU_ID)
+WHEN MATCHED THEN UPDATE SET t.ALLOWED_FUNCTIONS = s.ALLOWED_FUNCTIONS, t.UPDATED_AT = SYSTIMESTAMP,
+                             t.UPDATED_BY = 'V14_1_MIGRATION'
+WHEN NOT MATCHED THEN INSERT (ID, ROLE_ID, MENU_ID, ALLOWED_FUNCTIONS, CREATED_BY)
+                      VALUES (SEQ_SYS_ROLE_MENU_PERM.NEXTVAL, s.ROLE_ID, s.MENU_ID, s.ALLOWED_FUNCTIONS, 'V14_1_MIGRATION');
+
+-- ROLE_ACCOUNTANT - menu moi MENU_FEE_DISCOUNT: liet ke tuong minh.
+MERGE INTO SYS_ROLE_MENU_PERMISSIONS t
+USING (
+    SELECT r.ID AS ROLE_ID, m.ID AS MENU_ID, 'VIEW,CREATE,UPDATE,DELETE' AS ALLOWED_FUNCTIONS
+      FROM SYS_ROLES r
+      JOIN SYS_MENUS m ON m.MENU_CODE = 'MENU_FEE_DISCOUNT' AND m.IS_DELETED = 0
+     WHERE r.ROLE_CODE = 'ROLE_ACCOUNTANT'
+) s ON (t.ROLE_ID = s.ROLE_ID AND t.MENU_ID = s.MENU_ID)
+WHEN MATCHED THEN UPDATE SET t.ALLOWED_FUNCTIONS = s.ALLOWED_FUNCTIONS, t.UPDATED_AT = SYSTIMESTAMP,
+                             t.UPDATED_BY = 'V14_1_MIGRATION'
+WHEN NOT MATCHED THEN INSERT (ID, ROLE_ID, MENU_ID, ALLOWED_FUNCTIONS, CREATED_BY)
+                      VALUES (SEQ_SYS_ROLE_MENU_PERM.NEXTVAL, s.ROLE_ID, s.MENU_ID, s.ALLOWED_FUNCTIONS, 'V14_1_MIGRATION');
+
+-- ROLE_ACCOUNTANT - MENU_TUITION_FEE: chi THEM CANCEL vao danh sach dang co (khong ghi de quyen admin da chinh,
+-- khong cap lai menu neu admin da go quyen). Chay lai: dieu kien INSTR bo qua dong da co CANCEL.
+MERGE INTO SYS_ROLE_MENU_PERMISSIONS t
+USING (
+    SELECT r.ID AS ROLE_ID, m.ID AS MENU_ID
+      FROM SYS_ROLES r
+      JOIN SYS_MENUS m ON m.MENU_CODE = 'MENU_TUITION_FEE' AND m.IS_DELETED = 0
+     WHERE r.ROLE_CODE = 'ROLE_ACCOUNTANT'
+) s ON (t.ROLE_ID = s.ROLE_ID AND t.MENU_ID = s.MENU_ID)
+WHEN MATCHED THEN UPDATE SET t.ALLOWED_FUNCTIONS = CASE
+                                 WHEN t.ALLOWED_FUNCTIONS IS NULL OR TRIM(t.ALLOWED_FUNCTIONS) IS NULL THEN 'CANCEL'
+                                 ELSE t.ALLOWED_FUNCTIONS || ',CANCEL'
+                             END,
+                             t.UPDATED_AT = SYSTIMESTAMP,
+                             t.UPDATED_BY = 'V14_1_MIGRATION'
+                      WHERE INSTR(',' || t.ALLOWED_FUNCTIONS || ',', ',CANCEL,') = 0;
+
+COMMIT;
+
+PROMPT ============ V14_1 DONE ============
+EXIT

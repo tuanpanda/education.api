@@ -18,6 +18,15 @@ public class FunctionCodes {
 
     public static final String VIEW = "VIEW";
 
+    /** Hủy khoản học phí (MENU_TUITION_FEE, Stream A / V14_1). */
+    public static final String CANCEL = "CANCEL";
+
+    /** Hủy (vô hiệu) một giao dịch ghi nhầm (MENU_PAYMENT_HISTORY, Stream B / V14_2). */
+    public static final String VOID = "VOID";
+
+    /** Hoàn tiền học phí (MENU_PAYMENT_HISTORY, Stream B / V14_2). */
+    public static final String REFUND = "REFUND";
+
     /** Chức năng chuẩn theo thứ tự hiển thị; mã khác xếp sau theo bảng chữ cái. */
     public static final List<String> STANDARD = List.of("VIEW", "CREATE", "UPDATE", "DELETE", "EXPORT", "IMPORT");
 
@@ -76,6 +85,9 @@ public class FunctionCodes {
         names.put("CONFIG_SCHEDULE", "Cấu hình lịch tuần");
         names.put("GENERATE_SESSIONS", "Sinh buổi học");
         names.put("CANCEL_SESSION", "Hủy buổi học");
+        names.put(CANCEL, "Hủy khoản phí");
+        names.put(VOID, "Hủy giao dịch");
+        names.put(REFUND, "Hoàn tiền");
         return Map.copyOf(names);
     }
 }

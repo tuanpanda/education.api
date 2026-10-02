@@ -4,7 +4,7 @@ import lombok.experimental.UtilityClass;
 
 /**
  * Mã quyền dạng {@code MENU_CODE:FUNCTION_CODE}, khớp dữ liệu {@code SYS_MENUS} + {@code SYS_FUNCTIONS}
- * (xem các migration V1, V6, V8, V11, V12).
+ * (xem các migration V1, V6, V8, V11, V12, V14_x).
  * <p>
  * Dùng làm giá trị cho {@link RequirePermission}. Khi thêm menu/chức năng mới trong Database, khai báo
  * hằng số tương ứng tại đây rồi gắn lên Controller.
@@ -71,6 +71,33 @@ public class Permissions {
     public static final String PAYMENT_HISTORY_CREATE = "MENU_PAYMENT_HISTORY:CREATE";
     public static final String PAYMENT_HISTORY_APPROVE = "MENU_PAYMENT_HISTORY:APPROVE";
 
+    // ---- Tài chính - Stream A: tính phí, khoản học phí, miễn giảm (feat/fin-billing, V14_1) ---------
+    // Chỉ Stream A sửa khối này. MENU_TUITION_FEE:DELETE đã seed từ V1; CANCEL và MENU_FEE_DISCOUNT do V14_1 seed.
+    public static final String TUITION_FEE_DELETE = "MENU_TUITION_FEE:DELETE";
+    public static final String TUITION_FEE_CANCEL = "MENU_TUITION_FEE:CANCEL";
+
+    public static final String FEE_DISCOUNT_VIEW = "MENU_FEE_DISCOUNT:VIEW";
+    public static final String FEE_DISCOUNT_CREATE = "MENU_FEE_DISCOUNT:CREATE";
+    public static final String FEE_DISCOUNT_UPDATE = "MENU_FEE_DISCOUNT:UPDATE";
+    public static final String FEE_DISCOUNT_DELETE = "MENU_FEE_DISCOUNT:DELETE";
+
+    // ---- Tài chính - Stream B: giao dịch, phiếu thu, hủy / hoàn tiền (feat/fin-payments, V14_2) -------
+    // Chỉ Stream B sửa khối này. VOID / REFUND trên MENU_PAYMENT_HISTORY do V14_2 seed.
+    public static final String PAYMENT_HISTORY_VOID = "MENU_PAYMENT_HISTORY:VOID";
+    public static final String PAYMENT_HISTORY_REFUND = "MENU_PAYMENT_HISTORY:REFUND";
+
+    // ---- Tài chính - Stream C: báo cáo, dashboard, xuất Excel (feat/fin-reports, V14_3) ---------------
+    // Chỉ Stream C sửa khối này. EXPORT trên MENU_TUITION_FEE / MENU_PAYMENT_HISTORY / MENU_DASHBOARD đã seed từ V1;
+    // MENU_FINANCE_DASHBOARD và MENU_FINANCE_REPORT do V14_3 seed.
+    public static final String TUITION_FEE_EXPORT = "MENU_TUITION_FEE:EXPORT";
+    public static final String PAYMENT_HISTORY_EXPORT = "MENU_PAYMENT_HISTORY:EXPORT";
+    public static final String DASHBOARD_EXPORT = "MENU_DASHBOARD:EXPORT";
+
+    public static final String FINANCE_DASHBOARD_VIEW = "MENU_FINANCE_DASHBOARD:VIEW";
+    public static final String FINANCE_REPORT_VIEW = "MENU_FINANCE_REPORT:VIEW";
+    public static final String FINANCE_REPORT_EXPORT = "MENU_FINANCE_REPORT:EXPORT";
+
+    // ---- Tài chính: cấu hình STK (không thuộc stream nào) ---------------------------------------------
     public static final String BANK_ACCOUNT_VIEW = "MENU_BANK_ACCOUNT:VIEW";
     public static final String BANK_ACCOUNT_CREATE = "MENU_BANK_ACCOUNT:CREATE";
     public static final String BANK_ACCOUNT_UPDATE = "MENU_BANK_ACCOUNT:UPDATE";

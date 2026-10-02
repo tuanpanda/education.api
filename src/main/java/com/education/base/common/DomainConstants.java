@@ -28,10 +28,16 @@ public class DomainConstants {
     /** Trạng thái điểm danh - {@code CK_ATTENDANCE_STATUS}. */
     public static final String ATTENDANCE_STATUS_PATTERN = "PRESENT|ABSENT|LATE|EXCUSED";
 
-    /** Chỉ buổi {@code PRESENT} mới được tính vào phiếu học phí. */
+    /**
+     * Có mặt. Buổi {@code PRESENT} được tính phí khi sinh phiếu học phí tháng
+     * (xem {@link #BILLABLE_ATTENDANCE_STATUSES}).
+     */
     public static final String ATTENDANCE_PRESENT = "PRESENT";
 
-    /** Đi trễ vẫn được tính là có mặt khi thống kê buổi học. */
+    /**
+     * Đi trễ: vẫn được tính là có mặt khi thống kê buổi học, và vẫn được tính phí như {@code PRESENT}
+     * (xem {@link #BILLABLE_ATTENDANCE_STATUSES}).
+     */
     public static final String ATTENDANCE_LATE = "LATE";
 
     /** Nhãn mặc định trên phiếu học phí điện tử. */
@@ -51,6 +57,19 @@ public class DomainConstants {
 
     /** Trạng thái khoản học phí - {@code CK_FEES_STATUS}. */
     public static final String FEE_STATUS_PATTERN = "UNPAID|PARTIAL|PAID|OVERDUE|CANCELLED";
+
+    // ---- Tài chính: dùng chung (Stream 0) ------------------------------------
+    // Giá trị lẻ của CK_FEES_STATUS; FeeStatusCalculator là nơi DUY NHẤT suy ra trạng thái từ số tiền.
+
+    public static final String FEE_STATUS_UNPAID = "UNPAID";
+
+    public static final String FEE_STATUS_PARTIAL = "PARTIAL";
+
+    public static final String FEE_STATUS_PAID = "PAID";
+
+    public static final String FEE_STATUS_OVERDUE = "OVERDUE";
+
+    public static final String FEE_STATUS_CANCELLED = "CANCELLED";
 
     /** Hình thức thanh toán - {@code CK_TRANS_METHOD}. */
     public static final String PAYMENT_METHOD_PATTERN = "CASH|BANK_TRANSFER|VIETQR|CARD|EWALLET";
@@ -122,6 +141,95 @@ public class DomainConstants {
     public static final String MENU_TYPE_DIR = "DIR";
 
     public static final String MENU_TYPE_MENU = "MENU";
+
+    // ---- Tài chính - Stream A: tính phí, khoản học phí, miễn giảm (feat/fin-billing) ----------------
+    // Chỉ Stream A thêm hằng số vào khối này (ví dụ FEE_TYPE_PATTERN, DISCOUNT_TYPE_PATTERN).
+
+    /**
+     * Trạng thái điểm danh được tính phí khi sinh phiếu học phí tháng ({@code PRESENT} + {@code LATE}).
+     * {@code PRC_GET_TUITION_SLIP_DATA} (V14_1) dùng cùng quy tắc cho danh sách ngày đi học trên phiếu.
+     */
+    public static final java.util.List<String> BILLABLE_ATTENDANCE_STATUSES =
+            java.util.List.of(ATTENDANCE_PRESENT, ATTENDANCE_LATE);
+
+    /**
+     * Sinh bù phiếu cho tháng đã qua: nếu hạn thu mặc định (ngày cuối tháng) đã trước hôm nay thì hạn thu
+     * = hôm nay + số ngày này, để phiếu không bị {@code OVERDUE} ngay khi vừa tạo.
+     */
+    public static final int FEE_BACKBILL_GRACE_DAYS = 7;
+
+    /** Ghi chú / lý do khi hệ thống tự hủy khoản phí tháng không còn buổi tính phí (chưa thu đồng nào). */
+    public static final String FEE_AUTO_CANCEL_NO_SESSION_NOTE = "auto: không còn buổi tính phí";
+
+    /** Tiền tố lý do hủy do hệ thống tự sinh (phân biệt với hủy thủ công). */
+    public static final String FEE_AUTO_CANCEL_PREFIX = "auto:";
+
+    /** Loại miễn giảm - {@code CK_DISCOUNTS_TYPE} ({@code FIN_STUDENT_DISCOUNTS}, V14_1). */
+    public static final String DISCOUNT_TYPE_PATTERN = "PERCENT|AMOUNT";
+
+    /** Giảm theo % tổng tiền phiếu ({@code 0 < giá trị <= 100}). */
+    public static final String DISCOUNT_TYPE_PERCENT = "PERCENT";
+
+    /** Giảm một số tiền cố định cho mỗi phiếu tháng. */
+    public static final String DISCOUNT_TYPE_AMOUNT = "AMOUNT";
+
+    // ---- Tài chính - Stream B: giao dịch, phiếu thu, hủy / hoàn tiền (feat/fin-payments) -------------
+    // Chỉ Stream B thêm hằng số vào khối này (ví dụ TRANSACTION_TYPE_PATTERN).
+
+    /** Loại giao dịch - {@code CK_TRANS_TYPE} (V14_2). Hoàn tiền là số dương với loại {@code REFUND}. */
+    public static final String TRANSACTION_TYPE_PATTERN = "PAYMENT|REFUND";
+
+    public static final String TRANSACTION_TYPE_PAYMENT = "PAYMENT";
+
+    public static final String TRANSACTION_TYPE_REFUND = "REFUND";
+
+    /** Trạng thái giao dịch sau V14_2 ({@code CK_TRANS_STATUS} thêm {@code VOIDED}), dùng cho bộ lọc tra cứu. */
+    public static final String TRANSACTION_STATUS_FILTER_PATTERN = "PENDING|SUCCESS|FAILED|REFUNDED|VOIDED";
+
+    public static final String TRANSACTION_STATUS_SUCCESS = "SUCCESS";
+
+    /** Giao dịch thu đã bị hủy (void): không còn tính vào {@code PAID_AMOUNT}. */
+    public static final String TRANSACTION_STATUS_VOIDED = "VOIDED";
+
+    /** Giao dịch thu đã được hoàn tiền toàn bộ (vẫn tính vào tổng thu, bù trừ bởi các dòng REFUND). */
+    public static final String TRANSACTION_STATUS_REFUNDED = "REFUNDED";
+
+    /** {@code SYS_CODE_RULES.RULE_CODE} của số phiếu thu / phiếu chi (V14_2): PT{YYYY}{MM}{SEQ}. */
+    public static final String RECEIPT_RULE_CODE = "RECEIPT";
+
+    // ---- Tài chính - Stream C: báo cáo, dashboard, xuất Excel (feat/fin-reports) ----------------------
+    // Chỉ Stream C thêm hằng số vào khối này (ví dụ DEBT_AGING_BUCKETS).
+
+    /** Nhóm tuổi nợ của {@code PRC_RPT_DEBT_AGING}: chưa tới hạn (hoặc không có hạn thu). */
+    public static final String DEBT_AGING_NOT_DUE = "NOT_DUE";
+
+    /** Quá hạn 1-30 ngày. */
+    public static final String DEBT_AGING_D0_30 = "D0_30";
+
+    /** Quá hạn 31-60 ngày. */
+    public static final String DEBT_AGING_D31_60 = "D31_60";
+
+    /** Quá hạn 61-90 ngày. */
+    public static final String DEBT_AGING_D61_90 = "D61_90";
+
+    /** Quá hạn trên 90 ngày. */
+    public static final String DEBT_AGING_D90_PLUS = "D90_PLUS";
+
+    /** Thứ tự các nhóm tuổi nợ (cột trên báo cáo / file Excel). */
+    public static final java.util.List<String> DEBT_AGING_BUCKETS = java.util.List.of(
+            DEBT_AGING_NOT_DUE, DEBT_AGING_D0_30, DEBT_AGING_D31_60, DEBT_AGING_D61_90, DEBT_AGING_D90_PLUS);
+
+    /** Loại dòng trong sổ công nợ học sinh ({@code PRC_RPT_STUDENT_LEDGER.ENTRY_TYPE}): khoản phí (ghi nợ). */
+    public static final String LEDGER_ENTRY_FEE = "FEE";
+
+    /** Loại dòng trong sổ công nợ học sinh: giao dịch thanh toán (ghi có). */
+    public static final String LEDGER_ENTRY_PAYMENT = "PAYMENT";
+
+    /** Loại dòng trong sổ công nợ học sinh: hoàn tiền (ghi nợ - tiền trả lại làm tăng số còn nợ). */
+    public static final String LEDGER_ENTRY_REFUND = "REFUND";
+
+    /** Số dòng tối đa của một file Excel xuất danh sách (khoản phí / giao dịch); vượt quá thì yêu cầu thu hẹp bộ lọc. */
+    public static final int FINANCE_EXPORT_MAX_ROWS = 20_000;
 
     /** Tên module dùng khi lưu file đính kèm theo từng phân hệ. */
     @UtilityClass

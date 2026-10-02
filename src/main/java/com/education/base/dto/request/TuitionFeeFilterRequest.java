@@ -35,6 +35,11 @@ public class TuitionFeeFilterRequest {
 
     private Long studentId;
 
+    /** Lọc theo trạng thái học sinh ({@code EDU_STUDENTS.STATUS}); bỏ trống = mọi trạng thái (B8). */
+    @Pattern(regexp = DomainConstants.STUDENT_STATUS_PATTERN,
+            message = "Trạng thái học sinh chỉ nhận: ACTIVE, INACTIVE, GRADUATED, SUSPENDED")
+    private String studentStatus;
+
     private Long classId;
 
     /** Lọc theo khoảng hạn thu. */

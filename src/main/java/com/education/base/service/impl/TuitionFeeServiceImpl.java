@@ -1,20 +1,22 @@
 package com.education.base.service.impl;
 
 import com.education.base.common.DomainConstants;
+import com.education.base.common.FeeStatusCalculator;
 import com.education.base.common.PersistenceFlags;
 import com.education.base.common.VietQrHelper;
 import com.education.base.dto.response.BankAccountResponseDto;
 import com.education.base.dto.request.ConfirmPaymentRequest;
+import com.education.base.dto.request.TuitionFeeCancelRequest;
 import com.education.base.dto.request.TuitionFeeCreateRequest;
 import com.education.base.dto.request.TuitionFeeFilterRequest;
+import com.education.base.dto.request.TuitionFeeUpdateRequest;
 import com.education.base.dto.request.TuitionQrRequest;
 import com.education.base.dto.response.PageResponse;
 import com.education.base.dto.response.PaymentTransactionDto;
 import com.education.base.dto.response.TuitionFeeDetailResponse;
-import com.education.base.dto.response.TuitionFeeReportDto;
+import com.education.base.dto.response.TuitionFeeListItemDto;
 import com.education.base.dto.response.TuitionQrResponseDto;
 import com.education.base.entity.ClassEntity;
-import com.education.base.entity.PaymentTransactionEntity;
 import com.education.base.entity.StudentEntity;
 import com.education.base.entity.TuitionFeeEntity;
 import com.education.base.exception.OracleBusinessException;
@@ -25,26 +27,25 @@ import com.education.base.repository.PaymentTransactionRepository;
 import com.education.base.repository.StudentRepository;
 import com.education.base.repository.TuitionFeeRepository;
 import com.education.base.repository.spec.TuitionFeeSpecifications;
+import com.education.base.security.SecurityUtils;
 import com.education.base.service.BankAccountService;
 import com.education.base.service.FileStorageService;
+import com.education.base.service.PaymentService;
 import com.education.base.service.TuitionFeeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
@@ -57,12 +58,6 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
 
     private static final int QR_SIZE = 512;
 
-    /** Unique index trên {@code FIN_PAYMENT_TRANSACTIONS(BANK_REFERENCE_NO)} (migration V13_3). */
-    static final String UQ_BANK_REFERENCE_INDEX = "UQ_FIN_TRANS_BANK_REF";
-
-    /** Unique constraint trên {@code FIN_PAYMENT_TRANSACTIONS(TRANSACTION_CODE)} (V1). */
-    static final String UQ_TRANSACTION_CODE = "UQ_FIN_TRANS_CODE";
-
     private final TuitionFeeRepository tuitionFeeRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final StudentRepository studentRepository;
@@ -71,10 +66,11 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
     private final FileMapper fileMapper;
     private final FinanceAcademicMapper financeAcademicMapper;
     private final BankAccountService bankAccountService;
+    private final PaymentService paymentService;
 
     @Override
     @Transactional(readOnly = true)
-    public PageResponse<TuitionFeeReportDto> search(TuitionFeeFilterRequest filter) {
+    public PageResponse<TuitionFeeListItemDto> search(TuitionFeeFilterRequest filter) {
         TuitionFeeFilterRequest criteria = filter == null ? new TuitionFeeFilterRequest() : filter;
         Page<TuitionFeeEntity> page = tuitionFeeRepository.findAll(
                 TuitionFeeSpecifications.fromFilter(criteria),
@@ -83,7 +79,7 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
         List<TuitionFeeEntity> fees = page.getContent();
         Map<Long, StudentEntity> students = loadStudents(fees);
         Map<Long, ClassEntity> classes = loadClasses(fees);
-        List<TuitionFeeReportDto> content = new ArrayList<>(fees.size());
+        List<TuitionFeeListItemDto> content = new ArrayList<>(fees.size());
         for (TuitionFeeEntity entity : fees) {
             content.add(toReport(entity, students, classes));
         }
@@ -93,8 +89,16 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
     @Override
     @Transactional(readOnly = true)
     public TuitionFeeDetailResponse getDetail(Long id) {
-        requireActiveFee(id);
+        TuitionFeeEntity fee = requireActiveFee(id);
         TuitionFeeDetailResponse detail = tuitionFeeRepository.getFeeDetail(id);
+        // Cùng quy tắc với danh sách / phiếu thu / QR: còn phải thu không âm.
+        detail.setRemainingAmount(FeeStatusCalculator.remaining(
+                detail.getTotalAmount(), detail.getDiscountAmount(), detail.getPaidAmount()));
+        detail.setCancelReason(fee.getCancelReason());
+        if (fee.getStudentId() != null) {
+            studentRepository.findById(fee.getStudentId())
+                    .ifPresent(student -> detail.setStudentStatus(student.getStatus()));
+        }
         detail.setAttachments(fileMapper.toDtoList(
                 fileStorageService.getFilesByRef(DomainConstants.Module.TUITION, id)));
         return detail;
@@ -103,8 +107,8 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public TuitionFeeDetailResponse create(TuitionFeeCreateRequest request) {
-        String feeCode = request.getFeeCode().trim();
-        if (tuitionFeeRepository.existsByFeeCode(feeCode)) {
+        String feeCode = blankToNull(request.getFeeCode());
+        if (feeCode != null && tuitionFeeRepository.existsByFeeCode(feeCode)) {
             throw new OracleBusinessException("FEE_CODE_DUPLICATED",
                     "Mã khoản học phí '" + feeCode + "' đã tồn tại.");
         }
@@ -119,21 +123,102 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
         }
 
         TuitionFeeEntity entity = financeAcademicMapper.toFeeEntity(request);
-        entity.setFeeCode(feeCode);
+        // Mã bỏ trống: sinh theo quy luật TUITION (cùng hàm FN_NEXT_BIZ_CODE mà trigger V10 dùng).
+        entity.setFeeCode(feeCode != null ? feeCode : tuitionFeeRepository.nextTuitionFeeCode());
+        entity.setNote(blankToNull(request.getNote()));
+        entity.setCreatedBy(SecurityUtils.currentUsername());
         entity.setDiscountAmount(discount);
         entity.setPaidAmount(BigDecimal.ZERO);
         entity.setIsDeleted(PersistenceFlags.NOT_DELETED);
-        entity.setStatus(resolveFeeStatus(entity.getTotalAmount(), discount, BigDecimal.ZERO, entity.getDueDate()));
+        entity.setStatus(FeeStatusCalculator.resolveFeeStatus(entity.getTotalAmount(), discount, BigDecimal.ZERO, entity.getDueDate()));
         TuitionFeeEntity saved = tuitionFeeRepository.saveAndFlush(entity);
         log.info("Đã tạo khoản học phí id={}, feeCode={}", saved.getId(), saved.getFeeCode());
         return getDetail(saved.getId());
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TuitionFeeDetailResponse update(Long id, TuitionFeeUpdateRequest request) {
+        if (request == null || request.getTotalAmount() == null) {
+            throw new OracleBusinessException("FEE_TOTAL_REQUIRED", "Tổng số tiền không được để trống.");
+        }
+        TuitionFeeEntity fee = lockActiveFee(id);
+        if (DomainConstants.FEE_STATUS_CANCELLED.equals(fee.getStatus())) {
+            throw new OracleBusinessException("FEE_CANCELLED",
+                    "Khoản học phí " + fee.getFeeCode() + " đã bị hủy, không sửa được.");
+        }
+        BigDecimal total = request.getTotalAmount();
+        BigDecimal discount = nvl(request.getDiscountAmount());
+        if (discount.compareTo(total) > 0) {
+            throw new OracleBusinessException("INVALID_DISCOUNT",
+                    "Số tiền giảm không được lớn hơn tổng số tiền.");
+        }
+        BigDecimal paid = nvl(fee.getPaidAmount());
+        if (total.subtract(discount).compareTo(paid) < 0) {
+            throw new OracleBusinessException("FEE_TOTAL_BELOW_PAID",
+                    "Tổng tiền sau giảm (" + total.subtract(discount).toPlainString()
+                            + ") không được nhỏ hơn số đã thu (" + paid.toPlainString()
+                            + "). Hãy hoàn tiền trước khi giảm khoản phí.");
+        }
+        fee.setTotalAmount(total);
+        fee.setDiscountAmount(discount);
+        fee.setDueDate(request.getDueDate());
+        fee.setNote(blankToNull(request.getNote()));
+        fee.setStatus(FeeStatusCalculator.resolveFeeStatus(total, discount, paid, fee.getDueDate()));
+        fee.setUpdatedBy(SecurityUtils.currentUsername());
+        tuitionFeeRepository.saveAndFlush(fee);
+        log.info("Đã cập nhật khoản học phí id={}, status={}", fee.getId(), fee.getStatus());
+        return getDetail(fee.getId());
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TuitionFeeDetailResponse cancel(Long id, TuitionFeeCancelRequest request) {
+        String reason = request == null ? null : blankToNull(request.getReason());
+        if (reason == null) {
+            throw new OracleBusinessException("CANCEL_REASON_REQUIRED", "Lý do hủy không được để trống.");
+        }
+        TuitionFeeEntity fee = lockActiveFee(id);
+        if (DomainConstants.FEE_STATUS_CANCELLED.equals(fee.getStatus())) {
+            throw new OracleBusinessException("FEE_CANCELLED",
+                    "Khoản học phí " + fee.getFeeCode() + " đã bị hủy.");
+        }
+        if (nvl(fee.getPaidAmount()).signum() > 0) {
+            throw new OracleBusinessException("FEE_HAS_PAYMENTS",
+                    "Khoản học phí " + fee.getFeeCode() + " đã thu " + nvl(fee.getPaidAmount()).toPlainString()
+                            + ". Hãy hoàn tiền các giao dịch trước khi hủy.");
+        }
+        fee.setStatus(DomainConstants.FEE_STATUS_CANCELLED);
+        fee.setCancelReason(reason);
+        fee.setUpdatedBy(SecurityUtils.currentUsername());
+        tuitionFeeRepository.saveAndFlush(fee);
+        log.info("Đã hủy khoản học phí id={}, lý do={}", fee.getId(), reason);
+        return getDetail(fee.getId());
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void delete(Long id) {
+        TuitionFeeEntity fee = lockActiveFee(id);
+        boolean unpaid = DomainConstants.FEE_STATUS_UNPAID.equals(fee.getStatus())
+                && nvl(fee.getPaidAmount()).signum() == 0;
+        if (!unpaid || !paymentTransactionRepository
+                .findByTuitionFeeIdAndIsDeleted(fee.getId(), PersistenceFlags.NOT_DELETED).isEmpty()) {
+            throw new OracleBusinessException("FEE_NOT_DELETABLE",
+                    "Chỉ xóa được khoản học phí chưa thu (UNPAID) và chưa có giao dịch. "
+                            + "Khoản đã quá hạn / đã thu hãy dùng chức năng Hủy hoặc hoàn tiền.");
+        }
+        fee.setIsDeleted(PersistenceFlags.DELETED);
+        fee.setUpdatedBy(SecurityUtils.currentUsername());
+        tuitionFeeRepository.saveAndFlush(fee);
+        log.info("Đã xóa mềm khoản học phí id={}, feeCode={}", fee.getId(), fee.getFeeCode());
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public TuitionQrResponseDto createQr(Long id, TuitionQrRequest request) {
         TuitionFeeEntity fee = requirePayableFee(id);
-        BigDecimal remaining = remainingOf(fee);
+        BigDecimal remaining = FeeStatusCalculator.remainingOf(fee);
         long amountVnd = remaining.setScale(0, RoundingMode.HALF_UP).longValue();
         if (amountVnd <= 0) {
             throw new OracleBusinessException("FEE_ALREADY_PAID",
@@ -167,63 +252,7 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public PaymentTransactionDto confirmPayment(Long id, ConfirmPaymentRequest request) {
-        ConfirmPaymentRequest payload = request == null ? new ConfirmPaymentRequest() : request;
-        TuitionFeeEntity fee = requirePayable(lockActiveFee(id));
-        BigDecimal remaining = remainingOf(fee);
-        BigDecimal amount = payload.getAmount() == null ? remaining : payload.getAmount();
-        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new OracleBusinessException("INVALID_PAYMENT_AMOUNT", "Số tiền thanh toán phải lớn hơn 0.");
-        }
-        if (amount.compareTo(remaining) > 0) {
-            throw new OracleBusinessException("PAYMENT_EXCEEDS_REMAINING",
-                    "Số tiền thanh toán vượt quá số còn phải thu (" + remaining + ").");
-        }
-
-        String transactionCode = payload.getTransactionCode();
-        if (transactionCode == null || transactionCode.isBlank()) {
-            transactionCode = "PAY" + fee.getId() + System.currentTimeMillis();
-        } else {
-            transactionCode = transactionCode.trim();
-            if (paymentTransactionRepository.existsByTransactionCode(transactionCode)) {
-                throw new OracleBusinessException("TRANSACTION_CODE_DUPLICATED",
-                        "Mã giao dịch '" + transactionCode + "' đã tồn tại.");
-            }
-        }
-
-        String bankRef = blankToNull(payload.getBankReferenceNo());
-        if (bankRef != null && paymentTransactionRepository.existsByBankReferenceNo(bankRef)) {
-            throw bankReferenceDuplicated(bankRef);
-        }
-
-        String method = firstNonBlank(payload.getPaymentMethod(), "VIETQR");
-        BankAccountResponseDto account = bankAccountService.requireActive();
-        PaymentTransactionEntity transaction;
-        try {
-            // saveAndFlush: vi phạm unique index (request đồng thời trên khoản phí khác) lộ ra ngay tại đây.
-            transaction = paymentTransactionRepository.saveAndFlush(PaymentTransactionEntity.builder()
-                    .transactionCode(transactionCode)
-                    .tuitionFeeId(fee.getId())
-                    .amount(amount)
-                    .paymentMethod(method.toUpperCase(Locale.ROOT))
-                    .bankBin(account.getBankBin())
-                    .accountNo(account.getAccountNo())
-                    .bankReferenceNo(bankRef)
-                    .status("SUCCESS")
-                    .note(payload.getNote())
-                    .isDeleted(PersistenceFlags.NOT_DELETED)
-                    .build());
-        } catch (DataIntegrityViolationException e) {
-            throw translatePaymentConstraint(e, bankRef, transactionCode);
-        }
-
-        BigDecimal newPaid = nvl(fee.getPaidAmount()).add(amount);
-        fee.setPaidAmount(newPaid);
-        fee.setStatus(resolveFeeStatus(fee.getTotalAmount(), fee.getDiscountAmount(), newPaid, fee.getDueDate()));
-        tuitionFeeRepository.save(fee);
-
-        log.info("Đã xác nhận thanh toán {} cho khoản học phí id={}, status={}",
-                amount, fee.getId(), fee.getStatus());
-        return financeAcademicMapper.toPaymentDto(transaction);
+        return paymentService.confirmPayment(id, request);
     }
 
     private TuitionFeeEntity requireActiveFee(Long id) {
@@ -245,29 +274,10 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
                     .orElseThrow(() -> new OracleBusinessException(
                             "FEE_NOT_FOUND", "Không tìm thấy khoản học phí với ID: " + id));
         } catch (PessimisticLockingFailureException e) {
-            log.warn("Không khóa được khoản học phí id={} để ghi nhận thanh toán: {}", id, e.getMessage());
+            log.warn("Không khóa được khoản học phí id={}: {}", id, e.getMessage());
             throw new OracleBusinessException("FEE_LOCKED",
                     "Khoản học phí đang được xử lý bởi một giao dịch khác. Vui lòng thử lại sau ít phút.", e);
         }
-    }
-
-    private static OracleBusinessException bankReferenceDuplicated(String bankRef) {
-        return new OracleBusinessException("BANK_REFERENCE_DUPLICATED",
-                "Mã tham chiếu ngân hàng '" + bankRef + "' đã được ghi nhận cho một giao dịch khác. "
-                        + "Vui lòng kiểm tra lại, mỗi giao dịch ngân hàng chỉ được xác nhận một lần.");
-    }
-
-    private static RuntimeException translatePaymentConstraint(DataIntegrityViolationException e,
-                                                               String bankRef, String transactionCode) {
-        String detail = String.valueOf(e.getMostSpecificCause().getMessage()).toUpperCase(Locale.ROOT);
-        if (bankRef != null && detail.contains(UQ_BANK_REFERENCE_INDEX)) {
-            return bankReferenceDuplicated(bankRef);
-        }
-        if (detail.contains(UQ_TRANSACTION_CODE)) {
-            return new OracleBusinessException("TRANSACTION_CODE_DUPLICATED",
-                    "Mã giao dịch '" + transactionCode + "' đã tồn tại.", e);
-        }
-        return e;
     }
 
     private TuitionFeeEntity requirePayableFee(Long id) {
@@ -279,7 +289,7 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
             throw new OracleBusinessException("FEE_CANCELLED",
                     "Khoản học phí " + fee.getFeeCode() + " đã bị hủy.");
         }
-        if ("PAID".equals(fee.getStatus()) || remainingOf(fee).compareTo(BigDecimal.ZERO) <= 0) {
+        if ("PAID".equals(fee.getStatus()) || FeeStatusCalculator.remainingOf(fee).compareTo(BigDecimal.ZERO) <= 0) {
             throw new OracleBusinessException("FEE_ALREADY_PAID",
                     "Khoản học phí " + fee.getFeeCode() + " đã thu đủ.");
         }
@@ -321,14 +331,15 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
                 .collect(Collectors.toMap(ClassEntity::getId, Function.identity(), (a, b) -> a));
     }
 
-    private TuitionFeeReportDto toReport(TuitionFeeEntity entity, Map<Long, StudentEntity> students,
-                                         Map<Long, ClassEntity> classes) {
-        TuitionFeeReportDto dto = financeAcademicMapper.toFeeReport(entity);
-        dto.setRemainingAmount(remainingOf(entity));
+    private TuitionFeeListItemDto toReport(TuitionFeeEntity entity, Map<Long, StudentEntity> students,
+                                           Map<Long, ClassEntity> classes) {
+        TuitionFeeListItemDto dto = financeAcademicMapper.toFeeListItem(entity);
+        dto.setRemainingAmount(FeeStatusCalculator.remainingOf(entity));
         StudentEntity student = entity.getStudentId() == null ? null : students.get(entity.getStudentId());
         if (student != null) {
             dto.setStudentCode(student.getStudentCode());
             dto.setStudentName(student.getFullName());
+            dto.setStudentStatus(student.getStatus());
         }
         ClassEntity clazz = entity.getClassId() == null ? null : classes.get(entity.getClassId());
         if (clazz != null) {
@@ -336,25 +347,6 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
             dto.setClassName(clazz.getClassName());
         }
         return dto;
-    }
-
-    static BigDecimal remainingOf(TuitionFeeEntity fee) {
-        BigDecimal remaining = nvl(fee.getTotalAmount())
-                .subtract(nvl(fee.getDiscountAmount()))
-                .subtract(nvl(fee.getPaidAmount()));
-        return remaining.compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO : remaining;
-    }
-
-    static String resolveFeeStatus(BigDecimal total, BigDecimal discount, BigDecimal paid, LocalDate dueDate) {
-        BigDecimal remaining = nvl(total).subtract(nvl(discount)).subtract(nvl(paid));
-        if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
-            return "PAID";
-        }
-        boolean overdue = dueDate != null && dueDate.isBefore(LocalDate.now());
-        if (nvl(paid).compareTo(BigDecimal.ZERO) > 0) {
-            return overdue ? "OVERDUE" : "PARTIAL";
-        }
-        return overdue ? "OVERDUE" : "UNPAID";
     }
 
     private static BigDecimal nvl(BigDecimal value) {

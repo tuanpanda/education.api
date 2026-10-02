@@ -36,4 +36,8 @@ public class ConfirmPaymentRequest {
 
     @Size(max = 255, message = "Ghi chú không được vượt quá 255 ký tự")
     private String note;
+
+    /** Người nộp tiền (in trên phiếu thu). Bỏ trống thì lấy tên phụ huynh, nếu không có thì tên học sinh. */
+    @Size(max = 150, message = "Tên người nộp không được vượt quá 150 ký tự")
+    private String payerName;
 }

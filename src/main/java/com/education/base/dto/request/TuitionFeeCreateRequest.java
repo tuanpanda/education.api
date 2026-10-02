@@ -2,7 +2,6 @@ package com.education.base.dto.request;
 
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -25,9 +24,9 @@ import java.time.LocalDate;
 @AllArgsConstructor
 public class TuitionFeeCreateRequest {
 
-    @NotBlank(message = "Mã khoản học phí không được để trống")
+    /** Bỏ trống thì hệ thống tự sinh theo quy luật {@code TUITION} ({@code SYS_CODE_RULES}, ví dụ HP2026040001). */
     @Size(max = 30, message = "Mã khoản học phí không được vượt quá 30 ký tự")
-    @Pattern(regexp = "^[A-Za-z0-9_-]+$",
+    @Pattern(regexp = "^[A-Za-z0-9_-]*$",
             message = "Mã khoản học phí chỉ được chứa chữ, số, dấu gạch ngang và gạch dưới")
     private String feeCode;
 
