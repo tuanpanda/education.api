@@ -1,10 +1,13 @@
 package com.education.base.service.impl;
 
+import com.education.base.common.DomainConstants;
 import com.education.base.dto.request.GenerateSessionsRequest;
 import com.education.base.dto.request.SaveClassScheduleRequest;
+import com.education.base.dto.request.TimetableFilterRequest;
 import com.education.base.dto.request.WeeklySlotRequest;
 import com.education.base.dto.response.GenerateSessionsResponse;
 import com.education.base.dto.response.TimetableItemDto;
+import com.education.base.dto.response.TimetableResponse;
 import com.education.base.entity.ClassEntity;
 import com.education.base.entity.ClassScheduleEntity;
 import com.education.base.entity.ClassSessionEntity;
@@ -23,6 +26,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -137,5 +141,58 @@ class TimetableServiceImplTest {
                 .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
                 .isEqualTo("SCHEDULE_SLOT_OVERLAP");
         verify(classScheduleRepository, never()).save(any());
+    }
+
+    @Test
+    void getTimetable_hidesAllSessionsOfClosedAndCancelledClasses() {
+        LocalDate monday = LocalDate.of(2026, 9, 21);
+        when(classSessionRepository.findTimetableByRange(any())).thenReturn(new ArrayList<>(List.of(
+                timetableItem(1L, 10L, monday),
+                timetableItem(2L, 20L, monday),
+                timetableItem(3L, 30L, monday.plusDays(1)),
+                timetableItem(4L, 10L, monday.plusDays(2)))));
+        when(classRepository.findAllById(any())).thenReturn(List.of(
+                ClassEntity.builder().id(10L).status("ONGOING").calendarColor("#2563eb").build(),
+                ClassEntity.builder().id(20L).status("CLOSED").calendarColor("#dc2626").build(),
+                ClassEntity.builder().id(30L).status("CANCELLED").build()));
+
+        TimetableResponse result = service.getTimetable(TimetableFilterRequest.builder()
+                .fromDate(monday).toDate(monday.plusDays(6)).build());
+
+        assertThat(result.getItems()).extracting(TimetableItemDto::getId).containsExactly(1L, 4L);
+        assertThat(result.getItems()).extracting(TimetableItemDto::getCalendarColor).containsOnly("#2563eb");
+        assertThat(result.getWeeks().stream()
+                .flatMap(week -> week.getDays().stream())
+                .flatMap(day -> day.getSessions().stream())
+                .map(TimetableItemDto::getId)
+                .toList()).containsExactly(1L, 4L);
+        verify(classStudentRepository).countByClassIdAndStatusAndIsDeleted(10L, "ENROLLED", 0);
+        verify(classStudentRepository, never()).countByClassIdAndStatusAndIsDeleted(eq(20L), any(), any());
+        verify(classStudentRepository, never()).countByClassIdAndStatusAndIsDeleted(eq(30L), any(), any());
+    }
+
+    @Test
+    void getTimetable_keepsPlannedOpenAndOngoingClasses() {
+        LocalDate monday = LocalDate.of(2026, 9, 21);
+        when(classSessionRepository.findTimetableByRange(any())).thenReturn(List.of(
+                timetableItem(1L, 10L, monday),
+                timetableItem(2L, 20L, monday),
+                timetableItem(3L, 30L, monday)));
+        when(classRepository.findAllById(any())).thenReturn(List.of(
+                ClassEntity.builder().id(10L).status("PLANNED").build(),
+                ClassEntity.builder().id(20L).status("OPEN").build(),
+                ClassEntity.builder().id(30L).status("ONGOING").build()));
+
+        TimetableResponse result = service.getTimetable(TimetableFilterRequest.builder()
+                .fromDate(monday).toDate(monday).build());
+
+        assertThat(result.getItems()).extracting(TimetableItemDto::getId).containsExactly(1L, 2L, 3L);
+        assertThat(DomainConstants.isHiddenFromTimetable(null)).isFalse();
+    }
+
+    private static TimetableItemDto timetableItem(Long id, Long classId, LocalDate date) {
+        return TimetableItemDto.builder()
+                .id(id).classId(classId).sessionDate(date).startTime("08:00").endTime("09:30")
+                .status("SCHEDULED").build();
     }
 }

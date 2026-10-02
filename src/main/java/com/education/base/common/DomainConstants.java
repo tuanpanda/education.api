@@ -22,6 +22,20 @@ public class DomainConstants {
     /** Trạng thái lớp học - {@code CK_CLASSES_STATUS}. */
     public static final String CLASS_STATUS_PATTERN = "PLANNED|OPEN|ONGOING|CLOSED|CANCELLED";
 
+    /** Lớp đã đóng - {@code CK_CLASSES_STATUS}. */
+    public static final String CLASS_STATUS_CLOSED = "CLOSED";
+
+    /** Lớp đã hủy - {@code CK_CLASSES_STATUS}. */
+    public static final String CLASS_STATUS_CANCELLED = "CANCELLED";
+
+    /**
+     * Lớp {@link #CLASS_STATUS_CLOSED} / {@link #CLASS_STATUS_CANCELLED} không còn hiện trên thời khóa biểu
+     * (ẩn mọi buổi, kể cả buổi đã qua). {@code PRC_GET_TIMETABLE_BY_RANGE} (V15) lọc cùng hai trạng thái này.
+     */
+    public boolean isHiddenFromTimetable(String classStatus) {
+        return CLASS_STATUS_CLOSED.equals(classStatus) || CLASS_STATUS_CANCELLED.equals(classStatus);
+    }
+
     /** Trạng thái ghi danh - {@code CK_CLASS_STUDENTS_STATUS}. */
     public static final String ENROLLMENT_STATUS_PATTERN = "ENROLLED|COMPLETED|DROPPED";
 

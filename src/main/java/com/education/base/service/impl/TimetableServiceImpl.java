@@ -174,8 +174,8 @@ public class TimetableServiceImpl implements TimetableService {
     public TimetableResponse getTimetable(TimetableFilterRequest filter) {
         TimetableFilterRequest criteria = filter == null ? new TimetableFilterRequest() : filter;
         validateDateRange(criteria.getFromDate(), criteria.getToDate());
-        List<TimetableItemDto> items = classSessionRepository.findTimetableByRange(criteria);
-        applyClassColors(items);
+        List<TimetableItemDto> items = hideClosedClassesAndApplyColors(
+                classSessionRepository.findTimetableByRange(criteria));
         applyAttendanceCounts(items);
         return TimetableResponse.builder()
                 .fromDate(criteria.getFromDate())
@@ -408,7 +408,12 @@ public class TimetableServiceImpl implements TimetableService {
                 .build();
     }
 
-    private void applyClassColors(List<TimetableItemDto> items) {
+    /**
+     * Bỏ buổi học của lớp đã đóng / đã hủy ({@link DomainConstants#isHiddenFromTimetable}) và gắn màu lịch.
+     * {@code PRC_GET_TIMETABLE_BY_RANGE} (V15) đã lọc ở Database; lọc lại ở đây để thời khóa biểu vẫn đúng
+     * khi Database chưa chạy V15 (dùng chung một lần đọc lớp với phần gắn màu).
+     */
+    private List<TimetableItemDto> hideClosedClassesAndApplyColors(List<TimetableItemDto> items) {
         Set<Long> classIds = new HashSet<>();
         for (TimetableItemDto item : items) {
             if (item.getClassId() != null) {
@@ -416,19 +421,28 @@ public class TimetableServiceImpl implements TimetableService {
             }
         }
         if (classIds.isEmpty()) {
-            return;
+            return items;
         }
         Map<Long, String> colors = new HashMap<>();
+        Set<Long> hiddenClassIds = new HashSet<>();
         for (ClassEntity clazz : classRepository.findAllById(classIds)) {
-            if (clazz.getCalendarColor() != null && !clazz.getCalendarColor().isBlank()) {
+            if (DomainConstants.isHiddenFromTimetable(clazz.getStatus())) {
+                hiddenClassIds.add(clazz.getId());
+            } else if (clazz.getCalendarColor() != null && !clazz.getCalendarColor().isBlank()) {
                 colors.put(clazz.getId(), clazz.getCalendarColor());
             }
         }
+        List<TimetableItemDto> visible = new ArrayList<>(items.size());
         for (TimetableItemDto item : items) {
             if (item.getClassId() != null) {
+                if (hiddenClassIds.contains(item.getClassId())) {
+                    continue;
+                }
                 item.setCalendarColor(colors.get(item.getClassId()));
             }
+            visible.add(item);
         }
+        return visible;
     }
 
     private void applyAttendanceCounts(List<TimetableItemDto> items) {
