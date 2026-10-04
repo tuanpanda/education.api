@@ -2,8 +2,11 @@ server:
   port: ${HTTP_PLATFORM_PORT:${SERVER_PORT:8080}}
   servlet:
     context-path: /
-  # Lấy IP thật của client từ X-Forwarded-For khi chạy sau reverse proxy nội bộ (nginx của UI / Docker),
-  # dùng cho giới hạn tần suất đăng nhập. Tomcat chỉ tin header này khi request đến từ dải IP nội bộ.
+  # Lấy IP / giao thức thật của client từ X-Forwarded-For / X-Forwarded-Proto khi chạy sau reverse proxy nội bộ
+  # (nginx của UI, Caddy), dùng cho rate limit và nhật ký hệ thống (request.getRemoteAddr()). Tomcat (RemoteIpValve) chỉ
+  # tin header này khi request đến từ proxy có IP nội bộ - mặc định 10/8, 192.168/16, 172.16/12 (mạng Docker), 169.254/16,
+  # 127/8, 100.64/10 - client gọi thẳng API từ IP public không giả mạo được. Đổi dải tin cậy:
+  # SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES (regex). Kiểm thử: ForwardedHeadersConfigurationTest.
   forward-headers-strategy: ${SERVER_FORWARD_HEADERS_STRATEGY:native}
 
 spring:

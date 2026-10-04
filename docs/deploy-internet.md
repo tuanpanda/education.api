@@ -25,9 +25,12 @@ Internet ──80/443──▶ caddy (TLS Let's Encrypt, HSTS, chặn /v3, /swag
 - Chỉ service `caddy` có `ports` (80, 443/tcp, 443/udp cho HTTP/3). `ui` và `api` chỉ `expose` trong mạng Docker.
 - UI và API **cùng origin** (`https://<tên miền>`, API qua `/api`) ⇒ không cần CORS (`CORS_ALLOWED_ORIGINS` để trống),
   cookie `SameSite=Strict` hoạt động bình thường.
-- IP thật của người dùng: Caddy đặt `X-Forwarded-For` (bỏ giá trị client tự gửi), nginx nối thêm, Tomcat
-  (`server.forward-headers-strategy=native`) chỉ tin các proxy có IP nội bộ ⇒ rate limit và nhật ký hệ thống ghi đúng
-  IP người dùng.
+- IP thật của người dùng: Caddy đặt `X-Forwarded-For` (bỏ giá trị client tự gửi) và `X-Forwarded-Proto: https`,
+  nginx của UI nối thêm IP của Caddy vào `X-Forwarded-For`, giữ nguyên `X-Forwarded-Proto` và `Host`; Tomcat
+  (`server.forward-headers-strategy=native`, RemoteIpValve) chỉ tin các proxy có IP nội bộ (10/8, 172.16/12 – mạng
+  Docker, 192.168/16, 127/8…) ⇒ `getRemoteAddr()` = IP người dùng, `isSecure()` = true: rate limit và nhật ký hệ thống
+  ghi đúng IP. Client gọi thẳng API từ IP public tự gửi `X-Forwarded-For` thì bị bỏ qua (kiểm thử:
+  `ForwardedHeadersConfigurationTest`). Đổi dải proxy tin cậy (hiếm khi cần): `SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES`.
 
 ## 2. Chuẩn bị
 
@@ -234,9 +237,13 @@ Bản sao lưu chứa dữ liệu cá nhân học sinh – giới hạn quyền 
 
 ## 10. Lưu ý đã biết
 
-- **X-Forwarded-Proto**: nginx của UI đặt `X-Forwarded-Proto $scheme` (= `http` vì Caddy gọi nginx bằng HTTP), nên API
-  tưởng request là HTTP. Không ảnh hưởng cookie (`Secure` cấu hình tường minh) và HSTS (Caddy gửi). Repo UI nên đổi
-  thành chuyển tiếp nguyên giá trị từ Caddy (`map $http_x_forwarded_proto ...`) để API thấy đúng `https`.
+- **X-Forwarded-Proto**: nginx của UI giữ nguyên giá trị Caddy gửi (`map $http_x_forwarded_proto ...`, chỉ nhận
+  `http`/`https`; không có thì dùng `$scheme`) nên API thấy đúng `https`. Ở Docker cục bộ (nginx là cửa vào) người dùng
+  có thể tự gửi header này - chỉ ảnh hưởng `isSecure()` của chính request đó; cookie `Secure` vẫn theo cấu hình.
+- **Docker cục bộ / LAN**: với Docker Desktop, kết nối vào cổng publish (8088, 8090) thường hiện IP gateway của Docker
+  (172.x / 192.168.65.x – thuộc dải nội bộ), nên mọi máy trong LAN có thể chung một "IP" và tự gửi `X-Forwarded-For`.
+  Không ảnh hưởng triển khai Internet (chỉ Caddy publish cổng, Caddy bỏ `X-Forwarded-For` của client); đừng mở cổng
+  8090 của API ra ngoài.
 - **Rate limit trong bộ nhớ**: chỉ đúng với **một** instance API.
 - **NAT trung tâm**: xem `AUTH_RATE_LIMIT_LOGIN_PER_IP` ở mục 4.3; giới hạn cổng học sinh mặc định chỉ tính theo người dùng.
 - **Actuator** chưa có trong ứng dụng (health dùng `/api/v1/health`); profile prod đã cấu hình sẵn chỉ mở `health` nếu sau
