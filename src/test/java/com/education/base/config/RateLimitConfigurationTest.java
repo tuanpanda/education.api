@@ -74,6 +74,30 @@ class RateLimitConfigurationTest {
     }
 
     @Test
+    void loginLimits_wideForSharedCenterIp_strictPerUsername() throws IOException {
+        AuthSecurityProperties.RateLimit fromYaml = Binder.get(environment(Map.of(), "application.yml"))
+                .bind("app.security.auth.rate-limit", AuthSecurityProperties.RateLimit.class)
+                .orElseThrow(() -> new AssertionError("không bind được app.security.auth.rate-limit"));
+
+        // Cả trung tâm dùng chung một IP public (NAT): cả lớp đăng nhập cùng lúc không được chạm ngưỡng theo IP.
+        assertThat(fromYaml.getLoginPerIp()).isEqualTo(200);
+        assertThat(fromYaml.getWindow()).isEqualTo(Duration.ofMinutes(5));
+        // Từng tài khoản vẫn được bảo vệ chặt.
+        assertThat(fromYaml.getLoginPerUsername()).isEqualTo(10);
+        // Mặc định trong code trùng application.yml (chạy không có file cấu hình).
+        AuthSecurityProperties.RateLimit codeDefaults = new AuthSecurityProperties().getRateLimit();
+        assertThat(codeDefaults.getLoginPerIp()).isEqualTo(200);
+        assertThat(codeDefaults.getLoginPerUsername()).isEqualTo(10);
+
+        AuthSecurityProperties.RateLimit overridden = Binder.get(environment(Map.of(
+                        "AUTH_RATE_LIMIT_LOGIN_PER_IP", "500"), "application.yml"))
+                .bind("app.security.auth.rate-limit", AuthSecurityProperties.RateLimit.class)
+                .orElseThrow(() -> new AssertionError("không bind được app.security.auth.rate-limit"));
+        assertThat(overridden.getLoginPerIp()).isEqualTo(500);
+        assertThat(overridden.getLoginPerUsername()).isEqualTo(10);
+    }
+
+    @Test
     void environmentVariablesOverrideBudgets() throws IOException {
         RateLimitProperties properties = bind(environment(Map.of(
                 "RATE_LIMIT_PORTAL_PER_USER", "50",

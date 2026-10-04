@@ -95,7 +95,8 @@ app:
         # Giới hạn tần suất /api/v1/auth/login và /refresh (cửa sổ trượt trong bộ nhớ, theo từng instance).
         enabled: ${AUTH_RATE_LIMIT_ENABLED:true}
         window: ${AUTH_RATE_LIMIT_WINDOW:5m}
-        login-per-ip: ${AUTH_RATE_LIMIT_LOGIN_PER_IP:30}
+        # Theo IP rộng (cả trung tâm dùng chung một IP public / NAT); theo tên đăng nhập + khóa tài khoản giữ chặt.
+        login-per-ip: ${AUTH_RATE_LIMIT_LOGIN_PER_IP:200}
         login-per-username: ${AUTH_RATE_LIMIT_LOGIN_PER_USERNAME:10}
         refresh-per-ip: ${AUTH_RATE_LIMIT_REFRESH_PER_IP:120}
         refresh-per-user: ${AUTH_RATE_LIMIT_REFRESH_PER_USER:60}

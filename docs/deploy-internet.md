@@ -123,7 +123,7 @@ instance thì thay bean `RateLimiter` bằng bản dùng chung (Redis/DB).
 
 | Biến | Gợi ý |
 |---|---|
-| `AUTH_RATE_LIMIT_LOGIN_PER_IP` (`30`/5 phút) | Cả lớp đăng nhập cùng lúc từ Wi-Fi trung tâm (một IP public) có thể chạm ngưỡng ⇒ tăng (ví dụ `200`). Giới hạn theo tên đăng nhập (`AUTH_RATE_LIMIT_LOGIN_PER_USERNAME`) và khóa tài khoản tạm thời vẫn bảo vệ từng tài khoản. |
+| `AUTH_RATE_LIMIT_LOGIN_PER_IP` (`200`/5 phút) | Mặc định đã rộng vì cả trung tâm dùng chung một IP public (NAT): cả lớp đăng nhập cùng lúc từ Wi-Fi trung tâm không chạm ngưỡng. Giới hạn theo tên đăng nhập (`AUTH_RATE_LIMIT_LOGIN_PER_USERNAME`, `10`/5 phút) và khóa tài khoản tạm thời vẫn bảo vệ từng tài khoản. Trung tâm rất đông (nhiều lớp đăng nhập cùng lúc) thì tăng tiếp. |
 | `AUTH_COOKIE_SECURE` | Luôn `true` trên Internet (compose prod cố định `true`). |
 | `CORS_ALLOWED_ORIGINS` | Để trống (cùng origin). Nếu bắt buộc khác origin: chỉ `https://...` cụ thể, không wildcard. |
 | `SERVER_FORWARD_HEADERS_STRATEGY` | `native` (compose prod cố định). |

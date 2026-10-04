@@ -96,8 +96,8 @@ services:
       AUTH_LOCKOUT_MAX_DURATION: ${AUTH_LOCKOUT_MAX_DURATION:-24h}
       AUTH_RATE_LIMIT_ENABLED: "true"
       AUTH_RATE_LIMIT_WINDOW: ${AUTH_RATE_LIMIT_WINDOW:-5m}
-      # Ca lop o trung tam co the dung chung 1 IP public (NAT): tang neu hoc sinh dang nhap dong loat.
-      AUTH_RATE_LIMIT_LOGIN_PER_IP: ${AUTH_RATE_LIMIT_LOGIN_PER_IP:-30}
+      # Ca trung tam dung chung 1 IP public (NAT) -> theo IP rong (200 / 5 phut); theo ten dang nhap (10) giu chat.
+      AUTH_RATE_LIMIT_LOGIN_PER_IP: ${AUTH_RATE_LIMIT_LOGIN_PER_IP:-200}
       AUTH_RATE_LIMIT_LOGIN_PER_USERNAME: ${AUTH_RATE_LIMIT_LOGIN_PER_USERNAME:-10}
       AUTH_RATE_LIMIT_REFRESH_PER_IP: ${AUTH_RATE_LIMIT_REFRESH_PER_IP:-120}
       AUTH_RATE_LIMIT_REFRESH_PER_USER: ${AUTH_RATE_LIMIT_REFRESH_PER_USER:-60}

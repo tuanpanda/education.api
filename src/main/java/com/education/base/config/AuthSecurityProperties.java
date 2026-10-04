@@ -53,9 +53,13 @@ public class AuthSecurityProperties {
         @NotNull
         private Duration window = Duration.ofMinutes(5);
 
-        /** Số request đăng nhập tối đa mỗi IP trong một cửa sổ. */
+        /**
+         * Số request đăng nhập tối đa mỗi IP trong một cửa sổ. Rộng (200 / 5 phút) vì cả trung tâm có thể dùng chung
+         * một IP public (NAT): cả lớp học sinh đăng nhập cùng lúc. Từng tài khoản vẫn được bảo vệ bởi
+         * {@link #loginPerUsername} và khóa tài khoản tạm thời.
+         */
         @Min(1)
-        private int loginPerIp = 30;
+        private int loginPerIp = 200;
 
         /** Số request đăng nhập tối đa mỗi tên đăng nhập trong một cửa sổ. */
         @Min(1)
