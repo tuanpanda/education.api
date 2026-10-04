@@ -4,7 +4,7 @@ import lombok.experimental.UtilityClass;
 
 /**
  * Mã quyền dạng {@code MENU_CODE:FUNCTION_CODE}, khớp dữ liệu {@code SYS_MENUS} + {@code SYS_FUNCTIONS}
- * (xem các migration V1, V6, V8, V11, V12, V14_x).
+ * (xem các migration V1, V6, V8, V11, V12, V14_x, V16_x).
  * <p>
  * Dùng làm giá trị cho {@link RequirePermission}. Khi thêm menu/chức năng mới trong Database, khai báo
  * hằng số tương ứng tại đây rồi gắn lên Controller.
@@ -60,12 +60,14 @@ public class Permissions {
     public static final String LEAD_CONVERT = "MENU_LEAD_LIST:CONVERT";
 
     // ---- Tài chính ------------------------------------------------------------
-    public static final String TUITION_PAYMENT_VIEW = "MENU_TUITION_PAYMENT:VIEW";
-    public static final String TUITION_PAYMENT_GEN_QR = "MENU_TUITION_PAYMENT:GEN_QR";
-
     public static final String TUITION_FEE_VIEW = "MENU_TUITION_FEE:VIEW";
     public static final String TUITION_FEE_CREATE = "MENU_TUITION_FEE:CREATE";
     public static final String TUITION_FEE_UPDATE = "MENU_TUITION_FEE:UPDATE";
+    /**
+     * Sinh VietQR cho khoản phí. V16_1 chuyển GEN_QR từ menu cũ {@code MENU_TUITION_PAYMENT}
+     * ("Thu học phí VietQR", {@code /finance/vietqr}, trùng màn hình khoản học phí; V16_2 gỡ menu đó).
+     */
+    public static final String TUITION_FEE_GEN_QR = "MENU_TUITION_FEE:GEN_QR";
 
     public static final String PAYMENT_HISTORY_VIEW = "MENU_PAYMENT_HISTORY:VIEW";
     public static final String PAYMENT_HISTORY_CREATE = "MENU_PAYMENT_HISTORY:CREATE";

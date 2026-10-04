@@ -17,6 +17,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.startsWith;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -65,6 +67,27 @@ class QrPaymentControllerTest {
                 .andExpect(jsonPath("$.data.quickUrl").value(containsString("img.vietqr.io")))
                 .andExpect(jsonPath("$.data.quickUrl").value(containsString("amount=150000")))
                 .andExpect(jsonPath("$.data.base64Image").value(startsWith("data:image/png;base64,")));
+    }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_ACCOUNTANT", permissions = "MENU_TUITION_FEE:GEN_QR")
+    void generateQr_withTuitionFeeGenQr_isAllowed() throws Exception {
+        mockMvc.perform(post("/api/v1/payments/generate-qr")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.qrPayload").value(startsWith("000201")));
+    }
+
+    /** V16: MENU_TUITION_PAYMENT (menu "Thu học phí VietQR") đã gỡ; quyền cũ không còn sinh QR. */
+    @Test
+    @WithAuthUser(roles = "ROLE_ACCOUNTANT", permissions = "MENU_TUITION_PAYMENT:GEN_QR")
+    void generateQr_withRemovedVietQrMenuPermission_isForbidden() throws Exception {
+        mockMvc.perform(post("/api/v1/payments/generate-qr")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+        verify(bankAccountService, never()).requireActive();
     }
 
     @Test

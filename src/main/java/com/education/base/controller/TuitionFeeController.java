@@ -49,7 +49,7 @@ public class TuitionFeeController {
 
     @Operation(summary = "Tìm kiếm khoản học phí có phân trang")
     @GetMapping("/search")
-    @RequirePermission({Permissions.TUITION_FEE_VIEW, Permissions.PAYMENT_HISTORY_VIEW, Permissions.TUITION_PAYMENT_VIEW})
+    @RequirePermission({Permissions.TUITION_FEE_VIEW, Permissions.PAYMENT_HISTORY_VIEW})
     public ApiResponse<PageResponse<TuitionFeeListItemDto>> search(
             @Valid @ModelAttribute TuitionFeeFilterRequest filter) {
         return ApiResponse.success(tuitionFeeService.search(filter));
@@ -58,7 +58,7 @@ public class TuitionFeeController {
     @Operation(summary = "Chi tiết khoản học phí",
             description = "Gọi procedure PRC_GET_TUITION_FEE_DETAIL kèm lịch sử giao dịch.")
     @GetMapping("/{id}")
-    @RequirePermission({Permissions.TUITION_FEE_VIEW, Permissions.PAYMENT_HISTORY_VIEW, Permissions.TUITION_PAYMENT_VIEW})
+    @RequirePermission({Permissions.TUITION_FEE_VIEW, Permissions.PAYMENT_HISTORY_VIEW})
     public ApiResponse<TuitionFeeDetailResponse> getDetail(@PathVariable("id") Long id) {
         return ApiResponse.success(tuitionFeeService.getDetail(id));
     }
@@ -101,7 +101,7 @@ public class TuitionFeeController {
     @Operation(summary = "Sinh mã VietQR thanh toán học phí",
             description = "Tự sinh chuỗi EMVCo và render QR Base64 PNG qua ZXing theo số tiền còn phải thu.")
     @PostMapping("/{id}/create-qr")
-    @RequirePermission(Permissions.TUITION_PAYMENT_GEN_QR)
+    @RequirePermission(Permissions.TUITION_FEE_GEN_QR)
     public ApiResponse<TuitionQrResponseDto> createQr(
             @PathVariable("id") Long id,
             @Valid @RequestBody(required = false) TuitionQrRequest request) {
@@ -136,7 +136,7 @@ public class TuitionFeeController {
     @Operation(summary = "Dữ liệu phiếu học phí điện tử",
             description = "Gọi PRC_GET_TUITION_SLIP_DATA và sinh VietQR (EMVCo + Base64).")
     @GetMapping("/{invoiceId}/slip")
-    @RequirePermission({Permissions.TUITION_FEE_VIEW, Permissions.PAYMENT_HISTORY_VIEW, Permissions.TUITION_PAYMENT_VIEW})
+    @RequirePermission({Permissions.TUITION_FEE_VIEW, Permissions.PAYMENT_HISTORY_VIEW})
     public ApiResponse<TuitionSlipResponseDto> getSlip(@PathVariable("invoiceId") Long invoiceId) {
         return ApiResponse.success(tuitionSlipService.getSlip(invoiceId));
     }
@@ -144,7 +144,7 @@ public class TuitionFeeController {
     @Operation(summary = "HTML phiếu học phí (in ấn / gửi Zalo)",
             description = "Trả HTML/CSS card mobile, không bọc ApiResponse.")
     @GetMapping(value = "/{invoiceId}/slip/html", produces = MediaType.TEXT_HTML_VALUE)
-    @RequirePermission({Permissions.TUITION_FEE_VIEW, Permissions.PAYMENT_HISTORY_VIEW, Permissions.TUITION_PAYMENT_VIEW})
+    @RequirePermission({Permissions.TUITION_FEE_VIEW, Permissions.PAYMENT_HISTORY_VIEW})
     public ResponseEntity<String> getSlipHtml(@PathVariable("invoiceId") Long invoiceId) {
         return ResponseEntity.ok()
                 .contentType(new MediaType(MediaType.TEXT_HTML, StandardCharsets.UTF_8))
