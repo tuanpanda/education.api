@@ -18,6 +18,15 @@ public class Permissions {
     /** Vai trò giảng viên: chỉ được ghi điểm / điểm danh cho lớp mình phụ trách. */
     public static final String TEACHER_ROLE = "ROLE_TEACHER";
 
+    /**
+     * Vai trò học sinh (V17_1). Chỉ gán cho tài khoản {@code USER_TYPE = STUDENT}; không mang quyền menu nào -
+     * học sinh chỉ dùng {@code /api/v1/portal/**} ({@link PortalAccess}).
+     */
+    public static final String STUDENT_ROLE = "ROLE_STUDENT";
+
+    /** Vai trò phụ huynh (dự phòng giai đoạn sau, CHƯA seed). */
+    public static final String PARENT_ROLE = "ROLE_PARENT";
+
     public static final String SEPARATOR = ":";
 
     public static final String VIEW = "VIEW";
@@ -123,10 +132,20 @@ public class Permissions {
     public static final String ROLE_UPDATE = "MENU_ROLE_LIST:UPDATE";
     public static final String ROLE_DELETE = "MENU_ROLE_LIST:DELETE";
 
+    /** Nhật ký hệ thống (Giai đoạn 0 stream B, V17_3). */
+    public static final String AUDIT_LOG_VIEW = "MENU_AUDIT_LOG:VIEW";
+
     public static final String MENU_CONFIG_VIEW = "MENU_MENU_CONFIG:VIEW";
     public static final String MENU_CONFIG_CREATE = "MENU_MENU_CONFIG:CREATE";
     public static final String MENU_CONFIG_UPDATE = "MENU_MENU_CONFIG:UPDATE";
     public static final String MENU_CONFIG_DELETE = "MENU_MENU_CONFIG:DELETE";
+
+    // ---- Cổng học sinh - Stream A (feat/portal-p0-core, V17_2) ------------------------------------------
+    // Màn hình quản trị "Tài khoản học sinh" (/system/student-accounts, dưới DIR_SYSTEM).
+    public static final String STUDENT_ACCOUNT_VIEW = "MENU_STUDENT_ACCOUNT:VIEW";
+    public static final String STUDENT_ACCOUNT_CREATE = "MENU_STUDENT_ACCOUNT:CREATE";
+    public static final String STUDENT_ACCOUNT_RESET_PASSWORD = "MENU_STUDENT_ACCOUNT:RESET_PASSWORD";
+    public static final String STUDENT_ACCOUNT_LOCK = "MENU_STUDENT_ACCOUNT:LOCK";
 
     /** Ghép mã quyền phẳng từ mã menu và mã chức năng. */
     public static String of(String menuCode, String functionCode) {

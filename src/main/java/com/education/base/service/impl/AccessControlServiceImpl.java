@@ -12,15 +12,20 @@ import com.education.base.entity.RoleEntity;
 import com.education.base.entity.RoleMenuPermissionEntity;
 import com.education.base.entity.UserEntity;
 import com.education.base.entity.UserRoleEntity;
+import com.education.base.entity.UserStudentLinkEntity;
+import com.education.base.exception.UnauthorizedException;
 import com.education.base.repository.FunctionRepository;
 import com.education.base.repository.MenuRepository;
 import com.education.base.repository.RoleMenuPermissionRepository;
 import com.education.base.repository.UserRepository;
 import com.education.base.repository.UserRoleRepository;
+import com.education.base.repository.UserStudentLinkRepository;
 import com.education.base.security.AuthUserPrincipal;
 import com.education.base.security.Permissions;
+import com.education.base.security.UserType;
 import com.education.base.service.AccessControlService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,6 +42,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AccessControlServiceImpl implements AccessControlService {
@@ -50,6 +56,7 @@ public class AccessControlServiceImpl implements AccessControlService {
     private final MenuRepository menuRepository;
     private final FunctionRepository functionRepository;
     private final RoleMenuPermissionRepository roleMenuPermissionRepository;
+    private final UserStudentLinkRepository userStudentLinkRepository;
 
     @Override
     @Transactional(readOnly = true)
@@ -59,14 +66,29 @@ public class AccessControlServiceImpl implements AccessControlService {
         }
         return userRepository.findByIdAndIsDeleted(userId, PersistenceFlags.NOT_DELETED)
                 .filter(user -> DomainConstants.USER_STATUS_ACTIVE.equals(user.getStatus()))
+                .filter(this::hasKnownUserType)
                 .map(this::buildPrincipal);
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Tài khoản không phải nhân viên ({@code USER_TYPE <> STAFF}) KHÔNG nhận quyền menu nào (kể cả khi lỡ được gán
+     * vai trò nhân viên); tài khoản học sinh được gắn {@code studentId} từ liên kết {@code SELF} đang hoạt động.
+     */
     @Override
     @Transactional(readOnly = true)
     public AuthUserPrincipal buildPrincipal(UserEntity user) {
+        UserType userType = UserType.fromDb(user.getUserType())
+                .orElseThrow(() -> new UnauthorizedException("ACCOUNT_INACTIVE",
+                        "Tài khoản chưa được kích hoạt hoặc đã ngừng hoạt động."));
         List<RoleEntity> roles = activeRoles(user.getId());
-        Set<String> permissions = resolvePermissions(roles);
+        Set<String> permissions = userType == UserType.STAFF ? resolvePermissions(roles) : new TreeSet<>();
+        Long studentId = userType == UserType.STUDENT
+                ? userStudentLinkRepository.findActiveSelfLinkByUserId(user.getId())
+                        .map(UserStudentLinkEntity::getStudentId)
+                        .orElse(null)
+                : null;
         return AuthUserPrincipal.builder()
                 .id(user.getId())
                 .username(user.getUsername())
@@ -76,7 +98,17 @@ public class AccessControlServiceImpl implements AccessControlService {
                 .permissions(permissions)
                 .mustChangePassword(Integer.valueOf(1).equals(user.getMustChangePassword()))
                 .tokenVersion(user.getTokenVersion() == null ? 0 : user.getTokenVersion())
+                .userType(userType)
+                .studentId(studentId)
                 .build();
+    }
+
+    private boolean hasKnownUserType(UserEntity user) {
+        if (UserType.fromDb(user.getUserType()).isPresent()) {
+            return true;
+        }
+        log.warn("Từ chối phiên của userId={}: USER_TYPE không hợp lệ '{}'", user.getId(), user.getUserType());
+        return false;
     }
 
     @Override

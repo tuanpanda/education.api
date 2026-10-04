@@ -143,7 +143,7 @@ sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @scripts/db/fix_admin_password
 | `AUTH_LOCKOUT_BASE_DURATION` / `AUTH_LOCKOUT_MAX_DURATION` | `15m` / `24h` | Lần khóa đầu / trần; mỗi lần khóa tiếp theo gấp đôi |
 | `AUTH_RATE_LIMIT_ENABLED` | `true` | Giới hạn tần suất `/api/v1/auth/login`, `/refresh` (HTTP 429 + `Retry-After`) |
 | `AUTH_RATE_LIMIT_WINDOW` | `5m` | Cửa sổ trượt |
-| `AUTH_RATE_LIMIT_LOGIN_PER_IP` / `..._LOGIN_PER_USERNAME` | `30` / `10` | Số lần đăng nhập tối đa mỗi cửa sổ |
+| `AUTH_RATE_LIMIT_LOGIN_PER_IP` / `..._LOGIN_PER_USERNAME` | `200` / `10` | Số lần đăng nhập tối đa mỗi cửa sổ |
 | `AUTH_RATE_LIMIT_REFRESH_PER_IP` / `..._REFRESH_PER_USER` | `120` / `60` | Số lần làm mới tối đa mỗi cửa sổ |
 | `SERVER_FORWARD_HEADERS_STRATEGY` | `native` | Lấy IP thật từ `X-Forwarded-For` khi chạy sau proxy nội bộ (nginx của UI) |
 | `AUTH_COOKIE_SECURE` | `true` (profile `dev`: `false`) | Thuộc tính `Secure` của cookie đăng nhập / CSRF: trình duyệt chỉ gửi qua HTTPS. **Production qua HTTPS: giữ `true`.** Trình duyệt chấp nhận cookie `Secure` trên `http://localhost`, nhưng mở UI/API qua HTTP bằng IP / tên máy (ví dụ `http://192.168.1.10:8088`) thì cookie bị bỏ và đăng nhập "thành công" nhưng mọi request sau trả 401 (log backend có cảnh báo) -> dùng HTTPS, hoặc đặt `false` (không khuyến nghị) |

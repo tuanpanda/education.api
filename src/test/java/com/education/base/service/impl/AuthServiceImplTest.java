@@ -12,6 +12,7 @@ import com.education.base.security.InvalidTokenException;
 import com.education.base.security.JwtClaims;
 import com.education.base.security.JwtTokenService;
 import com.education.base.security.TokenType;
+import com.education.base.security.UserType;
 import com.education.base.service.AccessControlService;
 import com.education.base.service.AuthTokens;
 import com.education.base.service.RefreshTokenService;
@@ -79,9 +80,9 @@ class AuthServiceImplTest {
         properties = new AuthSecurityProperties();
         service = new AuthServiceImpl(userRepository, accessControlService, jwtTokenService, encoder,
                 refreshTokenService, properties, Clock.fixed(NOW_INSTANT, ZONE));
-        lenient().when(jwtTokenService.generateAccessToken(anyLong(), anyString(), anyInt(), anyString()))
+        lenient().when(jwtTokenService.generateAccessToken(anyLong(), anyString(), anyInt(), anyString(), any()))
                 .thenReturn("access");
-        lenient().when(jwtTokenService.generateRefreshToken(anyLong(), anyString(), anyInt(), anyString(), anyString()))
+        lenient().when(jwtTokenService.generateRefreshToken(anyLong(), anyString(), anyInt(), anyString(), anyString(), any()))
                 .thenReturn("refresh");
         lenient().when(jwtTokenService.getAccessTokenTtlSeconds()).thenReturn(900L);
         lenient().when(refreshTokenService.createSession(anyLong())).thenReturn(SESSION);
@@ -135,8 +136,8 @@ class AuthServiceImplTest {
         assertThat(response.getUser().isMustChangePassword()).isTrue();
         assertThat(user.getLastLoginAt()).isEqualTo(NOW);
         verify(refreshTokenService).createSession(10L);
-        verify(jwtTokenService).generateAccessToken(10L, "teacher1", 2, "sid-1");
-        verify(jwtTokenService).generateRefreshToken(10L, "teacher1", 2, "jti-1", "sid-1");
+        verify(jwtTokenService).generateAccessToken(10L, "teacher1", 2, "sid-1", UserType.STAFF);
+        verify(jwtTokenService).generateRefreshToken(10L, "teacher1", 2, "jti-1", "sid-1", UserType.STAFF);
     }
 
     @Test
@@ -288,8 +289,8 @@ class AuthServiceImplTest {
 
         assertThat(response.getAccessToken()).isEqualTo("access");
         assertThat(response.getRefreshToken()).isEqualTo("refresh");
-        verify(jwtTokenService).generateRefreshToken(10L, "teacher1", 2, "jti-new", "sid-1");
-        verify(jwtTokenService).generateAccessToken(10L, "teacher1", 2, "sid-1");
+        verify(jwtTokenService).generateRefreshToken(10L, "teacher1", 2, "jti-new", "sid-1", UserType.STAFF);
+        verify(jwtTokenService).generateAccessToken(10L, "teacher1", 2, "sid-1", UserType.STAFF);
     }
 
     @Test
@@ -433,7 +434,7 @@ class AuthServiceImplTest {
         order.verify(userRepository).incrementTokenVersion(10L);
         order.verify(refreshTokenService).revokeAllSessions(10L);
         order.verify(refreshTokenService).createSession(10L);
-        verify(jwtTokenService).generateAccessToken(eq(10L), eq("teacher1"), eq(3), eq("sid-1"));
+        verify(jwtTokenService).generateAccessToken(eq(10L), eq("teacher1"), eq(3), eq("sid-1"), eq(UserType.STAFF));
     }
 
     @Test
@@ -452,5 +453,67 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> service.changePassword(10L, new ChangePasswordRequest(PASSWORD, PASSWORD)))
                 .isInstanceOf(OracleBusinessException.class)
                 .extracting("errorCode").isEqualTo("PASSWORD_UNCHANGED");
+    }
+
+    // ------------------------------------------------------- student (V17)
+
+    private static UserEntity studentUser() {
+        UserEntity user = user("ACTIVE");
+        user.setId(20L);
+        user.setUsername("hs00007");
+        user.setUserType("STUDENT");
+        return user;
+    }
+
+    @Test
+    void login_student_tokensCarryUserTypeAndResponseHasStudentId() {
+        UserEntity user = studentUser();
+        when(userRepository.findByUsernameAndIsDeleted("hs00007", 0)).thenReturn(Optional.of(user));
+        when(accessControlService.buildPrincipal(user)).thenReturn(AuthUserPrincipal.builder()
+                .id(20L).username("hs00007").fullName("HS").role("ROLE_STUDENT")
+                .mustChangePassword(true).tokenVersion(2)
+                .userType(UserType.STUDENT).studentId(77L).build());
+        when(jwtTokenService.generateAccessToken(20L, "hs00007", 2, "sid-1", UserType.STUDENT)).thenReturn("access-s");
+        when(jwtTokenService.generateRefreshToken(20L, "hs00007", 2, "jti-1", "sid-1", UserType.STUDENT))
+                .thenReturn("refresh-s");
+
+        AuthTokens response = service.login(new LoginRequest("hs00007", PASSWORD));
+
+        assertThat(response.getAccessToken()).isEqualTo("access-s");
+        assertThat(response.getRefreshToken()).isEqualTo("refresh-s");
+        assertThat(response.getUser().getUserType()).isEqualTo("STUDENT");
+        assertThat(response.getUser().getStudentId()).isEqualTo(77L);
+        assertThat(response.getUser().isMustChangePassword()).isTrue();
+        assertThat(response.getUser().getPermissions()).isEmpty();
+    }
+
+    @Test
+    void me_staff_hasStaffTypeAndNoStudentId() {
+        AuthUserPrincipal principal = AuthUserPrincipal.builder().id(1L).username("admin").role("ROLE_ADMIN")
+                .studentId(5L).build();
+
+        assertThat(service.me(principal).getUserType()).isEqualTo("STAFF");
+        assertThat(service.me(principal).getStudentId()).isNull();
+    }
+
+    @Test
+    void changePassword_student_newPasswordContainingUsername_rejected() {
+        when(userRepository.findByIdAndIsDeleted(20L, 0)).thenReturn(Optional.of(studentUser()));
+
+        assertThatThrownBy(() -> service.changePassword(20L, new ChangePasswordRequest(PASSWORD, "HS00007abc")))
+                .isInstanceOf(OracleBusinessException.class)
+                .extracting("errorCode").isEqualTo("PASSWORD_CONTAINS_USERNAME");
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void changePassword_staff_passwordContainingUsername_stillAllowed() {
+        UserEntity user = user("ACTIVE");
+        when(userRepository.findByIdAndIsDeleted(10L, 0)).thenReturn(Optional.of(user));
+        when(userRepository.findTokenVersionById(10L)).thenReturn(Optional.of(3));
+
+        service.changePassword(10L, new ChangePasswordRequest(PASSWORD, "teacher1Pass9"));
+
+        assertThat(ENCODER.matches("teacher1Pass9", user.getPasswordHash())).isTrue();
     }
 }

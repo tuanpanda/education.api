@@ -20,6 +20,7 @@ import com.education.base.repository.spec.UserSpecifications;
 import com.education.base.security.AuthUserPrincipal;
 import com.education.base.security.Permissions;
 import com.education.base.security.SecurityUtils;
+import com.education.base.security.UserType;
 import com.education.base.service.RefreshTokenService;
 import com.education.base.service.UserAdminService;
 import lombok.RequiredArgsConstructor;
@@ -94,6 +95,7 @@ public class UserAdminServiceImpl implements UserAdminService {
                 .phone(blankToNull(request.getPhone()))
                 .status(request.getStatus() == null || request.getStatus().isBlank()
                         ? DomainConstants.USER_STATUS_ACTIVE : request.getStatus())
+                .userType(DomainConstants.USER_TYPE_STAFF)
                 .mustChangePassword(Boolean.FALSE.equals(request.getMustChangePassword()) ? 0 : 1)
                 .tokenVersion(0)
                 .isDeleted(PersistenceFlags.NOT_DELETED)
@@ -204,8 +206,13 @@ public class UserAdminServiceImpl implements UserAdminService {
         return toDto(user);
     }
 
+    /**
+     * Tài khoản NHÂN VIÊN chưa xóa. Tài khoản học sinh / phụ huynh (V17) không thao tác được qua màn hình
+     * "Người dùng" (coi như không tồn tại) - dùng màn hình "Tài khoản học sinh".
+     */
     private UserEntity requireUser(Long id) {
         return userRepository.findByIdAndIsDeleted(id, PersistenceFlags.NOT_DELETED)
+                .filter(user -> UserType.fromDb(user.getUserType()).orElse(null) == UserType.STAFF)
                 .orElseThrow(() -> new OracleBusinessException("USER_NOT_FOUND",
                         "Không tìm thấy người dùng với ID: " + id));
     }
@@ -221,6 +228,10 @@ public class UserAdminServiceImpl implements UserAdminService {
             throw new OracleBusinessException("ROLE_NOT_FOUND", "Có vai trò không tồn tại hoặc đã bị xóa.");
         }
         for (RoleEntity role : roles) {
+            if (Permissions.STUDENT_ROLE.equals(role.getRoleCode()) || Permissions.PARENT_ROLE.equals(role.getRoleCode())) {
+                throw new OracleBusinessException("ROLE_NOT_ASSIGNABLE",
+                        "Vai trò '" + role.getRoleName() + "' chỉ dành cho tài khoản học sinh / phụ huynh.");
+            }
             if (!DomainConstants.RECORD_STATUS_ACTIVE.equals(role.getStatus())) {
                 throw new OracleBusinessException("ROLE_INACTIVE",
                         "Vai trò '" + role.getRoleName() + "' đang ngừng hoạt động, không thể gán.");

@@ -1,0 +1,50 @@
+# Caddy - reverse proxy HTTPS duy nhat ra Internet (docker-compose.prod.yml).
+# Chung chi Let's Encrypt tu dong cho {$PUBLIC_DOMAIN} (can DNS A/AAAA tro ve may chu + mo cong 80/443).
+# Header bao mat: HSTS dat tai day (API sau nginx khong thay HTTPS nen khong tu gui HSTS). Cac header UI nginx da
+# dat (CSP, nosniff, X-Frame-Options, Referrer-Policy) duoc GIU NGUYEN; "?" chi them khi upstream chua co.
+{
+	email {$ACME_EMAIL}
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+# http://{$PUBLIC_DOMAIN} tu dong chuyen huong sang https.
+{$PUBLIC_DOMAIN} {
+	encode zstd gzip
+
+	# Khop client_max_body_size cua UI nginx (55m) va gioi han upload cua API.
+	request_body {
+		max_size 55MB
+	}
+
+	header {
+		defer
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		?X-Content-Type-Options "nosniff"
+		?X-Frame-Options "DENY"
+		?Referrer-Policy "strict-origin-when-cross-origin"
+		?Content-Security-Policy "frame-ancestors 'none'"
+		?Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+		-X-Powered-By
+	}
+
+	# Tai lieu API / endpoint quan tri khong bao gio ra Internet (profile prod da tat Swagger).
+	@internal path /v3/* /swagger* /swagger-ui* /actuator* /api/actuator* /api/v3/*
+	respond @internal 404
+
+	# Caddy (khong cau hinh trusted_proxies) BO X-Forwarded-For client tu gui, dat X-Forwarded-For = IP client,
+	# X-Forwarded-Proto = https, X-Forwarded-Host va giu nguyen Host. nginx cua UI noi them IP cua Caddy vao
+	# X-Forwarded-For va giu X-Forwarded-Proto; Tomcat (forward-headers-strategy=native) bo qua proxy IP noi bo
+	# => API thay dung IP client + https (rate limit, nhat ky he thong).
+	reverse_proxy ui:80 {
+		header_up X-Real-IP {remote_host}
+	}
+
+	# Caddy khong ghi header Cookie / Authorization vao log truy cap.
+	log {
+		output stdout
+		format json
+	}
+}

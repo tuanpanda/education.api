@@ -30,6 +30,8 @@ public class JwtTokenService {
     static final String CLAIM_USERNAME = "username";
     /** Mã phiên đăng nhập (family của refresh token). */
     static final String CLAIM_SESSION_ID = "sid";
+    /** Loại tài khoản ({@link UserType}) lúc phát hành token (V17). */
+    static final String CLAIM_USER_TYPE = "user_type";
 
     private final JwtProperties properties;
 
@@ -55,8 +57,17 @@ public class JwtTokenService {
      * Phát hành access token gắn với phiên đăng nhập {@code sessionId} (claim {@code sid}).
      */
     public String generateAccessToken(Long userId, String username, Integer tokenVersion, String sessionId) {
+        return generateAccessToken(userId, username, tokenVersion, sessionId, null);
+    }
+
+    /**
+     * Phát hành access token gắn phiên {@code sessionId} và loại tài khoản {@code userType} (claim
+     * {@code user_type}; {@code null} = không ghi claim).
+     */
+    public String generateAccessToken(Long userId, String username, Integer tokenVersion, String sessionId,
+                                      UserType userType) {
         return generate(userId, username, tokenVersion, TokenType.ACCESS, UUID.randomUUID().toString(), sessionId,
-                properties.getAccessTokenTtl().toMillis());
+                userType, properties.getAccessTokenTtl().toMillis());
     }
 
     /**
@@ -71,7 +82,15 @@ public class JwtTokenService {
      */
     public String generateRefreshToken(Long userId, String username, Integer tokenVersion,
                                        String jti, String sessionId) {
-        return generate(userId, username, tokenVersion, TokenType.REFRESH, jti, sessionId,
+        return generateRefreshToken(userId, username, tokenVersion, jti, sessionId, null);
+    }
+
+    /**
+     * Phát hành refresh token kèm loại tài khoản {@code userType} (claim {@code user_type}; {@code null} = không ghi).
+     */
+    public String generateRefreshToken(Long userId, String username, Integer tokenVersion,
+                                       String jti, String sessionId, UserType userType) {
+        return generate(userId, username, tokenVersion, TokenType.REFRESH, jti, sessionId, userType,
                 properties.getRefreshTokenTtl().toMillis());
     }
 
@@ -128,11 +147,12 @@ public class JwtTokenService {
                 type,
                 claims.getExpiration() == null ? null : claims.getExpiration().toInstant(),
                 claims.getId(),
-                claims.get(CLAIM_SESSION_ID, String.class));
+                claims.get(CLAIM_SESSION_ID, String.class),
+                claims.get(CLAIM_USER_TYPE, String.class));
     }
 
     private String generate(Long userId, String username, Integer tokenVersion, TokenType type,
-                            String jti, String sessionId, long ttlMillis) {
+                            String jti, String sessionId, UserType userType, long ttlMillis) {
         Instant now = clock.instant();
         JwtBuilder builder = Jwts.builder()
                 .id(jti)
@@ -145,6 +165,9 @@ public class JwtTokenService {
                 .claim(CLAIM_TOKEN_VERSION, tokenVersion == null ? 0 : tokenVersion);
         if (sessionId != null) {
             builder.claim(CLAIM_SESSION_ID, sessionId);
+        }
+        if (userType != null) {
+            builder.claim(CLAIM_USER_TYPE, userType.name());
         }
         return builder.signWith(signingKey).compact();
     }

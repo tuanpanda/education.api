@@ -1,6 +1,7 @@
 package com.education.base.support;
 
 import com.education.base.security.AuthUserPrincipal;
+import com.education.base.security.UserType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -28,6 +29,25 @@ public final class TestSecurityContexts {
                 .fullName("User " + id)
                 .roles(roles)
                 .permissions(permissions)
+                .build();
+        SecurityContext context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(UsernamePasswordAuthenticationToken.authenticated(
+                principal, null, principal.getAuthorities()));
+        SecurityContextHolder.setContext(context);
+        return principal;
+    }
+
+    /** Đăng nhập tài khoản học sinh {@code id} liên kết với học sinh {@code studentId}. */
+    public static AuthUserPrincipal loginStudent(long id, Long studentId, boolean mustChangePassword) {
+        AuthUserPrincipal principal = AuthUserPrincipal.builder()
+                .id(id)
+                .username("hs" + id)
+                .fullName("Student " + id)
+                .roles(List.of("ROLE_STUDENT"))
+                .permissions(Set.of())
+                .mustChangePassword(mustChangePassword)
+                .userType(UserType.STUDENT)
+                .studentId(studentId)
                 .build();
         SecurityContext context = SecurityContextHolder.createEmptyContext();
         context.setAuthentication(UsernamePasswordAuthenticationToken.authenticated(

@@ -15,6 +15,7 @@ import com.education.base.security.InvalidTokenException;
 import com.education.base.security.JwtClaims;
 import com.education.base.security.JwtTokenService;
 import com.education.base.security.TokenType;
+import com.education.base.security.UserType;
 import com.education.base.service.AccessControlService;
 import com.education.base.service.AuthService;
 import com.education.base.service.AuthTokens;
@@ -172,6 +173,13 @@ public class AuthServiceImpl implements AuthService {
         if (request.getOldPassword().equals(request.getNewPassword())) {
             throw new OracleBusinessException("PASSWORD_UNCHANGED", "Mật khẩu mới phải khác mật khẩu hiện tại.");
         }
+        // Tài khoản học sinh / phụ huynh (V17): mật khẩu không được trùng tên đăng nhập. Nhân viên giữ nguyên chính sách cũ.
+        if (UserType.fromDb(user.getUserType()).filter(type -> type != UserType.STAFF).isPresent()
+                && user.getUsername() != null
+                && request.getNewPassword().toLowerCase(Locale.ROOT).contains(user.getUsername().toLowerCase(Locale.ROOT))) {
+            throw new OracleBusinessException("PASSWORD_CONTAINS_USERNAME",
+                    "Mật khẩu mới không được chứa tên đăng nhập.");
+        }
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
         user.setMustChangePassword(0);
         user.setPasswordChangedAt(LocalDateTime.now(clock));
@@ -301,9 +309,9 @@ public class AuthServiceImpl implements AuthService {
         AuthUserPrincipal principal = accessControlService.buildPrincipal(user);
         return AuthTokens.builder()
                 .accessToken(jwtTokenService.generateAccessToken(user.getId(), user.getUsername(), version,
-                        session.sessionId()))
+                        session.sessionId(), principal.getUserType()))
                 .refreshToken(jwtTokenService.generateRefreshToken(user.getId(), user.getUsername(), version,
-                        session.jti(), session.sessionId()))
+                        session.jti(), session.sessionId(), principal.getUserType()))
                 .accessTokenTtlSeconds(jwtTokenService.getAccessTokenTtlSeconds())
                 .refreshTokenTtlSeconds(jwtTokenService.getRefreshTokenTtlSeconds())
                 .user(toUserResponse(principal))
@@ -319,6 +327,8 @@ public class AuthServiceImpl implements AuthService {
                 .roles(new ArrayList<>(principal.getRoles()))
                 .permissions(new ArrayList<>(principal.getPermissions()))
                 .mustChangePassword(principal.isMustChangePassword())
+                .userType(principal.getUserType() == null ? null : principal.getUserType().name())
+                .studentId(principal.getUserType() == UserType.STUDENT ? principal.getStudentId() : null)
                 .build();
     }
 

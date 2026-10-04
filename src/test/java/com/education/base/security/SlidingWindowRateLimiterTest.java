@@ -47,7 +47,7 @@ class SlidingWindowRateLimiterTest {
         assertThat(limiter.tryAcquire("k", 3, window).allowed()).isTrue();
         assertThat(limiter.tryAcquire("k", 3, window).allowed()).isTrue();
 
-        SlidingWindowRateLimiter.Decision rejected = limiter.tryAcquire("k", 3, window);
+        RateLimiter.Decision rejected = limiter.tryAcquire("k", 3, window);
         assertThat(rejected.allowed()).isFalse();
         // Request đầu tiên rời cửa sổ sau 40 giây nữa.
         assertThat(rejected.retryAfterSeconds()).isEqualTo(40);

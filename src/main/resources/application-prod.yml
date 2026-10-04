@@ -1,4 +1,14 @@
-# Profile production — luôn bật khi chạy image Docker.
+# Profile production — luôn bật khi chạy image Docker (cả Docker cục bộ lẫn triển khai Internet).
+# Triển khai Internet (docker-compose.prod.yml) bật thêm APP_INTERNET_FACING=true: bắt buộc cookie Secure + CORS https.
+server:
+  error:
+    # Không lộ stack trace / thông điệp nội bộ qua trang lỗi mặc định (/error); API dùng GlobalExceptionHandler.
+    # (Trùng mặc định của Spring Boot - ghi tường minh để không bị bật nhầm ở production.)
+    include-stacktrace: never
+    include-exception: false
+    include-message: never
+    include-binding-errors: never
+
 spring:
   jpa:
     show-sql: false
@@ -12,14 +22,32 @@ springdoc:
   swagger-ui:
     enabled: false
 
+# Actuator chưa có trong pom (health: GET /api/v1/health). Nếu sau này thêm spring-boot-starter-actuator thì mặc định
+# chỉ mở health (không chi tiết); SecurityConfig vẫn denyAll mọi đường dẫn ngoài /api/**.
+management:
+  endpoints:
+    enabled-by-default: false
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      enabled: true
+      show-details: never
+
 app:
   cors:
     # Không có mặc định: rỗng = chỉ same-origin (UI Docker gọi /api qua nginx cùng origin).
+    # Internet: chỉ origin https:// cụ thể (InternetExposureValidator từ chối http:// khi APP_INTERNET_FACING=true).
     allowed-origins: ${CORS_ALLOWED_ORIGINS:}
   security:
     jwt:
       # Bắt buộc cấu hình qua biến môi trường, không có giá trị mặc định ở production.
       secret: ${JWT_SECRET}
+    cookie:
+      # Cookie đăng nhập luôn Secure ở prod (http://localhost vẫn được trình duyệt chấp nhận).
+      secure: ${AUTH_COOKIE_SECURE:true}
+      same-site: ${AUTH_COOKIE_SAME_SITE:Strict}
 
 logging:
   level:
