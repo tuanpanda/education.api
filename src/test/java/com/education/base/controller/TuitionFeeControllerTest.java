@@ -66,6 +66,37 @@ class TuitionFeeControllerTest {
                 .andExpect(jsonPath("$.data.base64Image").value("data:image/png;base64,abc"));
     }
 
+    // ---- V16: menu "Thu học phí VietQR" (MENU_TUITION_PAYMENT) bị gỡ, GEN_QR chuyển sang MENU_TUITION_FEE --------
+
+    @Test
+    @WithAuthUser(roles = "ROLE_ACCOUNTANT", permissions = "MENU_TUITION_FEE:GEN_QR")
+    void createQr_withTuitionFeeGenQr_isAllowed() throws Exception {
+        when(tuitionFeeService.createQr(eq(4L), any())).thenReturn(TuitionQrResponseDto.builder()
+                .tuitionFeeId(4L)
+                .qrPayload("000201")
+                .build());
+
+        mockMvc.perform(post("/api/v1/tuition-fees/4/create-qr")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.qrPayload").value("000201"));
+    }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_ACCOUNTANT", permissions = {"MENU_TUITION_PAYMENT:VIEW", "MENU_TUITION_PAYMENT:GEN_QR"})
+    void removedVietQrMenuPermissions_noLongerOpenFees() throws Exception {
+        mockMvc.perform(post("/api/v1/tuition-fees/4/create-qr")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/tuition-fees/search")).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/tuition-fees/4")).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/tuition-fees/9/slip")).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/tuition-fees/9/slip/html")).andExpect(status().isForbidden());
+        verifyNoInteractions(tuitionFeeService, tuitionSlipService);
+    }
+
     @Test
     void confirmPayment_returnsTransaction() throws Exception {
         when(tuitionFeeService.confirmPayment(eq(4L), any())).thenReturn(PaymentTransactionDto.builder()

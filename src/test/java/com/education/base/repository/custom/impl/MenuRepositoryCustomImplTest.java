@@ -18,7 +18,7 @@ class MenuRepositoryCustomImplTest {
         List<MenuItemResponseDto> flat = new ArrayList<>(List.of(
                 menu(101L, 100L, "MENU_STUDENT_LIST", 1),
                 menu(100L, null, "DIR_ACADEMIC", 1),
-                menu(201L, 200L, "MENU_TUITION_PAYMENT", 1),
+                menu(202L, 200L, "MENU_TUITION_FEE", 1),
                 menu(200L, null, "DIR_FINANCE", 2)));
 
         List<MenuItemResponseDto> roots = MenuRepositoryCustomImpl.buildTree(flat);
@@ -28,7 +28,7 @@ class MenuRepositoryCustomImplTest {
         assertThat(roots.get(0).getChildren()).extracting(MenuItemResponseDto::getMenuCode)
                 .containsExactly("MENU_STUDENT_LIST");
         assertThat(roots.get(1).getChildren()).extracting(MenuItemResponseDto::getMenuCode)
-                .containsExactly("MENU_TUITION_PAYMENT");
+                .containsExactly("MENU_TUITION_FEE");
     }
 
     @Test
