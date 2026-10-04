@@ -29,4 +29,10 @@ public @interface WithAuthUser {
     String[] permissions() default {};
 
     boolean mustChangePassword() default false;
+
+    /** Loại tài khoản ({@code UserType}): STAFF / STUDENT / PARENT. */
+    String userType() default "STAFF";
+
+    /** Học sinh liên kết (chỉ ý nghĩa với {@code userType = STUDENT}); âm = không có. */
+    long studentId() default -1L;
 }

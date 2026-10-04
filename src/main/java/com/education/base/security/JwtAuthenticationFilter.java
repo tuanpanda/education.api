@@ -88,6 +88,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             throw revoked();
         }
         AuthUserPrincipal principal = loaded.get();
+        if (claims.userType() != null && !claims.userType().equals(principal.getUserType().name())) {
+            // Token phát hành cho loại tài khoản khác với hiện tại trong DB: không dùng lại.
+            throw revoked();
+        }
         UsernamePasswordAuthenticationToken authentication =
                 UsernamePasswordAuthenticationToken.authenticated(principal, null, principal.getAuthorities());
         authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));

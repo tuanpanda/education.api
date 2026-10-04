@@ -64,6 +64,22 @@ class JwtTokenServiceTest {
     }
 
     @Test
+    void userType_isCarriedInClaims_andAbsentForLegacyOverloads() {
+        JwtTokenService service = serviceAt(NOW);
+
+        JwtClaims access = service.parse(
+                service.generateAccessToken(9L, "hs00001", 0, "sid-9", UserType.STUDENT), TokenType.ACCESS);
+        JwtClaims refresh = service.parse(
+                service.generateRefreshToken(9L, "hs00001", 0, "jti-9", "sid-9", UserType.STUDENT), TokenType.REFRESH);
+        JwtClaims legacy = service.parse(service.generateAccessToken(5L, "admin", 1, "sid-1"), TokenType.ACCESS);
+
+        assertThat(access.userType()).isEqualTo("STUDENT");
+        assertThat(refresh.userType()).isEqualTo("STUDENT");
+        assertThat(access.sessionId()).isEqualTo("sid-9");
+        assertThat(legacy.userType()).isNull();
+    }
+
+    @Test
     void refreshToken_cannotBeUsedAsAccessToken() {
         JwtTokenService service = serviceAt(NOW);
         String refresh = service.generateRefreshToken(5L, "admin", 0);

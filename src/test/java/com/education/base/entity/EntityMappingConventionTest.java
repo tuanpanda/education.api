@@ -45,7 +45,8 @@ class EntityMappingConventionTest {
                 new Object[]{RoleMenuPermissionEntity.class, "SYS_ROLE_MENU_PERMISSIONS", "SEQ_SYS_ROLE_MENU_PERM"},
                 new Object[]{CodeRuleEntity.class, "SYS_CODE_RULES", "SEQ_SYS_CODE_RULES"},
                 new Object[]{ClassScheduleEntity.class, "EDU_CLASS_SCHEDULES", "SEQ_EDU_CLASS_SCHEDULES"},
-                new Object[]{ClassSessionEntity.class, "EDU_CLASS_SESSIONS", "SEQ_EDU_CLASS_SESSIONS"});
+                new Object[]{ClassSessionEntity.class, "EDU_CLASS_SESSIONS", "SEQ_EDU_CLASS_SESSIONS"},
+                new Object[]{UserStudentLinkEntity.class, "EDU_USER_STUDENT_LINKS", "SEQ_EDU_USER_STUDENT_LINKS"});
     }
 
     @ParameterizedTest(name = "{1}")
@@ -354,6 +355,27 @@ class EntityMappingConventionTest {
     }
 
     @Test
+    void userEntity_onCreate_defaultsToStaffType() {
+        UserEntity user = new UserEntity();
+        user.onCreate();
+        assertThat(user.getUserType()).isEqualTo("STAFF");
+
+        UserEntity student = UserEntity.builder().userType("STUDENT").build();
+        student.onCreate();
+        assertThat(student.getUserType()).isEqualTo("STUDENT");
+    }
+
+    @Test
+    void userStudentLink_onCreate_defaults() {
+        UserStudentLinkEntity link = new UserStudentLinkEntity();
+        link.onCreate();
+        assertThat(link.getIsDeleted()).isZero();
+        assertThat(link.getIsPrimary()).isZero();
+        assertThat(link.getStatus()).isEqualTo("ACTIVE");
+        assertThat(link.getCreatedAt()).isNotNull();
+    }
+
+    @Test
     void allEntitiesAreCovered() {
         List<String> covered = sequencedEntities()
                 .map(row -> ((Class<?>) row[0]).getSimpleName())
@@ -365,7 +387,7 @@ class EntityMappingConventionTest {
                 "BankAccountEntity",
                 "FileEntity", "UserEntity", "RefreshTokenEntity", "RoleEntity",
                 "MenuEntity", "FunctionEntity", "RoleMenuPermissionEntity", "CodeRuleEntity",
-                "ClassScheduleEntity", "ClassSessionEntity");
+                "ClassScheduleEntity", "ClassSessionEntity", "UserStudentLinkEntity");
         assertThat(UserRoleEntity.class.getAnnotation(Entity.class)).isNotNull();
     }
 

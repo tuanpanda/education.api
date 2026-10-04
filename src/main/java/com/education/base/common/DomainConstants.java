@@ -123,6 +123,26 @@ public class DomainConstants {
 
     public static final String USER_STATUS_LOCKED = "LOCKED";
 
+    /** Loại tài khoản - {@code SYS_USERS.USER_TYPE} ({@code CK_USERS_USER_TYPE}, V17_1). */
+    public static final String USER_TYPE_STAFF = "STAFF";
+
+    public static final String USER_TYPE_STUDENT = "STUDENT";
+
+    public static final String USER_TYPE_PARENT = "PARENT";
+
+    /** Quan hệ tài khoản - học sinh - {@code EDU_USER_STUDENT_LINKS.RELATION} (V17_1). */
+    public static final String LINK_RELATION_SELF = "SELF";
+
+    public static final String LINK_RELATION_PARENT = "PARENT";
+
+    /** Trạng thái liên kết - {@code EDU_USER_STUDENT_LINKS.STATUS} (V17_1). */
+    public static final String LINK_STATUS_ACTIVE = "ACTIVE";
+
+    public static final String LINK_STATUS_INACTIVE = "INACTIVE";
+
+    /** Trạng thái ghi danh đang học - {@code EDU_CLASS_STUDENTS.STATUS}. */
+    public static final String ENROLLMENT_STATUS_ENROLLED = "ENROLLED";
+
     /** Trạng thái vai trò / menu - {@code SYS_ROLES.STATUS}, {@code SYS_MENUS.STATUS}. */
     public static final String RECORD_STATUS_ACTIVE = "ACTIVE";
 

@@ -41,17 +41,40 @@ public class AuthUserPrincipal implements Principal, Serializable {
 
     private final int tokenVersion;
 
+    /**
+     * Loại tài khoản ({@code SYS_USERS.USER_TYPE}). Mặc định {@link UserType#STAFF} cho principal dựng tay
+     * (test); principal thật luôn được {@code AccessControlService.buildPrincipal} gán từ DB.
+     */
+    @Builder.Default
+    private final UserType userType = UserType.STAFF;
+
+    /**
+     * Học sinh của tài khoản {@link UserType#STUDENT} (liên kết {@code SELF} đang hoạt động trong
+     * {@code EDU_USER_STUDENT_LINKS}); {@code null} với tài khoản khác hoặc khi chưa có liên kết.
+     */
+    private final Long studentId;
+
     @Override
     public String getName() {
         return username;
     }
 
+    /** Tài khoản nhân viên (được dùng API quản trị). */
+    public boolean isStaff() {
+        return userType == UserType.STAFF;
+    }
+
     /** Người dùng có vai trò quản trị tối cao ({@link Permissions#ADMIN_ROLE}) - bỏ qua kiểm tra quyền chi tiết. */
     public boolean isAdmin() {
-        return roles != null && roles.contains(Permissions.ADMIN_ROLE);
+        // Hàng rào kép: tài khoản không phải nhân viên không bao giờ được coi là quản trị viên,
+        // kể cả khi lỡ bị gán ROLE_ADMIN.
+        return isStaff() && roles != null && roles.contains(Permissions.ADMIN_ROLE);
     }
 
     public boolean hasPermission(String permission) {
+        if (!isStaff()) {
+            return false;
+        }
         return isAdmin() || (permissions != null && permissions.contains(permission));
     }
 

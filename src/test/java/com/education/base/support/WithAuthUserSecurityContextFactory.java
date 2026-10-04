@@ -1,6 +1,7 @@
 package com.education.base.support;
 
 import com.education.base.security.AuthUserPrincipal;
+import com.education.base.security.UserType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -20,6 +21,8 @@ public class WithAuthUserSecurityContextFactory implements WithSecurityContextFa
                 .roles(List.of(annotation.roles()))
                 .permissions(Set.of(annotation.permissions()))
                 .mustChangePassword(annotation.mustChangePassword())
+                .userType(UserType.valueOf(annotation.userType()))
+                .studentId(annotation.studentId() < 0 ? null : annotation.studentId())
                 .build();
         SecurityContext context = SecurityContextHolder.createEmptyContext();
         context.setAuthentication(UsernamePasswordAuthenticationToken.authenticated(

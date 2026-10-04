@@ -87,6 +87,13 @@ public class UserEntity {
     @Column(name = "PASSWORD_CHANGED_AT")
     private LocalDateTime passwordChangedAt;
 
+    /**
+     * Loại tài khoản (V17_1): {@code STAFF} (mặc định) / {@code STUDENT} / {@code PARENT}
+     * ({@code CK_USERS_USER_TYPE}). Tài khoản học sinh do màn hình "Tài khoản học sinh" tạo.
+     */
+    @Column(name = "USER_TYPE", nullable = false, length = 20)
+    private String userType;
+
     @Column(name = "IS_DELETED", nullable = false)
     private Integer isDeleted;
 
@@ -117,6 +124,9 @@ public class UserEntity {
         }
         if (status == null || status.isBlank()) {
             status = "ACTIVE";
+        }
+        if (userType == null || userType.isBlank()) {
+            userType = "STAFF";
         }
         if (mustChangePassword == null) {
             mustChangePassword = 0;
