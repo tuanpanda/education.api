@@ -99,6 +99,39 @@ app:
         login-per-username: ${AUTH_RATE_LIMIT_LOGIN_PER_USERNAME:10}
         refresh-per-ip: ${AUTH_RATE_LIMIT_REFRESH_PER_IP:120}
         refresh-per-user: ${AUTH_RATE_LIMIT_REFRESH_PER_USER:60}
+    # Giới hạn tần suất tổng quát (RequestRateLimitFilter, cùng bộ đếm trong bộ nhớ với đăng nhập): theo IP và theo
+    # người dùng đã đăng nhập; 0 = tắt chiều đó. Vượt ngưỡng -> HTTP 429 + Retry-After.
+    rate-limit:
+      enabled: ${RATE_LIMIT_ENABLED:true}
+      max-tracked-keys: ${RATE_LIMIT_MAX_TRACKED_KEYS:100000}
+      rules:
+        # Đổi mật khẩu (chống dò mật khẩu cũ bằng phiên đã đăng nhập).
+        change-password:
+          paths: /api/v1/auth/change-password
+          methods: POST
+          window: ${RATE_LIMIT_CHANGE_PASSWORD_WINDOW:15m}
+          per-ip: ${RATE_LIMIT_CHANGE_PASSWORD_PER_IP:30}
+          per-user: ${RATE_LIMIT_CHANGE_PASSWORD_PER_USER:5}
+        # Ngân sách mặc định cho cổng học sinh. Theo IP mặc định tắt: cả lớp ở trung tâm dùng chung một IP (NAT).
+        portal:
+          paths: /api/v1/portal/**
+          window: ${RATE_LIMIT_PORTAL_WINDOW:5m}
+          per-ip: ${RATE_LIMIT_PORTAL_PER_IP:0}
+          per-user: ${RATE_LIMIT_PORTAL_PER_USER:300}
+        # Mọi request upload (multipart) tới API: tải file, nhập Excel, (GĐ2) nộp bài.
+        upload:
+          paths: /api/**
+          methods: POST,PUT,PATCH
+          multipart-only: true
+          window: ${RATE_LIMIT_UPLOAD_WINDOW:1h}
+          per-ip: ${RATE_LIMIT_UPLOAD_PER_IP:300}
+          per-user: ${RATE_LIMIT_UPLOAD_PER_USER:60}
+    # Bật khi API được đưa ra Internet (docker-compose.prod.yml): chặn khởi động nếu cookie không Secure hoặc CORS
+    # có origin không phải https:// (InternetExposureValidator). Mặc định false: Docker cục bộ chạy như cũ.
+    internet-facing: ${APP_INTERNET_FACING:false}
+  audit:
+    # Nhật ký hệ thống SYS_AUDIT_LOGS (V17_3). Ghi lỗi (bảng chưa tạo...) chỉ log WARN, không làm hỏng request.
+    enabled: ${AUDIT_ENABLED:true}
 
 springdoc:
   api-docs:

@@ -12,9 +12,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Bộ giới hạn tần suất cửa sổ trượt (sliding log) lưu trong bộ nhớ, an toàn đa luồng.
  * <p>
  * Mỗi khóa giữ danh sách thời điểm các request được chấp nhận trong cửa sổ gần nhất. Chỉ phù hợp cho các
- * endpoint lưu lượng thấp (đăng nhập, làm mới token) và áp dụng theo từng instance ứng dụng.
+ * mức giới hạn vừa phải (đăng nhập, làm mới token, đổi mật khẩu, upload, ngân sách {@code /api/v1/portal/**} vài
+ * trăm request / cửa sổ) và áp dụng theo từng instance ứng dụng.
  */
-public class SlidingWindowRateLimiter {
+public class SlidingWindowRateLimiter implements RateLimiter {
 
     private static final int CLEANUP_EVERY = 1024;
 
@@ -28,11 +29,7 @@ public class SlidingWindowRateLimiter {
         this.maxTrackedKeys = maxTrackedKeys;
     }
 
-    /**
-     * Ghi nhận một request cho {@code key} nếu chưa vượt {@code limit} trong {@code window}.
-     *
-     * @return kết quả; khi bị từ chối kèm số giây nên chờ.
-     */
+    @Override
     public Decision tryAcquire(String key, int limit, Duration window) {
         long now = clock.millis();
         long windowMillis = window.toMillis();
@@ -96,19 +93,6 @@ public class SlidingWindowRateLimiter {
             while (!hits.isEmpty() && hits.peekFirst() <= threshold) {
                 hits.pollFirst();
             }
-        }
-    }
-
-    /**
-     * @param allowed           {@code true} nếu request được chấp nhận.
-     * @param retryAfterSeconds số giây nên chờ khi bị từ chối (0 nếu được chấp nhận).
-     */
-    public record Decision(boolean allowed, long retryAfterSeconds) {
-
-        public static final Decision ALLOWED = new Decision(true, 0);
-
-        public static Decision rejected(long retryAfterSeconds) {
-            return new Decision(false, Math.max(retryAfterSeconds, 1));
         }
     }
 }

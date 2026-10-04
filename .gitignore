@@ -28,5 +28,7 @@ out/
 outputs/
 *.log
 .env
+.env.prod
+backups/
 actions-runner/
 ci-image-tags.txt

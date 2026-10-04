@@ -123,6 +123,9 @@ public class Permissions {
     public static final String ROLE_UPDATE = "MENU_ROLE_LIST:UPDATE";
     public static final String ROLE_DELETE = "MENU_ROLE_LIST:DELETE";
 
+    /** Nhật ký hệ thống (Giai đoạn 0 stream B, V17_3). */
+    public static final String AUDIT_LOG_VIEW = "MENU_AUDIT_LOG:VIEW";
+
     public static final String MENU_CONFIG_VIEW = "MENU_MENU_CONFIG:VIEW";
     public static final String MENU_CONFIG_CREATE = "MENU_MENU_CONFIG:CREATE";
     public static final String MENU_CONFIG_UPDATE = "MENU_MENU_CONFIG:UPDATE";
