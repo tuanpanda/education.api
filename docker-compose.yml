@@ -42,6 +42,15 @@ services:
       AUTH_RATE_LIMIT_LOGIN_PER_USERNAME: ${AUTH_RATE_LIMIT_LOGIN_PER_USERNAME:-10}
       AUTH_RATE_LIMIT_REFRESH_PER_IP: ${AUTH_RATE_LIMIT_REFRESH_PER_IP:-120}
       AUTH_RATE_LIMIT_REFRESH_PER_USER: ${AUTH_RATE_LIMIT_REFRESH_PER_USER:-60}
+      # Giới hạn tần suất tổng quát (đổi mật khẩu, /api/v1/portal/**, upload) - mặc định như application.yml.
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_CHANGE_PASSWORD_PER_USER: ${RATE_LIMIT_CHANGE_PASSWORD_PER_USER:-5}
+      RATE_LIMIT_PORTAL_PER_USER: ${RATE_LIMIT_PORTAL_PER_USER:-300}
+      RATE_LIMIT_UPLOAD_PER_USER: ${RATE_LIMIT_UPLOAD_PER_USER:-60}
+      # Nhật ký hệ thống SYS_AUDIT_LOGS (chạy migration V17_3 trước; chưa chạy thì chỉ log WARN).
+      AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
+      # Docker cục bộ: false. Triển khai Internet dùng docker-compose.prod.yml (true).
+      APP_INTERNET_FACING: ${APP_INTERNET_FACING:-false}
       # IP thật của client từ X-Forwarded-For (API chạy sau nginx của UI); Tomcat chỉ tin header từ IP nội bộ.
       SERVER_FORWARD_HEADERS_STRATEGY: ${SERVER_FORWARD_HEADERS_STRATEGY:-native}
       # Cookie đăng nhập HttpOnly: Secure (chỉ gửi qua HTTPS; trình duyệt vẫn chấp nhận trên http://localhost).

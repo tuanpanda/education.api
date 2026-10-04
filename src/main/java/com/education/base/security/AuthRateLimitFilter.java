@@ -32,6 +32,8 @@ import java.util.Locale;
  * {@value AuthCookieService#REFRESH_COOKIE}). Vượt ngưỡng trả HTTP 429 kèm {@code Retry-After}.
  * <p>
  * Được đăng ký SAU chuỗi Spring Security (để phản hồi 429 vẫn có header CORS) - xem {@code AuthSecurityConfig}.
+ * Các endpoint khác (đổi mật khẩu, upload, {@code /api/v1/portal/**}) do {@link RequestRateLimitFilter} giới hạn theo
+ * quy tắc cấu hình {@code app.security.rate-limit.rules}; hai filter dùng chung một {@link RateLimiter}.
  * IP lấy từ {@link HttpServletRequest#getRemoteAddr()}; phía sau reverse proxy (nginx của UI) cần bật
  * {@code server.forward-headers-strategy} để Tomcat lấy IP thật từ {@code X-Forwarded-For}.
  */
@@ -46,13 +48,13 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
     static final int MAX_INSPECTED_BODY_BYTES = 16 * 1024;
     private static final int MAX_KEY_LENGTH = 100;
 
-    private final SlidingWindowRateLimiter limiter;
+    private final RateLimiter limiter;
     private final AuthSecurityProperties.RateLimit config;
     private final ObjectMapper objectMapper;
     private final JwtTokenService jwtTokenService;
     private final SecurityErrorWriter errorWriter;
 
-    public AuthRateLimitFilter(SlidingWindowRateLimiter limiter, AuthSecurityProperties.RateLimit config,
+    public AuthRateLimitFilter(RateLimiter limiter, AuthSecurityProperties.RateLimit config,
                                ObjectMapper objectMapper, JwtTokenService jwtTokenService) {
         this.limiter = limiter;
         this.config = config;
@@ -75,7 +77,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
         boolean login = LOGIN_PATH.equals(endpoint);
         String ip = truncate(request.getRemoteAddr());
 
-        SlidingWindowRateLimiter.Decision byIp = limiter.tryAcquire(
+        RateLimiter.Decision byIp = limiter.tryAcquire(
                 (login ? "login:ip:" : "refresh:ip:") + ip,
                 login ? config.getLoginPerIp() : config.getRefreshPerIp(),
                 config.getWindow());
@@ -89,7 +91,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
         HttpServletRequest forwarded = login ? new CachedBodyRequest(request) : request;
         String accountKey = login ? loginAccountKey((CachedBodyRequest) forwarded) : refreshAccountKey(request);
         if (accountKey != null) {
-            SlidingWindowRateLimiter.Decision byAccount = limiter.tryAcquire(
+            RateLimiter.Decision byAccount = limiter.tryAcquire(
                     accountKey,
                     login ? config.getLoginPerUsername() : config.getRefreshPerUser(),
                     config.getWindow());
@@ -102,7 +104,7 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
         chain.doFilter(forwarded, response);
     }
 
-    private void reject(HttpServletResponse response, SlidingWindowRateLimiter.Decision decision) throws IOException {
+    private void reject(HttpServletResponse response, RateLimiter.Decision decision) throws IOException {
         response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(decision.retryAfterSeconds()));
         errorWriter.write(response, HttpStatus.TOO_MANY_REQUESTS.value(), TOO_MANY_REQUESTS,
                 "Bạn đã thử quá nhiều lần. Vui lòng thử lại sau " + describeWait(decision.retryAfterSeconds()) + ".");

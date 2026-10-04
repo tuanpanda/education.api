@@ -10,6 +10,9 @@ logs
 actions-runner
 *.log
 .env
+.env.*
+deploy
+backups
 *.md
 docs
 scripts
