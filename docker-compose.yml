@@ -75,6 +75,10 @@ services:
         BUILD_DATE: ${BUILD_DATE:-unknown}
     ports:
       - "${UI_PORT:-8088}:80"
+    environment:
+      # Địa chỉ đăng nhập công khai in trên phiếu tài khoản học sinh (ghi vào env.js khi container khởi động),
+      # vd https://hocsinh.trungtam.vn/login. Để trống = địa chỉ trang đang mở + /login.
+      PUBLIC_LOGIN_URL: ${PUBLIC_LOGIN_URL:-}
     depends_on:
       - api
     restart: unless-stopped

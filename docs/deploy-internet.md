@@ -131,6 +131,26 @@ instance thì thay bean `RateLimiter` bằng bản dùng chung (Redis/DB).
 | `CORS_ALLOWED_ORIGINS` | Để trống (cùng origin). Nếu bắt buộc khác origin: chỉ `https://...` cụ thể, không wildcard. |
 | `SERVER_FORWARD_HEADERS_STRATEGY` | `native` (compose prod cố định). |
 
+### 4.4. Địa chỉ đăng nhập in trên phiếu tài khoản học sinh (`PUBLIC_LOGIN_URL`)
+
+Phiếu tài khoản (màn hình **Hệ thống → Tài khoản học sinh**: in phiếu / sao chép / xuất CSV) ghi địa chỉ đăng nhập
+cho học sinh. Mặc định là địa chỉ trang nhân viên đang mở + `/login` – nếu nhân viên in phiếu từ máy trong LAN
+(`http://192.168.1.10:8088`) thì phiếu sẽ ghi địa chỉ LAN, học sinh ở nhà không vào được. Đặt địa chỉ công khai cố định:
+
+| Cách chạy UI | Cấu hình |
+|---|---|
+| `docker-compose.prod.yml` | Biến `PUBLIC_LOGIN_URL` của service `ui`; mặc định `https://${PUBLIC_DOMAIN}/login` (không cần đặt). Đổi trong `.env.prod` nếu cần. |
+| Docker cục bộ (`docker-compose.yml`, UI `8088`) | Đặt `PUBLIC_LOGIN_URL=https://hocsinh.trungtam.vn/login` trong `.env` rồi `docker compose up -d ui` (không cần build lại). Để trống = hành vi cũ. |
+| IIS / file tĩnh (`dist/`) | Sửa `PUBLIC_LOGIN_URL` trong `env.js` cạnh `index.html` (mẫu: `env/runtime/env.*.js` của repo UI). |
+
+- Cơ chế: image UI có script `/docker-entrypoint.d/40-education-runtime-env.sh` chạy mỗi lần container khởi động,
+  ghi biến môi trường `PUBLIC_LOGIN_URL` vào `/usr/share/nginx/html/env.js` (`window.__EDUCATION_ENV__.PUBLIC_LOGIN_URL`).
+  Log khởi động container `ui` in giá trị đang dùng: `docker compose logs ui | Select-String PUBLIC_LOGIN_URL`.
+- Chỉ nhận `http://` / `https://`, không khoảng trắng / dấu nháy; giá trị sai bị bỏ qua (cảnh báo trong log `ui`) và
+  phiếu quay về địa chỉ trang đang mở. Chỉ ghi tên miền (`https://hocsinh.trungtam.vn`) thì tự thêm `/login`.
+- Kiểm tra: mở `http://<máy chủ>:8088/env.js` (hoặc `https://<tên miền>/env.js`) thấy dòng `PUBLIC_LOGIN_URL`; tạo /
+  đặt lại mật khẩu một tài khoản thử rồi xem phiếu.
+
 ## 5. Migration V17_3 (nhật ký hệ thống)
 
 Script: `src/main/resources/db/migration/V17_3__audit_log.sql` – tạo `SEQ_SYS_AUDIT_LOGS`, bảng `SYS_AUDIT_LOGS`

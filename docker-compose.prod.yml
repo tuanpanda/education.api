@@ -50,6 +50,9 @@ services:
     # Khong publish cong: chi Caddy goi vao (http://ui:80).
     expose:
       - "80"
+    environment:
+      # Dia chi dang nhap in tren phieu tai khoan hoc sinh (ghi vao env.js khi container khoi dong).
+      PUBLIC_LOGIN_URL: ${PUBLIC_LOGIN_URL:-https://${PUBLIC_DOMAIN}/login}
     depends_on:
       - api
     logging: *default-logging
