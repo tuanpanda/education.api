@@ -35,4 +35,13 @@ public class AuthUserResponse {
 
     /** {@code true}: phải đổi mật khẩu trước khi dùng các chức năng khác. */
     private boolean mustChangePassword;
+
+    /**
+     * Loại tài khoản (V17): {@code STAFF} -> ứng dụng quản trị; {@code STUDENT} -> cổng {@code /portal};
+     * {@code PARENT} -> dự phòng giai đoạn sau. Frontend dùng để chọn "vỏ" giao diện.
+     */
+    private String userType;
+
+    /** Học sinh của tài khoản {@code STUDENT} (liên kết SELF); {@code null} với loại tài khoản khác. */
+    private Long studentId;
 }

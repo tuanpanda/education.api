@@ -13,6 +13,9 @@ import com.education.base.repository.MenuRepository;
 import com.education.base.repository.RoleMenuPermissionRepository;
 import com.education.base.repository.UserRepository;
 import com.education.base.repository.UserRoleRepository;
+import com.education.base.repository.UserStudentLinkRepository;
+import com.education.base.entity.UserStudentLinkEntity;
+import com.education.base.security.UserType;
 import com.education.base.security.AuthUserPrincipal;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +30,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,13 +46,15 @@ class AccessControlServiceImplTest {
     private FunctionRepository functionRepository;
     @Mock
     private RoleMenuPermissionRepository roleMenuPermissionRepository;
+    @Mock
+    private UserStudentLinkRepository userStudentLinkRepository;
 
     private AccessControlServiceImpl service;
 
     @BeforeEach
     void setUp() {
         service = new AccessControlServiceImpl(userRepository, userRoleRepository, menuRepository,
-                functionRepository, roleMenuPermissionRepository);
+                functionRepository, roleMenuPermissionRepository, userStudentLinkRepository);
         MenuEntity hidden = menu(104L, 100L, "MENU_HIDDEN", 4);
         hidden.setIsHidden(1);
         lenient().when(menuRepository.findByIsDeletedOrderBySortOrderAscIdAsc(0)).thenReturn(List.of(
@@ -147,5 +153,46 @@ class AccessControlServiceImplTest {
         assertThat(principal.isMustChangePassword()).isTrue();
         assertThat(principal.getTokenVersion()).isEqualTo(4);
         assertThat(principal.isAdmin()).isFalse();
+    }
+
+    @Test
+    void loadActivePrincipal_staffUser_isStaffWithoutStudent() {
+        when(userRepository.findByIdAndIsDeleted(5L, 0)).thenReturn(Optional.of(UserEntity.builder()
+                .id(5L).username("teacher1").status("ACTIVE").userType("STAFF").isDeleted(0).build()));
+        when(userRoleRepository.findWithRoleByUserIdIn(List.of(5L))).thenReturn(List.of());
+
+        AuthUserPrincipal principal = service.loadActivePrincipal(5L).orElseThrow();
+
+        assertThat(principal.getUserType()).isEqualTo(UserType.STAFF);
+        assertThat(principal.getStudentId()).isNull();
+        verifyNoInteractions(userStudentLinkRepository);
+    }
+
+    @Test
+    void loadActivePrincipal_student_getsStudentIdAndNoPermissionsEvenWithStaffRole() {
+        when(userRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(UserEntity.builder()
+                .id(9L).username("hs00001").status("ACTIVE").userType("STUDENT").isDeleted(0)
+                .mustChangePassword(1).tokenVersion(0).build()));
+        RoleEntity admin = role(1L, "ROLE_ADMIN");
+        when(userRoleRepository.findWithRoleByUserIdIn(List.of(9L))).thenReturn(List.of(
+                UserRoleEntity.builder().userId(9L).roleId(1L).role(admin).build()));
+        when(userStudentLinkRepository.findActiveSelfLinkByUserId(9L)).thenReturn(Optional.of(
+                UserStudentLinkEntity.builder().userId(9L).studentId(42L).relation("SELF").status("ACTIVE").build()));
+
+        AuthUserPrincipal principal = service.loadActivePrincipal(9L).orElseThrow();
+
+        assertThat(principal.getUserType()).isEqualTo(UserType.STUDENT);
+        assertThat(principal.getStudentId()).isEqualTo(42L);
+        assertThat(principal.getPermissions()).isEmpty();
+        assertThat(principal.isAdmin()).as("tài khoản học sinh không bao giờ là quản trị viên").isFalse();
+        assertThat(principal.hasPermission("MENU_USER_LIST:VIEW")).isFalse();
+    }
+
+    @Test
+    void loadActivePrincipal_unknownUserType_isEmpty() {
+        when(userRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(UserEntity.builder()
+                .id(9L).username("x").status("ACTIVE").userType("ALIEN").isDeleted(0).build()));
+
+        assertThat(service.loadActivePrincipal(9L)).isEmpty();
     }
 }

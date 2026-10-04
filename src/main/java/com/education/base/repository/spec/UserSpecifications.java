@@ -1,5 +1,6 @@
 package com.education.base.repository.spec;
 
+import com.education.base.common.DomainConstants;
 import com.education.base.common.PersistenceFlags;
 import com.education.base.dto.request.UserFilterRequest;
 import com.education.base.entity.UserEntity;
@@ -26,6 +27,8 @@ public final class UserSpecifications {
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
             predicates.add(cb.equal(root.get("isDeleted"), PersistenceFlags.NOT_DELETED));
+            // Màn hình "Người dùng" chỉ quản lý tài khoản nhân viên; tài khoản học sinh có màn hình riêng (V17).
+            predicates.add(cb.equal(root.get("userType"), DomainConstants.USER_TYPE_STAFF));
 
             if (criteria.getKeyword() != null && !criteria.getKeyword().isBlank()) {
                 String like = contains(criteria.getKeyword());
