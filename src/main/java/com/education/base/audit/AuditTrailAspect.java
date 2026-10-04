@@ -146,6 +146,8 @@ public class AuditTrailAspect {
                             .action(AuditActions.LOGIN_SUCCESS)
                             .resource(AuditActions.RESOURCE_USER, user == null ? null : user.getId())
                             .actor(user == null ? null : user.getId(), user == null ? null : user.getUsername())
+                            // Chưa có SecurityContext lúc đăng nhập: lấy loại tài khoản từ kết quả (V17_1).
+                            .actorUserType(user == null ? null : user.getUserType())
                             .build();
                 },
                 (a, args, error) -> () -> {

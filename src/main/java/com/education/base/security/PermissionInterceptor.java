@@ -1,7 +1,11 @@
 package com.education.base.security;
 
+import com.education.base.audit.AuditActions;
+import com.education.base.audit.AuditEvent;
+import com.education.base.audit.AuditResult;
 import com.education.base.exception.ForbiddenException;
 import com.education.base.exception.UnauthorizedException;
+import com.education.base.service.AuditService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +24,7 @@ import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * Kiểm tra quyền trước khi vào Controller - TỪ CHỐI MẶC ĐỊNH:
@@ -48,6 +53,10 @@ import java.util.Set;
  * <p>
  * Vùng API lấy từ mẫu đường dẫn của chính handler ({@link HandlerMapping#BEST_MATCHING_PATTERN_ATTRIBUTE}), không
  * từ URL thô, nên không thể "mượn" tiền tố {@code /api/v1/auth} để vào handler quản trị.
+ * <p>
+ * Bị chặn bởi hàng rào loại tài khoản ({@value #STAFF_ONLY_CODE} / {@value #STUDENT_ONLY_CODE}) -> ghi nhật ký
+ * {@code PORTAL_ACCESS_DENIED} (kết quả {@code DENIED}, V17_3) nếu có {@link AuditService}: frontend đúng không
+ * bao giờ gây ra các lỗi này, nên mỗi bản ghi là một dấu hiệu dò quyền đáng xem.
  */
 @Slf4j
 public class PermissionInterceptor implements HandlerInterceptor {
@@ -59,6 +68,8 @@ public class PermissionInterceptor implements HandlerInterceptor {
     /** Tài khoản không được phép (ví dụ nhân viên) gọi API cổng học sinh. */
     public static final String STUDENT_ONLY_CODE = "STUDENT_ONLY";
 
+    /** {@code RESOURCE_TYPE} của nhật ký từ chối truy cập ({@code PORTAL_ACCESS_DENIED}). */
+    public static final String AUDIT_RESOURCE_API = "API";
     public static final String AUTH_PATH_PREFIX = "/api/v1/auth";
     public static final String PORTAL_PATH_PREFIX = "/api/v1/portal";
 
@@ -88,14 +99,53 @@ public class PermissionInterceptor implements HandlerInterceptor {
         private static final AccessRule UNDECLARED = new AccessRule(AccessType.UNDECLARED, null, null);
     }
 
+    /** Nguồn {@link AuditService} (có thể trả {@code null}: slice test / chưa cấu hình nhật ký). */
+    private final Supplier<AuditService> auditService;
+
+    public PermissionInterceptor() {
+        this(() -> null);
+    }
+
+    public PermissionInterceptor(Supplier<AuditService> auditService) {
+        this.auditService = auditService == null ? () -> null : auditService;
+    }
+
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         if (!(handler instanceof HandlerMethod handlerMethod)) {
             return true;
         }
-        authorize(handlerMethod.getMethod(), handlerMethod.getBeanType(), handlerPath(request),
-                SecurityContextHolder.getContext().getAuthentication());
+        String path = handlerPath(request);
+        try {
+            authorize(handlerMethod.getMethod(), handlerMethod.getBeanType(), path,
+                    SecurityContextHolder.getContext().getAuthentication());
+        } catch (ForbiddenException ex) {
+            if (STAFF_ONLY_CODE.equals(ex.getErrorCode()) || STUDENT_ONLY_CODE.equals(ex.getErrorCode())) {
+                auditDenied(request, path, ex.getErrorCode());
+            }
+            throw ex;
+        }
         return true;
+    }
+
+    private void auditDenied(HttpServletRequest request, String path, String code) {
+        try {
+            AuditService service = auditService.get();
+            if (service == null) {
+                return;
+            }
+            service.record(AuditEvent.builder()
+                    .action(AuditActions.PORTAL_ACCESS_DENIED)
+                    .result(AuditResult.DENIED)
+                    .resource(AUDIT_RESOURCE_API, null)
+                    .detail("code", code)
+                    .detail("zone", zoneOf(path).name())
+                    .detail("method", request.getMethod())
+                    .detail("path", path)
+                    .build());
+        } catch (RuntimeException ex) {
+            log.debug("Không ghi được nhật ký từ chối truy cập: {}", ex.toString());
+        }
     }
 
     /**

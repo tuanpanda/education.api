@@ -1,6 +1,8 @@
 package com.education.base.config;
 
 import com.education.base.security.PermissionInterceptor;
+import com.education.base.service.AuditService;
+import org.springframework.beans.factory.ObjectProvider;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
@@ -32,9 +34,11 @@ public class WebConfig implements WebMvcConfigurer {
     };
 
     private final CorsProperties corsProperties;
+    private final ObjectProvider<AuditService> auditService;
 
-    public WebConfig(CorsProperties corsProperties) {
+    public WebConfig(CorsProperties corsProperties, ObjectProvider<AuditService> auditService) {
         this.corsProperties = corsProperties;
+        this.auditService = auditService;
     }
 
     @Override
@@ -59,6 +63,6 @@ public class WebConfig implements WebMvcConfigurer {
      */
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(new PermissionInterceptor()).addPathPatterns("/api/**");
+        registry.addInterceptor(new PermissionInterceptor(auditService::getIfAvailable)).addPathPatterns("/api/**");
     }
 }

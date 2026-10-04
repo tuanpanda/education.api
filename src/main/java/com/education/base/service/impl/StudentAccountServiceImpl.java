@@ -1,5 +1,8 @@
 package com.education.base.service.impl;
 
+import com.education.base.audit.AuditActions;
+import com.education.base.audit.AuditEvent;
+import com.education.base.audit.AuditResult;
 import com.education.base.common.DomainConstants;
 import com.education.base.common.PersistenceFlags;
 import com.education.base.common.TempPasswordGenerator;
@@ -23,6 +26,7 @@ import com.education.base.repository.UserStudentLinkRepository;
 import com.education.base.security.Permissions;
 import com.education.base.security.SecurityUtils;
 import com.education.base.security.UserType;
+import com.education.base.service.AuditService;
 import com.education.base.service.RefreshTokenService;
 import com.education.base.service.StudentAccountService;
 import lombok.RequiredArgsConstructor;
@@ -56,6 +60,11 @@ import java.util.Set;
  * <p>
  * <b>Mật khẩu tạm</b>: {@link TempPasswordGenerator}; chỉ trả về MỘT lần trong response, lưu BCrypt, KHÔNG ghi log;
  * tài khoản bị buộc đổi mật khẩu ở lần đăng nhập đầu ({@code MUST_CHANGE_PASSWORD = 1}).
+ * <p>
+ * <b>Nhật ký</b> ({@link AuditService}, V17_3): mỗi tài khoản tạo mới -> {@code STUDENT_ACCOUNT_PROVISIONED}; gỡ liên
+ * kết cũ -> {@code STUDENT_LINK_REMOVED}; đặt lại mật khẩu / khóa / mở khóa -> {@code PASSWORD_RESET} /
+ * {@code ACCOUNT_LOCKED} / {@code ACCOUNT_UNLOCKED} (chi tiết {@code accountType = STUDENT}). Sự kiện thành công chỉ
+ * được ghi khi transaction commit; thao tác lỗi ghi {@code FAILURE} kèm mã lỗi. KHÔNG BAO GIỜ ghi mật khẩu.
  */
 @Slf4j
 @Service
@@ -82,6 +91,7 @@ public class StudentAccountServiceImpl implements StudentAccountService {
     private final RefreshTokenService refreshTokenService;
     private final TempPasswordGenerator tempPasswordGenerator;
     private final Clock clock;
+    private final AuditService auditService;
 
     @Override
     @Transactional(readOnly = true)
@@ -158,6 +168,14 @@ public class StudentAccountServiceImpl implements StudentAccountService {
                 existing.setStatus(DomainConstants.LINK_STATUS_INACTIVE);
                 existing.setUpdatedBy(actor);
                 userStudentLinkRepository.saveAndFlush(existing);
+                auditService.record(AuditEvent.builder()
+                        .action(AuditActions.STUDENT_LINK_REMOVED)
+                        .resource(AuditActions.RESOURCE_STUDENT, studentId)
+                        .detail("linkId", existing.getId())
+                        .detail("userId", existing.getUserId())
+                        .detail("relation", existing.getRelation())
+                        .detail("reason", "LINKED_ACCOUNT_DELETED")
+                        .build());
             }
             String tempPassword = tempPasswordGenerator.generate();
             UserEntity user = createStudentUser(student, tempPassword, actor, now);
@@ -178,6 +196,15 @@ public class StudentAccountServiceImpl implements StudentAccountService {
                     .createdBy(actor)
                     .build());
             created++;
+            auditService.record(AuditEvent.builder()
+                    .action(AuditActions.STUDENT_ACCOUNT_PROVISIONED)
+                    .resource(AuditActions.RESOURCE_USER, user.getId())
+                    .detail("studentId", student.getId())
+                    .detail("studentCode", student.getStudentCode())
+                    .detail("username", user.getUsername())
+                    .detail("relation", DomainConstants.LINK_RELATION_SELF)
+                    .detail("role", studentRole.getRoleCode())
+                    .build());
             log.info("Đã tạo tài khoản học sinh: studentId={}, userId={}, username={}",
                     student.getId(), user.getId(), user.getUsername());
             results.add(StudentAccountBulkResultDto.builder()
@@ -197,7 +224,7 @@ public class StudentAccountServiceImpl implements StudentAccountService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public StudentAccountCredentialDto resetPassword(Long userId) {
-        UserEntity user = requireStudentUser(userId);
+        UserEntity user = requireStudentUser(userId, AuditActions.PASSWORD_RESET);
         String tempPassword = tempPasswordGenerator.generate();
         user.setPasswordHash(passwordEncoder.encode(tempPassword));
         user.setMustChangePassword(1);
@@ -208,6 +235,7 @@ public class StudentAccountServiceImpl implements StudentAccountService {
         // Mật khẩu mới do nhân viên cấp: gỡ khóa tạm thời để học sinh đăng nhập được ngay.
         userRepository.clearLoginFailures(user.getId());
         log.info("Đã đặt lại mật khẩu tài khoản học sinh userId={}, username={}", user.getId(), user.getUsername());
+        auditSuccess(AuditActions.PASSWORD_RESET, user);
         return StudentAccountCredentialDto.builder()
                 .username(user.getUsername())
                 .tempPassword(tempPassword)
@@ -217,24 +245,26 @@ public class StudentAccountServiceImpl implements StudentAccountService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public StudentAccountStatusDto lock(Long userId) {
-        UserEntity user = requireStudentUser(userId);
+        UserEntity user = requireStudentUser(userId, AuditActions.ACCOUNT_LOCKED);
         user.setStatus(DomainConstants.USER_STATUS_LOCKED);
         user.setUpdatedBy(SecurityUtils.currentUsername());
         userRepository.save(user);
         revokeAllAccess(user.getId());
         log.info("Đã khóa tài khoản học sinh userId={}, username={}", user.getId(), user.getUsername());
+        auditSuccess(AuditActions.ACCOUNT_LOCKED, user);
         return toStatusDto(user);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public StudentAccountStatusDto unlock(Long userId) {
-        UserEntity user = requireStudentUser(userId);
+        UserEntity user = requireStudentUser(userId, AuditActions.ACCOUNT_UNLOCKED);
         user.setStatus(DomainConstants.USER_STATUS_ACTIVE);
         user.setUpdatedBy(SecurityUtils.currentUsername());
         userRepository.save(user);
         userRepository.clearLoginFailures(user.getId());
         log.info("Đã mở khóa tài khoản học sinh userId={}, username={}", user.getId(), user.getUsername());
+        auditSuccess(AuditActions.ACCOUNT_UNLOCKED, user);
         return toStatusDto(user);
     }
 
@@ -318,11 +348,30 @@ public class StudentAccountServiceImpl implements StudentAccountService {
     }
 
     /** Tài khoản HỌC SINH chưa xóa; tài khoản nhân viên coi như không tồn tại (không thao tác được ở đây). */
-    private UserEntity requireStudentUser(Long userId) {
+    private UserEntity requireStudentUser(Long userId, String auditAction) {
         return userRepository.findByIdAndIsDeleted(userId, PersistenceFlags.NOT_DELETED)
                 .filter(user -> UserType.fromDb(user.getUserType()).orElse(null) == UserType.STUDENT)
-                .orElseThrow(() -> new OracleBusinessException(USER_NOT_FOUND,
-                        "Không tìm thấy tài khoản học sinh với ID: " + userId));
+                .orElseThrow(() -> {
+                    auditService.record(AuditEvent.builder()
+                            .action(auditAction)
+                            .result(AuditResult.FAILURE)
+                            .resource(AuditActions.RESOURCE_USER, userId)
+                            .detail("accountType", UserType.STUDENT.name())
+                            .detail("errorCode", USER_NOT_FOUND)
+                            .build());
+                    return new OracleBusinessException(USER_NOT_FOUND,
+                            "Không tìm thấy tài khoản học sinh với ID: " + userId);
+                });
+    }
+
+    /** Sự kiện thành công (ghi sau commit) cho thao tác trên tài khoản học sinh - không kèm mật khẩu. */
+    private void auditSuccess(String action, UserEntity user) {
+        auditService.record(AuditEvent.builder()
+                .action(action)
+                .resource(AuditActions.RESOURCE_USER, user.getId())
+                .detail("accountType", UserType.STUDENT.name())
+                .detail("username", user.getUsername())
+                .build());
     }
 
     /** Vô hiệu hóa mọi access token ({@code TOKEN_VERSION}) và phiên refresh token của tài khoản. */

@@ -25,12 +25,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * V17 - cổng học sinh, Phase 0 stream A: V17_1 (DDL: {@code SYS_USERS.USER_TYPE}, {@code EDU_USER_STUDENT_LINKS},
  * {@code ROLE_STUDENT}) và V17_2 (DML: menu "Tài khoản học sinh" + chức năng + quyền ROLE_ADMIN).
- * V17_3 thuộc stream B (audit log) - stream A không được tạo.
+ * V17_3 thuộc stream B (audit log, {@code V17_3AuditLogScriptTest}); ở đây chỉ kiểm tra thứ tự / menu chung.
  */
 class V17PortalScriptTest {
 
     private static final String V17_1 = "/db/migration/V17_1__portal_user_type_student_link.sql";
     private static final String V17_2 = "/db/migration/V17_2__student_account_menu.sql";
+    private static final String V17_3 = "/db/migration/V17_3__audit_log.sql";
     private static final String GUARD = "WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK";
     private static final Pattern STATEMENT = Pattern.compile(
             "^\\s*(DECLARE|BEGIN|MERGE|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|COMMENT|COMMIT|SELECT)\\b",
@@ -78,17 +79,32 @@ class V17PortalScriptTest {
         }
     }
 
+    /**
+     * Sau khi gộp stream A + B (feat/portal-p0): đúng ba script V17, thứ tự V17_1 -> V17_2 -> V17_3, và hai menu
+     * mới dưới DIR_SYSTEM có thứ tự không trùng: MENU_STUDENT_ACCOUNT = 5, MENU_AUDIT_LOG = 6 (sau BANK_ACCOUNT = 4).
+     */
     @Test
-    void streamADoesNotShipV17_3() throws Exception {
+    void v17ScriptsAndSystemMenuSortOrdersAreConsistent() throws Exception {
         URL marker = getClass().getResource(V17_1);
         assertThat(marker).isNotNull();
         Path dir = Path.of(marker.toURI()).getParent();
         try (Stream<Path> files = Files.list(dir)) {
             List<String> v17 = files.map(p -> p.getFileName().toString()).filter(n -> n.startsWith("V17_")).sorted()
                     .collect(Collectors.toList());
-            assertThat(v17).doesNotContain("V17_3").allMatch(n -> !n.startsWith("V17_3"));
-            assertThat(v17).contains("V17_1__portal_user_type_student_link.sql", "V17_2__student_account_menu.sql");
+            assertThat(v17).containsExactly("V17_1__portal_user_type_student_link.sql",
+                    "V17_2__student_account_menu.sql", "V17_3__audit_log.sql");
         }
+        String v17_2 = code(read(V17_2));
+        String v17_3 = code(read(V17_3));
+        assertThat(v17_2).containsPattern("'MENU_STUDENT_ACCOUNT' MENU_CODE[\\s\\S]*?\\b5 SORT_ORDER");
+        assertThat(v17_3).containsPattern("'MENU_AUDIT_LOG' MENU_CODE[\\s\\S]*?\\b6 SORT_ORDER");
+        assertThat(v17_3).contains("p.MENU_CODE = 'DIR_SYSTEM'");
+        // V17_3 (stream B) không phụ thuộc đối tượng của V17_1 (không FK sang cột / bảng mới).
+        assertThat(v17_3.toUpperCase(Locale.ROOT)).doesNotContain("EDU_USER_STUDENT_LINKS")
+                .doesNotContain("MENU_STUDENT_ACCOUNT");
+        // Hai script có chữ tiếng Việt đều đòi NLS_LANG AL32UTF8.
+        assertThat(read(V17_2)).contains("AMERICAN_AMERICA.AL32UTF8");
+        assertThat(read(V17_3)).contains("AMERICAN_AMERICA.AL32UTF8");
     }
 
     // ------------------------------------------------------------------ V17_1

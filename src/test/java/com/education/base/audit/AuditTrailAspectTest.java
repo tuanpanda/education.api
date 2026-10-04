@@ -96,7 +96,7 @@ class AuditTrailAspectTest {
         AuthTokens tokens = AuthTokens.builder()
                 .accessToken("access-token-value")
                 .refreshToken(REFRESH_TOKEN)
-                .user(AuthUserResponse.builder().id(7L).username("thungan").build())
+                .user(AuthUserResponse.builder().id(7L).username("thungan").userType("STAFF").build())
                 .build();
         when(target.login(any())).thenReturn(tokens);
 
@@ -108,6 +108,7 @@ class AuditTrailAspectTest {
         assertThat(event.getResult()).isEqualTo(AuditResult.SUCCESS);
         assertThat(event.getActorUserId()).isEqualTo(7L);
         assertThat(event.getActorUsername()).isEqualTo("thungan");
+        assertThat(event.getActorUserType()).as("loại tài khoản lấy từ kết quả đăng nhập (V17_1)").isEqualTo("STAFF");
         assertThat(event.getResourceType()).isEqualTo(AuditActions.RESOURCE_USER);
         assertThat(event.getResourceId()).isEqualTo("7");
         assertNoSecrets(event, PASSWORD, REFRESH_TOKEN, "access-token-value");

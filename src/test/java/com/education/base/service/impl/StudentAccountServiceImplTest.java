@@ -3,6 +3,9 @@ package com.education.base.service.impl;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.education.base.audit.AuditActions;
+import com.education.base.audit.AuditEvent;
+import com.education.base.audit.AuditResult;
 import com.education.base.common.TempPasswordGenerator;
 import com.education.base.dto.request.StudentAccountFilterRequest;
 import com.education.base.dto.response.PageResponse;
@@ -21,6 +24,7 @@ import com.education.base.repository.StudentRepository;
 import com.education.base.repository.UserRepository;
 import com.education.base.repository.UserRoleRepository;
 import com.education.base.repository.UserStudentLinkRepository;
+import com.education.base.service.AuditService;
 import com.education.base.service.RefreshTokenService;
 import com.education.base.support.TestSecurityContexts;
 import org.junit.jupiter.api.AfterEach;
@@ -80,6 +84,8 @@ class StudentAccountServiceImplTest {
     private RefreshTokenService refreshTokenService;
     @Mock
     private TempPasswordGenerator tempPasswordGenerator;
+    @Mock
+    private AuditService auditService;
 
     private StudentAccountServiceImpl service;
     private final AtomicLong userIds = new AtomicLong(100);
@@ -89,7 +95,7 @@ class StudentAccountServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new StudentAccountServiceImpl(userRepository, roleRepository, userRoleRepository, studentRepository,
-                linkRepository, ENCODER, refreshTokenService, tempPasswordGenerator, CLOCK);
+                linkRepository, ENCODER, refreshTokenService, tempPasswordGenerator, CLOCK, auditService);
         TestSecurityContexts.loginAdmin(1L);
         lenient().when(roleRepository.findByRoleCodeAndIsDeleted("ROLE_STUDENT", 0))
                 .thenReturn(Optional.of(RoleEntity.builder().id(7L).roleCode("ROLE_STUDENT").status("ACTIVE")
@@ -438,5 +444,92 @@ class StudentAccountServiceImplTest {
         assertThat(StudentAccountServiceImpl.truncateUtf8("abc", 100)).isEqualTo("abc");
         assertThat(StudentAccountServiceImpl.truncateUtf8(null, 10)).isNull();
         assertThat(StudentAccountServiceImpl.truncateUtf8("ệệệ", 7)).isEqualTo("ệệ");
+    }
+
+    // ------------------------------------------------------------------ audit (V17_3)
+
+    private List<AuditEvent> auditEvents() {
+        ArgumentCaptor<AuditEvent> events = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(auditService, org.mockito.Mockito.atLeastOnce()).record(events.capture());
+        return events.getAllValues();
+    }
+
+    private static void assertNoSecret(List<AuditEvent> events, String... secrets) {
+        for (AuditEvent event : events) {
+            for (String secret : secrets) {
+                assertThat(event.toString()).doesNotContain(secret);
+                assertThat(event.getDetails().keySet()).noneMatch(key -> key.toLowerCase().contains("password"));
+            }
+        }
+    }
+
+    @Test
+    void audit_bulkCreate_recordsOneProvisionedEventPerCreatedAccount_withoutPasswords() {
+        when(studentRepository.findAllById(any())).thenReturn(List.of(student(1L, "ACTIVE"), student(2L, "INACTIVE")));
+        when(linkRepository.findActiveSelfLinksByStudentIds(anyCollection())).thenReturn(List.of());
+        when(userRepository.existsByUsername(anyString())).thenReturn(false);
+
+        service.bulkCreate(List.of(1L, 2L));
+
+        List<AuditEvent> events = auditEvents();
+        assertThat(events).singleElement().satisfies(event -> {
+            assertThat(event.getAction()).isEqualTo(AuditActions.STUDENT_ACCOUNT_PROVISIONED);
+            assertThat(event.getResult()).isEqualTo(AuditResult.SUCCESS);
+            assertThat(event.getResourceType()).isEqualTo(AuditActions.RESOURCE_USER);
+            assertThat(event.getResourceId()).isEqualTo("101");
+            assertThat(event.getDetails()).containsEntry("studentId", 1L).containsEntry("username", "hs00001")
+                    .containsEntry("relation", "SELF").containsEntry("role", "ROLE_STUDENT");
+        });
+        assertNoSecret(events, "k7m2p9x4qa");
+    }
+
+    @Test
+    void audit_staleLinkRemoval_isRecorded() {
+        when(studentRepository.findAllById(any())).thenReturn(List.of(student(1L, "ACTIVE")));
+        when(linkRepository.findActiveSelfLinksByStudentIds(anyCollection())).thenReturn(List.of(
+                UserStudentLinkEntity.builder().id(50L).userId(60L).studentId(1L).relation("SELF")
+                        .status("ACTIVE").isDeleted(0).build()));
+        UserEntity deletedUser = studentUser(60L, "INACTIVE");
+        deletedUser.setIsDeleted(1);
+        when(userRepository.findAllById(List.of(60L))).thenReturn(List.of(deletedUser));
+        when(userRepository.existsByUsername(anyString())).thenReturn(false);
+
+        service.bulkCreate(List.of(1L));
+
+        assertThat(auditEvents()).extracting(AuditEvent::getAction)
+                .containsExactly(AuditActions.STUDENT_LINK_REMOVED, AuditActions.STUDENT_ACCOUNT_PROVISIONED);
+    }
+
+    @Test
+    void audit_resetLockUnlock_recordSuccessWithoutPasswords() {
+        when(userRepository.findByIdAndIsDeleted(5L, 0)).thenAnswer(inv -> Optional.of(studentUser(5L, "ACTIVE")));
+
+        service.resetPassword(5L);
+        service.lock(5L);
+        service.unlock(5L);
+
+        List<AuditEvent> events = auditEvents();
+        assertThat(events).extracting(AuditEvent::getAction).containsExactly(
+                AuditActions.PASSWORD_RESET, AuditActions.ACCOUNT_LOCKED, AuditActions.ACCOUNT_UNLOCKED);
+        assertThat(events).allSatisfy(event -> {
+            assertThat(event.getResult()).isEqualTo(AuditResult.SUCCESS);
+            assertThat(event.getResourceId()).isEqualTo("5");
+            assertThat(event.getDetails()).containsEntry("accountType", "STUDENT");
+        });
+        assertNoSecret(events, "k7m2p9x4qa");
+    }
+
+    @Test
+    void audit_operationOnNonStudentAccount_recordsFailure() {
+        when(userRepository.findByIdAndIsDeleted(2L, 0)).thenReturn(Optional.of(UserEntity.builder().id(2L)
+                .username("teacher1").status("ACTIVE").userType("STAFF").isDeleted(0).build()));
+
+        assertThatThrownBy(() -> service.resetPassword(2L)).isInstanceOf(OracleBusinessException.class);
+
+        assertThat(auditEvents()).singleElement().satisfies(event -> {
+            assertThat(event.getAction()).isEqualTo(AuditActions.PASSWORD_RESET);
+            assertThat(event.getResult()).isEqualTo(AuditResult.FAILURE);
+            assertThat(event.getDetails()).containsEntry("errorCode", "USER_NOT_FOUND");
+        });
     }
 }

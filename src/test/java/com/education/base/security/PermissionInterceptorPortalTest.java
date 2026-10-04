@@ -1,6 +1,11 @@
 package com.education.base.security;
 
+import com.education.base.audit.AuditActions;
+import com.education.base.audit.AuditEvent;
+import com.education.base.audit.AuditResult;
 import com.education.base.exception.ForbiddenException;
+import com.education.base.service.AuditService;
+import org.mockito.ArgumentCaptor;
 import com.education.base.security.PermissionInterceptor.ApiZone;
 import com.education.base.support.TestSecurityContexts;
 import org.junit.jupiter.api.AfterEach;
@@ -18,6 +23,9 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /** Vùng API (auth / portal / staff) và chốt chặn theo loại tài khoản của {@link PermissionInterceptor}. */
 class PermissionInterceptorPortalTest {
@@ -167,6 +175,78 @@ class PermissionInterceptorPortalTest {
                 "someone", null, AuthorityUtils.createAuthorityList("ROLE_ADMIN")));
 
         assertThatThrownBy(() -> call("authenticated", "/api/v1/classes", "/api/v1/classes"))
+                .isInstanceOf(ForbiddenException.class)
+                .extracting("errorCode").isEqualTo(PermissionInterceptor.STAFF_ONLY_CODE);
+    }
+
+    // ------------------------------------------------------------------ audit PORTAL_ACCESS_DENIED
+
+    private void callAudited(PermissionInterceptor audited, String method, String pattern) throws Exception {
+        HandlerMethod handler = new HandlerMethod(new Handlers(), Handlers.class.getMethod(method));
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", pattern);
+        request.setAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE, pattern);
+        audited.preHandle(request, new MockHttpServletResponse(), handler);
+    }
+
+    @Test
+    void studentOnStaffApi_isAuditedAsDenied() {
+        AuditService audit = mock(AuditService.class);
+        PermissionInterceptor audited = new PermissionInterceptor(() -> audit);
+        TestSecurityContexts.loginStudent(9L, 42L, false);
+
+        assertThatThrownBy(() -> callAudited(audited, "guarded", "/api/v1/students/{id}"))
+                .isInstanceOf(ForbiddenException.class)
+                .extracting("errorCode").isEqualTo(PermissionInterceptor.STAFF_ONLY_CODE);
+
+        ArgumentCaptor<AuditEvent> event = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(audit).record(event.capture());
+        assertThat(event.getValue().getAction()).isEqualTo(AuditActions.PORTAL_ACCESS_DENIED);
+        assertThat(event.getValue().getResult()).isEqualTo(AuditResult.DENIED);
+        assertThat(event.getValue().getResourceType()).isEqualTo(PermissionInterceptor.AUDIT_RESOURCE_API);
+        assertThat(event.getValue().getDetails()).containsEntry("code", "STAFF_ONLY")
+                .containsEntry("path", "/api/v1/students/{id}").containsEntry("zone", "STAFF")
+                .containsEntry("method", "GET");
+    }
+
+    @Test
+    void staffOnPortal_isAuditedAsDenied() {
+        AuditService audit = mock(AuditService.class);
+        PermissionInterceptor audited = new PermissionInterceptor(() -> audit);
+        TestSecurityContexts.loginAdmin(1L);
+
+        assertThatThrownBy(() -> callAudited(audited, "portal", "/api/v1/portal/me"))
+                .isInstanceOf(ForbiddenException.class);
+
+        ArgumentCaptor<AuditEvent> event = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(audit).record(event.capture());
+        assertThat(event.getValue().getDetails()).containsEntry("code", "STUDENT_ONLY").containsEntry("zone", "PORTAL");
+    }
+
+    @Test
+    void ordinaryDenials_andAllowedCalls_areNotAudited() throws Exception {
+        AuditService audit = mock(AuditService.class);
+        PermissionInterceptor audited = new PermissionInterceptor(() -> audit);
+
+        TestSecurityContexts.login(5L, List.of("ROLE_TEACHER"), Set.of());
+        assertThatThrownBy(() -> callAudited(audited, "guarded", "/api/v1/classes"))
+                .isInstanceOf(ForbiddenException.class).extracting("errorCode").isEqualTo("FORBIDDEN");
+        TestSecurityContexts.loginStudent(9L, 42L, true);
+        assertThatThrownBy(() -> callAudited(audited, "portal", "/api/v1/portal/me"))
+                .isInstanceOf(ForbiddenException.class).extracting("errorCode").isEqualTo("PASSWORD_CHANGE_REQUIRED");
+        TestSecurityContexts.loginStudent(9L, 42L, false);
+        callAudited(audited, "portal", "/api/v1/portal/me");
+
+        verify(audit, never()).record(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void auditFailure_neverHidesTheOriginalDenial() {
+        PermissionInterceptor audited = new PermissionInterceptor(() -> {
+            throw new IllegalStateException("audit down");
+        });
+        TestSecurityContexts.loginStudent(9L, 42L, false);
+
+        assertThatThrownBy(() -> callAudited(audited, "guarded", "/api/v1/classes"))
                 .isInstanceOf(ForbiddenException.class)
                 .extracting("errorCode").isEqualTo(PermissionInterceptor.STAFF_ONLY_CODE);
     }

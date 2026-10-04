@@ -25,6 +25,24 @@ Giai đoạn 0 – stream B. Bảng tạo bởi `V17_3__audit_log.sql`; tra cứ
 
 Đổi tên method trong bảng trên sẽ làm `AuditTrailAspectTest` đỏ (kiểm tra mọi khóa còn khớp interface).
 
+## Đã nối dây khi gộp stream A (feat/portal-p0)
+
+Ghi bằng hook `AuditService` ngay trong mã của stream A (không qua aspect):
+
+| Nơi gọi | ACTION | RESOURCE_TYPE / ID | DETAIL (không bao giờ có mật khẩu) |
+|---|---|---|---|
+| `StudentAccountService#bulkCreate` – mỗi tài khoản tạo mới | `STUDENT_ACCOUNT_PROVISIONED` | `USER` / userId mới | `studentId`, `studentCode`, `username`, `relation=SELF`, `role=ROLE_STUDENT` |
+| `StudentAccountService#bulkCreate` – gỡ liên kết SELF cũ của tài khoản đã xóa | `STUDENT_LINK_REMOVED` | `STUDENT` / studentId | `linkId`, `userId`, `relation`, `reason=LINKED_ACCOUNT_DELETED` |
+| `StudentAccountService#resetPassword` | `PASSWORD_RESET` | `USER` / userId | `accountType=STUDENT`, `username` |
+| `StudentAccountService#lock` / `unlock` | `ACCOUNT_LOCKED` / `ACCOUNT_UNLOCKED` | `USER` / userId | `accountType=STUDENT`, `username` |
+| ba thao tác trên với userId không phải tài khoản học sinh | như trên, `RESULT=FAILURE` | `USER` / userId | `accountType=STUDENT`, `errorCode=USER_NOT_FOUND` |
+| `PermissionInterceptor` – hàng rào loại tài khoản chặn (`STAFF_ONLY` / `STUDENT_ONLY`) | `PORTAL_ACCESS_DENIED`, `RESULT=DENIED` | `API` / – | `code`, `zone`, `method`, `path` (mẫu đường dẫn) |
+
+- Thành công ghi SAU commit (cả lô tạo tài khoản rollback ⇒ không có dòng `STUDENT_ACCOUNT_PROVISIONED` nào); học sinh bị
+  bỏ qua (`SKIPPED`) không ghi.
+- `USER_TYPE` lấy từ `PrincipalAuditUserTypeResolver` (bean `AuditUserTypeResolver`: loại tài khoản của principal, dựng
+  lại từ `SYS_USERS.USER_TYPE` mỗi request). `LOGIN_SUCCESS` lấy loại tài khoản từ kết quả đăng nhập.
+
 ## Hook cho module khác (stream A: cấp tài khoản học sinh, liên kết, hàng rào cổng)
 
 ```java
