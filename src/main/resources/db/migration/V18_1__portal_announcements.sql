@@ -1,12 +1,13 @@
 -- =============================================================================
 -- EDUCATION - MIGRATION V18_1: CONG HOC SINH PHASE 1 - THONG BAO (EDU_ANNOUNCEMENTS)
 --
--- Giai doan 1, Stream B (feat/portal-p1-announce). CHI Stream B sua file nay.
--- (V18_2 = menu MENU_ANNOUNCEMENT - Stream B.)
+-- Giai doan 1 (feat/portal-p1).
+-- (V18_2 = menu MENU_ANNOUNCEMENT.)
 --
 -- Script nay lam:
 --   V18_1.1 Sequence SEQ_EDU_ANNOUNCEMENTS
---   V18_1.2 Bang EDU_ANNOUNCEMENTS: TITLE, CONTENT CLOB, SCOPE_TYPE ALL/CLASS,
+--   V18_1.2 Bang EDU_ANNOUNCEMENTS: TITLE VARCHAR2(200 CHAR) (khop @Size(max=200) ky tu,
+--           tieng Viet AL32UTF8 toi 3 byte/ky tu), CONTENT CLOB, SCOPE_TYPE ALL/CLASS,
 --           CLASS_ID (nullable FK EDU_CLASSES), AUDIENCE STUDENT/PARENT/ALL,
 --           IS_PINNED, STATUS DRAFT/PUBLISHED/ARCHIVED, PUBLISHED_AT, EXPIRES_AT,
 --           audit, IS_DELETED
@@ -22,7 +23,9 @@
 --
 -- THU TU CHAY: sau V17_3. V18_1 -> V18_2.
 --
---   sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V18_1__portal_announcements.sql
+--   (Windows PowerShell; nhap tai khoan/mat khau khi sqlplus hoi - KHONG ghi mat khau vao file)
+--   $env:NLS_LANG = "AMERICAN_AMERICA.AL32UTF8"
+--   F:\Database\bin\sqlplus.exe -L <schema_user>@//localhost:1521/ORCL @src/main/resources/db/migration/V18_1__portal_announcements.sql
 --
 -- ROLLBACK (go bo hoan toan; MAT du lieu thong bao):
 --   DROP TABLE EDU_ANNOUNCEMENT_READS CASCADE CONSTRAINTS PURGE;
@@ -65,7 +68,7 @@ BEGIN
         EXECUTE IMMEDIATE q'[
             CREATE TABLE EDU_ANNOUNCEMENTS (
                 ID            NUMBER                              NOT NULL,
-                TITLE         VARCHAR2(200)                       NOT NULL,
+                TITLE         VARCHAR2(200 CHAR)                  NOT NULL,
                 CONTENT       CLOB                                NOT NULL,
                 SCOPE_TYPE    VARCHAR2(20)                        NOT NULL,
                 CLASS_ID      NUMBER,
@@ -98,7 +101,7 @@ BEGIN
 END;
 /
 
-COMMENT ON TABLE EDU_ANNOUNCEMENTS IS 'Thong bao cong hoc sinh / nhan vien (Phase 1 Stream B)';
+COMMENT ON TABLE EDU_ANNOUNCEMENTS IS 'Thong bao cong hoc sinh / nhan vien (Phase 1)';
 COMMENT ON COLUMN EDU_ANNOUNCEMENTS.SCOPE_TYPE IS 'ALL = toan trung tam; CLASS = theo lop (CLASS_ID bat buoc)';
 COMMENT ON COLUMN EDU_ANNOUNCEMENTS.AUDIENCE IS 'STUDENT / PARENT / ALL';
 COMMENT ON COLUMN EDU_ANNOUNCEMENTS.STATUS IS 'DRAFT / PUBLISHED / ARCHIVED';

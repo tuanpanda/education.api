@@ -50,13 +50,15 @@ public class AnnouncementServiceImpl implements AnnouncementService {
     public PageResponse<AnnouncementDto> search(AnnouncementFilterRequest filter) {
         AnnouncementFilterRequest f = filter == null ? new AnnouncementFilterRequest() : filter;
         Specification<AnnouncementEntity> spec = buildSpec(f);
+        int pageNo = Math.max(f.getPageNo(), 1);
+        int pageSize = Math.max(f.getPageSize(), 1);
         PageRequest pageable = PageRequest.of(
-                Math.max(f.getPageNo(), 0),
-                Math.max(f.getPageSize(), 1),
+                pageNo - 1,
+                pageSize,
                 Sort.by(Sort.Order.desc("isPinned"), Sort.Order.desc("updatedAt"), Sort.Order.desc("id")));
         Page<AnnouncementEntity> page = announcementRepository.findAll(spec, pageable);
         List<AnnouncementDto> content = page.getContent().stream().map(this::toDto).toList();
-        return PageResponse.of(content, page.getNumber(), page.getSize(), page.getTotalElements());
+        return PageResponse.of(content, pageNo, pageSize, page.getTotalElements());
     }
 
     @Override

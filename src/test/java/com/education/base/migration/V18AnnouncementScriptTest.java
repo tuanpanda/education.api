@@ -68,6 +68,15 @@ class V18AnnouncementScriptTest {
                 .contains("EXPIRES_AT")
                 .contains("PRIMARY KEY (ANNOUNCEMENT_ID, USER_ID)");
         assertThat(text).contains("ROLLBACK (").contains("THU TU CHAY");
+        // Tieu de tieng Viet: @Size(max = 200) tinh theo ky tu -> cot phai dung CHAR semantics.
+        assertThat(upper).contains("TITLE         VARCHAR2(200 CHAR)");
+    }
+
+    @Test
+    void v18ScriptsDoNotEmbedCredentials() throws IOException {
+        for (String script : List.of(V18_1, V18_2)) {
+            assertThat(read(script)).as(script).doesNotContainPattern("(?i)sqlplus(\\.exe)?\\s+(-\\w+\\s+)*\\w+/\\S+@");
+        }
     }
 
     @Test
@@ -80,7 +89,9 @@ class V18AnnouncementScriptTest {
                 .contains("'PUBLISH'")
                 .contains("ROLE_ADMIN")
                 .contains("ROLE_TEACHER")
-                .contains("AMERICAN_AMERICA.AL32UTF8");
+                .contains("AMERICAN_AMERICA.AL32UTF8")
+                // Cung nhom /academic/* voi cac menu hoc vu khac; frontend route /academic/announcements.
+                .contains("'/academic/announcements' PATH");
         assertThat(Permissions.ANNOUNCEMENT_VIEW).isEqualTo("MENU_ANNOUNCEMENT:VIEW");
         assertThat(Permissions.ANNOUNCEMENT_PUBLISH).isEqualTo("MENU_ANNOUNCEMENT:PUBLISH");
     }

@@ -25,8 +25,11 @@ import com.education.base.repository.GradeRepository;
 import com.education.base.repository.PaymentTransactionRepository;
 import com.education.base.repository.StudentRepository;
 import com.education.base.repository.TuitionFeeRepository;
+import com.education.base.security.AuthUserPrincipal;
+import com.education.base.security.Permissions;
 import com.education.base.security.PortalStudentContext;
-import com.education.base.service.PortalAnnouncementQuery;
+import com.education.base.security.UserType;
+import com.education.base.service.AnnouncementQueryService;
 import com.education.base.service.TuitionSlipService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,12 +37,15 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -74,7 +80,7 @@ class PortalServiceImplTest {
     @Mock
     private TuitionSlipService tuitionSlipService;
     @Mock
-    private PortalAnnouncementQuery portalAnnouncementQuery;
+    private AnnouncementQueryService announcementQueryService;
     @InjectMocks
     private PortalServiceImpl service;
 
@@ -119,7 +125,7 @@ class PortalServiceImplTest {
     }
 
     @Test
-    void dashboard_aggregatesNextSessionFeesAndUnreadStub() {
+    void dashboard_aggregatesNextSessionFeesAndUnreadAnnouncements() {
         when(portalStudentContext.requireCurrentStudentId()).thenReturn(42L);
         when(classStudentRepository.findActiveEnrollmentsWithClass(42L)).thenReturn(List.of(
                 ClassStudentEntity.builder().classId(3L).build()));
@@ -136,16 +142,27 @@ class PortalServiceImplTest {
                         .discountAmount(BigDecimal.ZERO).paidAmount(new BigDecimal("50")).build(),
                 TuitionFeeEntity.builder().id(3L).status("CANCELLED").totalAmount(new BigDecimal("20"))
                         .discountAmount(BigDecimal.ZERO).paidAmount(BigDecimal.ZERO).build()));
-        when(portalAnnouncementQuery.countUnreadForStudent(42L)).thenReturn(0L);
+        when(announcementQueryService.countUnread(99L)).thenReturn(3L);
+        AuthUserPrincipal principal = AuthUserPrincipal.builder()
+                .id(99L).username("hs00042").roles(List.of(Permissions.STUDENT_ROLE))
+                .permissions(Set.of()).userType(UserType.STUDENT).studentId(42L).build();
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(principal, null, principal.getAuthorities()));
 
-        PortalDashboardResponse dashboard = service.dashboard();
+        PortalDashboardResponse dashboard;
+        try {
+            dashboard = service.dashboard();
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
 
         assertThat(dashboard.getNextSession()).isNotNull();
         assertThat(dashboard.getNextSession().getSessionId()).isEqualTo(10L);
         assertThat(dashboard.getNextSession().getClassCode()).isEqualTo("L3");
         assertThat(dashboard.getOutstandingFees().getOutstandingCount()).isEqualTo(1L);
         assertThat(dashboard.getOutstandingFees().getTotalRemaining()).isEqualByComparingTo("100");
-        assertThat(dashboard.getUnreadAnnouncements()).isZero();
+        assertThat(dashboard.getUnreadAnnouncements()).isEqualTo(3L);
+        verify(announcementQueryService).countUnread(99L);
     }
 
     @Test

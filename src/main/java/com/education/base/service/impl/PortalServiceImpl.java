@@ -36,8 +36,10 @@ import com.education.base.repository.GradeRepository;
 import com.education.base.repository.PaymentTransactionRepository;
 import com.education.base.repository.StudentRepository;
 import com.education.base.repository.TuitionFeeRepository;
+import com.education.base.security.AuthUserPrincipal;
 import com.education.base.security.PortalStudentContext;
-import com.education.base.service.PortalAnnouncementQuery;
+import com.education.base.security.SecurityUtils;
+import com.education.base.service.AnnouncementQueryService;
 import com.education.base.service.PortalService;
 import com.education.base.service.TuitionSlipService;
 import lombok.RequiredArgsConstructor;
@@ -81,7 +83,7 @@ public class PortalServiceImpl implements PortalService {
     private final TuitionFeeRepository tuitionFeeRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final TuitionSlipService tuitionSlipService;
-    private final PortalAnnouncementQuery portalAnnouncementQuery;
+    private final AnnouncementQueryService announcementQueryService;
 
     @Override
     @Transactional(readOnly = true)
@@ -160,7 +162,7 @@ public class PortalServiceImpl implements PortalService {
                         .outstandingCount(outstandingCount)
                         .totalRemaining(totalRemaining)
                         .build())
-                .unreadAnnouncements(portalAnnouncementQuery.countUnreadForStudent(studentId))
+                .unreadAnnouncements(announcementQueryService.countUnread(currentUserId()))
                 .build();
     }
 
@@ -368,6 +370,11 @@ public class PortalServiceImpl implements PortalService {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** SYS_USERS.ID của tài khoản học sinh đang đăng nhập (đọc trạng thái đã đọc thông báo theo USER_ID). */
+    private static Long currentUserId() {
+        return SecurityUtils.currentUser().map(AuthUserPrincipal::getId).orElse(null);
+    }
 
     private StudentEntity requireStudent(Long studentId) {
         return studentRepository.findByIdAndIsDeleted(studentId, PersistenceFlags.NOT_DELETED)

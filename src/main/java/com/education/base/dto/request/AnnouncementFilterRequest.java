@@ -29,9 +29,10 @@ public class AnnouncementFilterRequest {
     @Pattern(regexp = "STUDENT|PARENT|ALL", message = "Đối tượng không hợp lệ")
     private String audience;
 
-    @Min(0)
+    /** Số trang bắt đầu từ 1 (cùng quy ước các màn hình danh sách khác). */
+    @Min(value = 1, message = "Số trang phải lớn hơn hoặc bằng 1")
     @Builder.Default
-    private int pageNo = 0;
+    private int pageNo = 1;
 
     @Min(1)
     @Max(100)

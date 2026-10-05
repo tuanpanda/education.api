@@ -2,8 +2,10 @@ package com.education.base.service;
 
 import com.education.base.common.HtmlContentSanitizer;
 import com.education.base.common.PersistenceFlags;
+import com.education.base.dto.request.AnnouncementFilterRequest;
 import com.education.base.dto.request.AnnouncementUpsertRequest;
 import com.education.base.dto.response.AnnouncementDto;
+import com.education.base.dto.response.PageResponse;
 import com.education.base.entity.AnnouncementEntity;
 import com.education.base.entity.ClassEntity;
 import com.education.base.exception.OracleBusinessException;
@@ -21,6 +23,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 
@@ -151,5 +156,27 @@ class AnnouncementServiceTest {
 
         assertThat(entity.getIsDeleted()).isEqualTo(PersistenceFlags.DELETED);
         verify(announcementRepository).save(entity);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void search_pageNoIsOneBasedLikeOtherListScreens() {
+        when(announcementRepository.findAll(any(Specification.class), any(Pageable.class)))
+                .thenAnswer(inv -> {
+                    Pageable pageable = inv.getArgument(1);
+                    return new PageImpl<AnnouncementEntity>(List.of(), pageable, 45);
+                });
+
+        PageResponse<AnnouncementDto> page = service.search(AnnouncementFilterRequest.builder()
+                .pageNo(2).pageSize(20).build());
+
+        ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+        verify(announcementRepository).findAll(any(Specification.class), captor.capture());
+        assertThat(captor.getValue().getPageNumber()).isEqualTo(1);
+        assertThat(page.getPageNo()).isEqualTo(2);
+        assertThat(page.getPageSize()).isEqualTo(20);
+        assertThat(page.getTotalRows()).isEqualTo(45L);
+        assertThat(page.getTotalPages()).isEqualTo(3);
+        assertThat(new AnnouncementFilterRequest().getPageNo()).isEqualTo(1);
     }
 }

@@ -21,8 +21,8 @@ public class PortalDashboardResponse {
     private PortalOutstandingFeesSummaryDto outstandingFees = PortalOutstandingFeesSummaryDto.builder().build();
 
     /**
-     * Số thông báo chưa đọc. Phase 1 Stream A trả {@code 0} khi chưa có bảng
-     * {@code EDU_ANNOUNCEMENTS} — Stream B sẽ triển khai {@code PortalAnnouncementQuery}.
+     * Số thông báo PUBLISHED còn hiệu lực mà học sinh chưa đọc
+     * ({@code AnnouncementQueryService.countUnread}, theo SYS_USERS.ID của phiên).
      */
     @Builder.Default
     private long unreadAnnouncements = 0L;

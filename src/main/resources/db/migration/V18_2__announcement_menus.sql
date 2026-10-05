@@ -1,11 +1,12 @@
 -- =============================================================================
 -- EDUCATION - MIGRATION V18_2: MENU "THONG BAO" (MENU_ANNOUNCEMENT)
 --
--- Giai doan 1, Stream B (feat/portal-p1-announce). CHI Stream B sua file nay.
+-- Giai doan 1 (feat/portal-p1).
 --
 -- Script nay lam:
 --   V18_2.1 Kiem tra truoc: DIR_ACADEMIC, ROLE_ADMIN, ROLE_TEACHER.
---   V18_2.2 Menu MENU_ANNOUNCEMENT ('Thong bao', /academic/announcements) duoi DIR_ACADEMIC.
+--   V18_2.2 Menu MENU_ANNOUNCEMENT ('Thong bao', /academic/announcements) duoi DIR_ACADEMIC
+--           (cung nhom /academic/* voi Lop / Diem danh / Diem / TKB; route frontend /academic/announcements).
 --   V18_2.3 Chuc nang: VIEW / CREATE / UPDATE / DELETE / PUBLISH
 --           (backend: Permissions.ANNOUNCEMENT_*).
 --   V18_2.4 Phan quyen: ROLE_ADMIN toan quyen; ROLE_TEACHER VIEW/CREATE/UPDATE/PUBLISH
@@ -21,7 +22,9 @@
 --
 -- THU TU CHAY: sau V18_1.
 --
---   sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V18_2__announcement_menus.sql
+--   (Windows PowerShell; nhap tai khoan/mat khau khi sqlplus hoi - KHONG ghi mat khau vao file)
+--   $env:NLS_LANG = "AMERICAN_AMERICA.AL32UTF8"
+--   F:\Database\bin\sqlplus.exe -L <schema_user>@//localhost:1521/ORCL @src/main/resources/db/migration/V18_2__announcement_menus.sql
 --
 -- ROLLBACK:
 --   DELETE FROM SYS_ROLE_MENU_PERMISSIONS
