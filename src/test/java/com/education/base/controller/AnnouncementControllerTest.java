@@ -1,11 +1,13 @@
 package com.education.base.controller;
 
+import com.education.base.dto.request.AnnouncementFilterRequest;
 import com.education.base.dto.response.AnnouncementDto;
 import com.education.base.dto.response.PageResponse;
 import com.education.base.service.AnnouncementService;
 import com.education.base.support.WebMvcSecurityTestConfig;
 import com.education.base.support.WithAuthUser;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -15,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -42,7 +45,7 @@ class AnnouncementControllerTest {
     void search_returnsPage() throws Exception {
         when(announcementService.search(any())).thenReturn(PageResponse.of(
                 List.of(AnnouncementDto.builder().id(1L).title("Hello").status("DRAFT").build()),
-                0, 20, 1));
+                1, 20, 1));
 
         mockMvc.perform(get("/api/v1/announcements"))
                 .andExpect(status().isOk())
@@ -109,5 +112,60 @@ class AnnouncementControllerTest {
         mockMvc.perform(post("/api/v1/announcements/1/publish"))
                 .andExpect(status().isForbidden());
         verifyNoInteractions(announcementService);
+    }
+
+    /** Hợp đồng với frontend (src/api/announcements.ts): tên query + PageResponse 1-based + JSON field names. */
+    @Test
+    void search_bindsFrontendQueryParamsAndReturnsPageShape() throws Exception {
+        when(announcementService.search(any())).thenReturn(PageResponse.of(
+                List.of(AnnouncementDto.builder().id(1L).title("Hello").scopeType("CLASS").classId(5L)
+                        .audience("STUDENT").pinned(true).status("ARCHIVED").createdBy("giaovu01").build()),
+                2, 20, 21));
+
+        mockMvc.perform(get("/api/v1/announcements")
+                        .param("keyword", "lich")
+                        .param("status", "ARCHIVED")
+                        .param("scopeType", "CLASS")
+                        .param("classId", "5")
+                        .param("audience", "STUDENT")
+                        .param("pageNo", "2")
+                        .param("pageSize", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pageNo").value(2))
+                .andExpect(jsonPath("$.data.pageSize").value(20))
+                .andExpect(jsonPath("$.data.totalRows").value(21))
+                .andExpect(jsonPath("$.data.totalPages").value(2))
+                .andExpect(jsonPath("$.data.content[0].scopeType").value("CLASS"))
+                .andExpect(jsonPath("$.data.content[0].pinned").value(true))
+                .andExpect(jsonPath("$.data.content[0].audience").value("STUDENT"))
+                .andExpect(jsonPath("$.data.content[0].createdBy").value("giaovu01"));
+
+        ArgumentCaptor<AnnouncementFilterRequest> captor = ArgumentCaptor.forClass(AnnouncementFilterRequest.class);
+        verify(announcementService).search(captor.capture());
+        AnnouncementFilterRequest filter = captor.getValue();
+        assertThat(filter.getKeyword()).isEqualTo("lich");
+        assertThat(filter.getStatus()).isEqualTo("ARCHIVED");
+        assertThat(filter.getScopeType()).isEqualTo("CLASS");
+        assertThat(filter.getClassId()).isEqualTo(5L);
+        assertThat(filter.getAudience()).isEqualTo("STUDENT");
+        assertThat(filter.getPageNo()).isEqualTo(2);
+        assertThat(filter.getPageSize()).isEqualTo(20);
+    }
+
+    @Test
+    void search_rejectsZeroPageNo() throws Exception {
+        mockMvc.perform(get("/api/v1/announcements").param("pageNo", "0"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(announcementService);
+    }
+
+    @Test
+    void archive_returnsArchived() throws Exception {
+        when(announcementService.archive(eq(4L))).thenReturn(AnnouncementDto.builder()
+                .id(4L).status("ARCHIVED").build());
+
+        mockMvc.perform(post("/api/v1/announcements/4/archive"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("ARCHIVED"));
     }
 }
