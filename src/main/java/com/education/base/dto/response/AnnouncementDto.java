@@ -30,4 +30,9 @@ public class AnnouncementDto {
     private LocalDateTime updatedAt;
     private String createdBy;
     private String updatedBy;
+    /**
+     * {@code true} nếu người dùng hiện tại được sửa/đăng/lưu trữ/xóa thông báo này.
+     * Giáo viên bị giới hạn: chỉ CLASS của lớp mình dạy; ALL chỉ đọc.
+     */
+    private boolean canManage;
 }

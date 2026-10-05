@@ -57,7 +57,7 @@ class GradeServiceImplTest {
     void setUp() {
         service = new GradeServiceImpl(gradeRepository, classRepository, classStudentRepository,
                 studentRepository, attendanceRepository, new FinanceAcademicMapperImpl(),
-                new TeachingAssignmentGuard(classSessionRepository));
+                new TeachingAssignmentGuard(classSessionRepository, classRepository));
     }
 
     @AfterEach

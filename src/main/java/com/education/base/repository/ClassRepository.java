@@ -50,4 +50,25 @@ public interface ClassRepository extends JpaRepository<ClassEntity, Long>, Class
 
     List<ClassEntity> findByStatusInAndIsDeletedOrderByCreatedAtDesc(
             Collection<String> statuses, Integer isDeleted);
+
+    /** ID lớp chủ nhiệm của giảng viên (chưa xóa). */
+    @Query("""
+            SELECT c.id FROM ClassEntity c
+             WHERE c.teacherId = :teacherId
+               AND c.isDeleted = :deleted
+            """)
+    List<Long> findIdsByTeacherIdAndIsDeleted(
+            @Param("teacherId") Long teacherId,
+            @Param("deleted") Integer deleted);
+
+    /** Lớp theo danh sách ID (chưa xóa), sắp xếp mã lớp. */
+    @Query("""
+            SELECT c FROM ClassEntity c
+             WHERE c.id IN :ids
+               AND c.isDeleted = :deleted
+             ORDER BY c.classCode ASC
+            """)
+    List<ClassEntity> findByIdInAndIsDeletedOrderByClassCode(
+            @Param("ids") Collection<Long> ids,
+            @Param("deleted") Integer deleted);
 }

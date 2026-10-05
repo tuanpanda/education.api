@@ -5,10 +5,12 @@ import com.education.base.common.HtmlContentSanitizer;
 import com.education.base.common.PersistenceFlags;
 import com.education.base.dto.request.AnnouncementFilterRequest;
 import com.education.base.dto.request.AnnouncementUpsertRequest;
+import com.education.base.dto.response.AnnouncementClassOptionDto;
 import com.education.base.dto.response.AnnouncementDto;
 import com.education.base.dto.response.PageResponse;
 import com.education.base.entity.AnnouncementEntity;
 import com.education.base.entity.ClassEntity;
+import com.education.base.exception.ForbiddenException;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.repository.AnnouncementRepository;
 import com.education.base.repository.ClassRepository;
@@ -28,6 +30,8 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -40,16 +44,43 @@ public class AnnouncementServiceImpl implements AnnouncementService {
     public static final String CLASS_NOT_FOUND = "ANNOUNCEMENT_CLASS_NOT_FOUND";
     public static final String CONTENT_EMPTY = "ANNOUNCEMENT_CONTENT_EMPTY";
     public static final String INVALID_STATUS = "ANNOUNCEMENT_INVALID_STATUS";
+    /** Giáo viên cố tạo/sửa phạm vi ALL hoặc thao tác trên thông báo ALL / lớp không được phân công. */
+    public static final String SCOPE_FORBIDDEN = "ANNOUNCEMENT_SCOPE_FORBIDDEN";
+
+    private static final String MSG_TEACHER_ALL_FORBIDDEN =
+            "Giáo viên chỉ được tạo hoặc sửa thông báo theo lớp mình dạy, không được dùng phạm vi toàn trung tâm.";
+    private static final String MSG_TEACHER_MANAGE_FORBIDDEN =
+            "Bạn chỉ được quản lý thông báo theo lớp mình phụ trách.";
+    private static final String MSG_TEACHER_CLASS_FORBIDDEN =
+            "Bạn chỉ được đăng thông báo cho lớp mình phụ trách.";
 
     private final AnnouncementRepository announcementRepository;
     private final ClassRepository classRepository;
     private final HtmlContentSanitizer htmlContentSanitizer;
+    private final TeachingAssignmentGuard teachingAssignmentGuard;
 
     @Override
     @Transactional(readOnly = true)
     public PageResponse<AnnouncementDto> search(AnnouncementFilterRequest filter) {
         AnnouncementFilterRequest f = filter == null ? new AnnouncementFilterRequest() : filter;
-        Specification<AnnouncementEntity> spec = buildSpec(f);
+        Optional<Set<Long>> taughtOpt = teachingAssignmentGuard.taughtClassIdsIfRestricted();
+        if (taughtOpt.isPresent()) {
+            Set<Long> taught = taughtOpt.get();
+            if (f.getClassId() != null && !taught.contains(f.getClassId())) {
+                int pageNo = Math.max(f.getPageNo(), 1);
+                int pageSize = Math.max(f.getPageSize(), 1);
+                return PageResponse.of(List.of(), pageNo, pageSize, 0);
+            }
+            if (f.getScopeType() != null && !f.getScopeType().isBlank()
+                    && DomainConstants.ANNOUNCEMENT_SCOPE_CLASS.equals(
+                    f.getScopeType().trim().toUpperCase(Locale.ROOT))
+                    && taught.isEmpty()) {
+                int pageNo = Math.max(f.getPageNo(), 1);
+                int pageSize = Math.max(f.getPageSize(), 1);
+                return PageResponse.of(List.of(), pageNo, pageSize, 0);
+            }
+        }
+        Specification<AnnouncementEntity> spec = buildSpec(f, taughtOpt);
         int pageNo = Math.max(f.getPageNo(), 1);
         int pageSize = Math.max(f.getPageSize(), 1);
         PageRequest pageable = PageRequest.of(
@@ -64,7 +95,9 @@ public class AnnouncementServiceImpl implements AnnouncementService {
     @Override
     @Transactional(readOnly = true)
     public AnnouncementDto getById(Long id) {
-        return toDto(requireExisting(id));
+        AnnouncementEntity entity = requireExisting(id);
+        requireTeacherCanView(entity);
+        return toDto(entity);
     }
 
     @Override
@@ -72,6 +105,7 @@ public class AnnouncementServiceImpl implements AnnouncementService {
     public AnnouncementDto create(AnnouncementUpsertRequest request) {
         AnnouncementUpsertRequest payload = requirePayload(request);
         ScopeResolved scope = resolveScope(payload);
+        requireTeacherCanWriteScope(scope);
         String content = requireSanitizedContent(payload.getContent());
         String username = SecurityUtils.currentUsername();
         AnnouncementEntity entity = AnnouncementEntity.builder()
@@ -96,7 +130,9 @@ public class AnnouncementServiceImpl implements AnnouncementService {
     public AnnouncementDto update(Long id, AnnouncementUpsertRequest request) {
         AnnouncementUpsertRequest payload = requirePayload(request);
         AnnouncementEntity entity = requireExisting(id);
+        requireTeacherCanManage(entity);
         ScopeResolved scope = resolveScope(payload);
+        requireTeacherCanWriteScope(scope);
         entity.setTitle(payload.getTitle().trim());
         entity.setContent(requireSanitizedContent(payload.getContent()));
         entity.setScopeType(scope.scopeType());
@@ -114,6 +150,7 @@ public class AnnouncementServiceImpl implements AnnouncementService {
     @Transactional(rollbackFor = Exception.class)
     public AnnouncementDto publish(Long id) {
         AnnouncementEntity entity = requireExisting(id);
+        requireTeacherCanManage(entity);
         if (DomainConstants.ANNOUNCEMENT_STATUS_ARCHIVED.equals(entity.getStatus())) {
             throw new OracleBusinessException(INVALID_STATUS,
                     "Không thể xuất bản thông báo đã lưu trữ. Hãy tạo bản nháp mới.");
@@ -130,6 +167,7 @@ public class AnnouncementServiceImpl implements AnnouncementService {
     @Transactional(rollbackFor = Exception.class)
     public AnnouncementDto archive(Long id) {
         AnnouncementEntity entity = requireExisting(id);
+        requireTeacherCanManage(entity);
         entity.setStatus(DomainConstants.ANNOUNCEMENT_STATUS_ARCHIVED);
         entity.setUpdatedBy(SecurityUtils.currentUsername());
         return toDto(announcementRepository.saveAndFlush(entity));
@@ -139,13 +177,31 @@ public class AnnouncementServiceImpl implements AnnouncementService {
     @Transactional(rollbackFor = Exception.class)
     public void softDelete(Long id) {
         AnnouncementEntity entity = requireExisting(id);
+        requireTeacherCanManage(entity);
         entity.setIsDeleted(PersistenceFlags.DELETED);
         entity.setUpdatedBy(SecurityUtils.currentUsername());
         announcementRepository.save(entity);
         log.info("Soft-deleted announcement id={}", id);
     }
 
-    private Specification<AnnouncementEntity> buildSpec(AnnouncementFilterRequest f) {
+    @Override
+    @Transactional(readOnly = true)
+    public List<AnnouncementClassOptionDto> listManageableClasses() {
+        Optional<List<ClassEntity>> taught = teachingAssignmentGuard.taughtClassesIfRestricted();
+        if (taught.isEmpty()) {
+            return List.of();
+        }
+        return taught.get().stream()
+                .map(c -> AnnouncementClassOptionDto.builder()
+                        .id(c.getId())
+                        .classCode(c.getClassCode())
+                        .className(c.getClassName())
+                        .build())
+                .toList();
+    }
+
+    private Specification<AnnouncementEntity> buildSpec(
+            AnnouncementFilterRequest f, Optional<Set<Long>> taughtOpt) {
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
             predicates.add(cb.equal(root.get("isDeleted"), PersistenceFlags.NOT_DELETED));
@@ -165,8 +221,77 @@ public class AnnouncementServiceImpl implements AnnouncementService {
                 String like = "%" + f.getKeyword().trim().toLowerCase(Locale.ROOT) + "%";
                 predicates.add(cb.like(cb.lower(root.get("title")), like));
             }
+            if (taughtOpt.isPresent()) {
+                Set<Long> taught = taughtOpt.get();
+                // Giáo viên: ALL (chỉ đọc trên UI) + CLASS thuộc lớp mình dạy.
+                Predicate allScope = cb.equal(root.get("scopeType"), DomainConstants.ANNOUNCEMENT_SCOPE_ALL);
+                if (taught.isEmpty()) {
+                    predicates.add(allScope);
+                } else {
+                    Predicate ownClass = cb.and(
+                            cb.equal(root.get("scopeType"), DomainConstants.ANNOUNCEMENT_SCOPE_CLASS),
+                            root.get("classId").in(taught));
+                    predicates.add(cb.or(allScope, ownClass));
+                }
+            }
             return cb.and(predicates.toArray(Predicate[]::new));
         };
+    }
+
+    private void requireTeacherCanWriteScope(ScopeResolved scope) {
+        if (!teachingAssignmentGuard.isAssignmentRestricted()) {
+            return;
+        }
+        if (DomainConstants.ANNOUNCEMENT_SCOPE_ALL.equals(scope.scopeType())) {
+            throw new ForbiddenException(SCOPE_FORBIDDEN, MSG_TEACHER_ALL_FORBIDDEN);
+        }
+        ClassEntity clazz = classRepository.findByIdAndIsDeleted(scope.classId(), PersistenceFlags.NOT_DELETED)
+                .orElseThrow(() -> new OracleBusinessException(CLASS_NOT_FOUND,
+                        "Không tìm thấy lớp với ID: " + scope.classId()));
+        teachingAssignmentGuard.requireCanWrite(clazz, MSG_TEACHER_CLASS_FORBIDDEN);
+    }
+
+    private void requireTeacherCanManage(AnnouncementEntity entity) {
+        if (!teachingAssignmentGuard.isAssignmentRestricted()) {
+            return;
+        }
+        if (!DomainConstants.ANNOUNCEMENT_SCOPE_CLASS.equals(entity.getScopeType())
+                || entity.getClassId() == null) {
+            throw new ForbiddenException(SCOPE_FORBIDDEN, MSG_TEACHER_MANAGE_FORBIDDEN);
+        }
+        ClassEntity clazz = classRepository.findByIdAndIsDeleted(entity.getClassId(), PersistenceFlags.NOT_DELETED)
+                .orElseThrow(() -> new OracleBusinessException(CLASS_NOT_FOUND,
+                        "Không tìm thấy lớp với ID: " + entity.getClassId()));
+        teachingAssignmentGuard.requireCanWrite(clazz, MSG_TEACHER_MANAGE_FORBIDDEN);
+    }
+
+    private void requireTeacherCanView(AnnouncementEntity entity) {
+        Optional<Set<Long>> taughtOpt = teachingAssignmentGuard.taughtClassIdsIfRestricted();
+        if (taughtOpt.isEmpty()) {
+            return;
+        }
+        if (DomainConstants.ANNOUNCEMENT_SCOPE_ALL.equals(entity.getScopeType())) {
+            return;
+        }
+        Set<Long> taught = taughtOpt.get();
+        if (DomainConstants.ANNOUNCEMENT_SCOPE_CLASS.equals(entity.getScopeType())
+                && entity.getClassId() != null
+                && taught.contains(entity.getClassId())) {
+            return;
+        }
+        throw new ForbiddenException(SCOPE_FORBIDDEN, MSG_TEACHER_MANAGE_FORBIDDEN);
+    }
+
+    private boolean canCurrentUserManage(AnnouncementEntity entity) {
+        if (!teachingAssignmentGuard.isAssignmentRestricted()) {
+            return true;
+        }
+        if (!DomainConstants.ANNOUNCEMENT_SCOPE_CLASS.equals(entity.getScopeType())
+                || entity.getClassId() == null) {
+            return false;
+        }
+        Optional<Set<Long>> taughtOpt = teachingAssignmentGuard.taughtClassIdsIfRestricted();
+        return taughtOpt.isPresent() && taughtOpt.get().contains(entity.getClassId());
     }
 
     private AnnouncementEntity requireExisting(Long id) {
@@ -245,6 +370,7 @@ public class AnnouncementServiceImpl implements AnnouncementService {
                 .updatedAt(entity.getUpdatedAt())
                 .createdBy(entity.getCreatedBy())
                 .updatedBy(entity.getUpdatedBy())
+                .canManage(canCurrentUserManage(entity))
                 .build();
     }
 

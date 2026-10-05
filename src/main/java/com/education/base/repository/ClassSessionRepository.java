@@ -81,4 +81,16 @@ public interface ClassSessionRepository extends JpaRepository<ClassSessionEntity
     List<ClassSessionEntity> findUpcomingScheduledSessions(
             @Param("classIds") Collection<Long> classIds,
             @Param("fromDate") LocalDate fromDate);
+
+    /** ID lớp mà giảng viên có ít nhất một buổi chưa xóa và không ở trạng thái loại trừ. */
+    @Query("""
+            SELECT DISTINCT s.classId FROM ClassSessionEntity s
+             WHERE s.teacherId = :teacherId
+               AND s.isDeleted = :deleted
+               AND s.status <> :excludedStatus
+            """)
+    List<Long> findDistinctClassIdsByTeacherIdAndIsDeletedAndStatusNot(
+            @Param("teacherId") Long teacherId,
+            @Param("deleted") Integer deleted,
+            @Param("excludedStatus") String excludedStatus);
 }

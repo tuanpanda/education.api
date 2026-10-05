@@ -2,6 +2,7 @@ package com.education.base.service.impl;
 
 import com.education.base.entity.ClassEntity;
 import com.education.base.exception.ForbiddenException;
+import com.education.base.repository.ClassRepository;
 import com.education.base.repository.ClassSessionRepository;
 import com.education.base.support.TestSecurityContexts;
 import org.junit.jupiter.api.AfterEach;
@@ -12,8 +13,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -28,12 +31,14 @@ class TeachingAssignmentGuardTest {
 
     @Mock
     private ClassSessionRepository classSessionRepository;
+    @Mock
+    private ClassRepository classRepository;
 
     private TeachingAssignmentGuard guard;
 
     @BeforeEach
     void setUp() {
-        guard = new TeachingAssignmentGuard(classSessionRepository);
+        guard = new TeachingAssignmentGuard(classSessionRepository, classRepository);
     }
 
     @AfterEach
@@ -94,6 +99,7 @@ class TeachingAssignmentGuardTest {
         loginTeacher("ROLE_ADMIN");
 
         assertThatCode(() -> guard.requireCanWrite(classTaughtBy(99L), "x")).doesNotThrowAnyException();
+        assertThat(guard.isAssignmentRestricted()).isFalse();
         verify(classSessionRepository, never()).existsByClassIdAndTeacherIdAndIsDeletedAndStatusNot(
                 any(), any(), any(), any());
     }
@@ -103,10 +109,31 @@ class TeachingAssignmentGuardTest {
         TestSecurityContexts.login(8L, List.of("ROLE_ACADEMIC"), Set.of("MENU_GRADE:UPDATE"));
 
         assertThatCode(() -> guard.requireCanWrite(classTaughtBy(99L), "x")).doesNotThrowAnyException();
+        assertThat(guard.isAssignmentRestricted()).isFalse();
     }
 
     @Test
     void noAuthenticatedUser_isNotRestricted() {
         assertThatCode(() -> guard.requireCanWrite(classTaughtBy(99L), "x")).doesNotThrowAnyException();
+        assertThat(guard.isAssignmentRestricted()).isFalse();
+    }
+
+    @Test
+    void taughtClassIds_mergesHomeroomAndSessionClasses() {
+        loginTeacher();
+        when(classRepository.findIdsByTeacherIdAndIsDeleted(TEACHER_ID, 0)).thenReturn(List.of(3L, 5L));
+        when(classSessionRepository.findDistinctClassIdsByTeacherIdAndIsDeletedAndStatusNot(
+                TEACHER_ID, 0, "CANCELLED")).thenReturn(List.of(5L, 9L));
+
+        Optional<Set<Long>> ids = guard.taughtClassIdsIfRestricted();
+
+        assertThat(ids).isPresent();
+        assertThat(ids.get()).containsExactlyInAnyOrder(3L, 5L, 9L);
+    }
+
+    @Test
+    void taughtClassIds_emptyWhenUnrestricted() {
+        TestSecurityContexts.loginAdmin(1L);
+        assertThat(guard.taughtClassIdsIfRestricted()).isEmpty();
     }
 }

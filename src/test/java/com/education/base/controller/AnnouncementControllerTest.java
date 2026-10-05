@@ -168,4 +168,16 @@ class AnnouncementControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("ARCHIVED"));
     }
+
+    @Test
+    void manageableClasses_returnsOptions() throws Exception {
+        when(announcementService.listManageableClasses()).thenReturn(List.of(
+                com.education.base.dto.response.AnnouncementClassOptionDto.builder()
+                        .id(5L).classCode("L5").className("Lop 5").build()));
+
+        mockMvc.perform(get("/api/v1/announcements/manageable-classes"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].id").value(5))
+                .andExpect(jsonPath("$.data[0].classCode").value("L5"));
+    }
 }

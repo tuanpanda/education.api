@@ -3,6 +3,7 @@ package com.education.base.controller;
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.request.AnnouncementFilterRequest;
 import com.education.base.dto.request.AnnouncementUpsertRequest;
+import com.education.base.dto.response.AnnouncementClassOptionDto;
 import com.education.base.dto.response.AnnouncementDto;
 import com.education.base.dto.response.PageResponse;
 import com.education.base.security.Permissions;
@@ -23,8 +24,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
  * Quản trị thông báo (menu {@code MENU_ANNOUNCEMENT}, V18_2).
+ * <p>
+ * Giáo viên ({@code ROLE_TEACHER}, không phải admin) chỉ tạo/sửa/đăng/lưu trữ/xóa thông báo
+ * phạm vi CLASS cho lớp mình dạy; xem thêm thông báo ALL (chỉ đọc).
  */
 @RestController
 @RequestMapping("/api/v1/announcements")
@@ -40,6 +46,13 @@ public class AnnouncementController {
     @RequirePermission(Permissions.ANNOUNCEMENT_VIEW)
     public ApiResponse<PageResponse<AnnouncementDto>> search(@Valid @ModelAttribute AnnouncementFilterRequest filter) {
         return ApiResponse.success(announcementService.search(filter));
+    }
+
+    @Operation(summary = "Lớp được phép gắn thông báo CLASS (giáo viên bị giới hạn phân công)")
+    @GetMapping("/manageable-classes")
+    @RequirePermission(Permissions.ANNOUNCEMENT_VIEW)
+    public ApiResponse<List<AnnouncementClassOptionDto>> manageableClasses() {
+        return ApiResponse.success(announcementService.listManageableClasses());
     }
 
     @Operation(summary = "Chi tiết thông báo")
