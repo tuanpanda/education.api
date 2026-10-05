@@ -1,7 +1,7 @@
 # Portal Phase 1 Stream B - Announcements STATUS
 
 - **Branch:** feat/portal-p1-announce
-- **HEAD:** efeef4e
+- **HEAD:** 3b39ed4 (tip); feature commit efeef4e
 - **Worktree:** E:\JAVA\edu-wt\p1-announce
 - **Machine:** TUANDX (2363ad1b-14e8-45d9-887d-7120c3e27818)
 - **Base:** feat/education-api @ 4cff890
@@ -13,10 +13,11 @@
 - Portal list + mark-read @ /api/v1/portal/me/announcements
 - AnnouncementQueryService.countUnread(studentUserId)
 - Tests green: mvn test → 1087 passed
+- Local commits (not pushed)
 
 ## Left
 - User runs migrations V18_1 then V18_2 (sqlplus)
-- Do not push / deploy (local commits only)
+- Do not push / deploy
 
 ## Blockers
 - None
