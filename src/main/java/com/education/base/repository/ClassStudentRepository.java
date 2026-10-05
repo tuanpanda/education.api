@@ -29,12 +29,13 @@ public interface ClassStudentRepository extends JpaRepository<ClassStudentEntity
     long countByClassIdAndStatusAndIsDeleted(Long classId, String status, Integer isDeleted);
 
     /**
-     * Ghi danh đang học ({@code ENROLLED}, chưa xóa) của học sinh kèm lớp (chưa xóa), lớp mới nhất trước
-     * - dùng cho cổng học sinh.
+     * Ghi danh đang học ({@code ENROLLED}, chưa xóa) của học sinh kèm lớp + giáo viên (chưa xóa),
+     * lớp mới nhất trước — dùng cho cổng học sinh.
      */
     @Query("""
             select cs from ClassStudentEntity cs
               join fetch cs.clazz c
+              left join fetch c.teacher t
              where cs.studentId = :studentId
                and cs.isDeleted = 0
                and cs.status = 'ENROLLED'

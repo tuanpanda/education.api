@@ -7,11 +7,12 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
 /**
- * Hybrid repository của {@code EDU_CLASS_SESSIONS}: CRUD JPA + tra cứu TKB qua Procedure.
+ * Hybrid repository of {@code EDU_CLASS_SESSIONS}: JPA CRUD + timetable via Procedure.
  */
 public interface ClassSessionRepository extends JpaRepository<ClassSessionEntity, Long>, TimetableRepositoryCustom {
 
@@ -23,7 +24,7 @@ public interface ClassSessionRepository extends JpaRepository<ClassSessionEntity
     List<ClassSessionEntity> findByClassIdAndSessionDateAndIsDeleted(
             Long classId, LocalDate sessionDate, Integer isDeleted);
 
-    /** Giảng viên {@code teacherId} có dạy buổi nào (trạng thái khác {@code excludedStatus}) của lớp không. */
+    /** Whether teacher has any non-excluded session for the class. */
     boolean existsByClassIdAndTeacherIdAndIsDeletedAndStatusNot(
             Long classId, Long teacherId, Integer isDeleted, String excludedStatus);
 
@@ -62,4 +63,34 @@ public interface ClassSessionRepository extends JpaRepository<ClassSessionEntity
             @Param("startTime") String startTime,
             @Param("endTime") String endTime,
             @Param("excludeId") Long excludeId);
+
+    /**
+     * Upcoming {@code SCHEDULED} sessions for the given classes (from {@code fromDate} onward),
+     * with class + teacher fetched. Caller further filters by time-of-day.
+     */
+    @Query("""
+            select s from ClassSessionEntity s
+              left join fetch s.clazz c
+              left join fetch s.teacher t
+             where s.isDeleted = 0
+               and s.status = 'SCHEDULED'
+               and s.classId in :classIds
+               and s.sessionDate >= :fromDate
+             order by s.sessionDate asc, s.startTime asc, s.id asc
+            """)
+    List<ClassSessionEntity> findUpcomingScheduledSessions(
+            @Param("classIds") Collection<Long> classIds,
+            @Param("fromDate") LocalDate fromDate);
+
+    /** ID lớp mà giảng viên có ít nhất một buổi chưa xóa và không ở trạng thái loại trừ. */
+    @Query("""
+            SELECT DISTINCT s.classId FROM ClassSessionEntity s
+             WHERE s.teacherId = :teacherId
+               AND s.isDeleted = :deleted
+               AND s.status <> :excludedStatus
+            """)
+    List<Long> findDistinctClassIdsByTeacherIdAndIsDeletedAndStatusNot(
+            @Param("teacherId") Long teacherId,
+            @Param("deleted") Integer deleted,
+            @Param("excludedStatus") String excludedStatus);
 }

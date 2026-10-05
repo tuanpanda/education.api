@@ -52,7 +52,7 @@ class AttendanceServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new AttendanceServiceImpl(attendanceRepository, classRepository,
-                classStudentRepository, studentRepository, new TeachingAssignmentGuard(classSessionRepository));
+                classStudentRepository, studentRepository, new TeachingAssignmentGuard(classSessionRepository, classRepository));
     }
 
     @AfterEach
