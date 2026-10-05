@@ -102,7 +102,7 @@ class V17PortalScriptTest {
         // V17_3 (stream B) không phụ thuộc đối tượng của V17_1 (không FK sang cột / bảng mới).
         assertThat(v17_3.toUpperCase(Locale.ROOT)).doesNotContain("EDU_USER_STUDENT_LINKS")
                 .doesNotContain("MENU_STUDENT_ACCOUNT");
-        // Hai script có chữ tiếng Việt đều đòi NLS_LANG AL32UTF8.
+        // V17_2 / V17_3 van ghi NLS_LANG AL32UTF8 (khuyen nghi); seed dung UNISTR nen khong bat buoc.
         assertThat(read(V17_2)).contains("AMERICAN_AMERICA.AL32UTF8");
         assertThat(read(V17_3)).contains("AMERICAN_AMERICA.AL32UTF8");
     }
@@ -187,7 +187,7 @@ class V17PortalScriptTest {
     @Test
     void v17_2CreatesStudentAccountMenuUnderSystemDirectory() throws IOException {
         String code = code(read(V17_2));
-        assertThat(code).contains("'MENU_STUDENT_ACCOUNT' MENU_CODE, 'Tài khoản học sinh' MENU_NAME");
+        assertThat(code).contains("'MENU_STUDENT_ACCOUNT' MENU_CODE, UNISTR('T\\00E0i kho\\1EA3n h\\1ECDc sinh') MENU_NAME");
         assertThat(code).contains("'/system/student-accounts' PATH");
         assertThat(code).contains("p.MENU_CODE = 'DIR_SYSTEM'");
         assertThat(code).contains("UNISTR('T\\00E0i kho\\1EA3n h\\1ECDc sinh')");

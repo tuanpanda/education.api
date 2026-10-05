@@ -23,10 +23,12 @@
 --   * Chay lai nhieu lan an toan (idempotent): DDL boc trong khoi bo qua ORA-00955 / -01408 / -02260 / -02261 /
 --     -02264 / -02275; seed dung MERGE (menu ON MENU_CODE, ID = SEQ_SYS_MENUS.NEXTVAL - KHONG dung ID co dinh).
 --   * Luu y: DDL tu COMMIT trong Oracle; ROLLBACK cua WHENEVER SQLERROR chi hoan tac phan seed menu.
---   * File UTF-8 (khong BOM) co dau tieng Viet o ten menu: chay voi NLS_LANG=AMERICAN_AMERICA.AL32UTF8.
---     Muc V17_3.3 so ten menu voi UNISTR(...) va DUNG SCRIPT (ROLLBACK seed) neu sai bang ma.
+--   * MENU_NAME / FUNCTION_NAME dung UNISTR(...) (file thuan ASCII) - khong phu thuoc NLS_LANG.
+--     NLS_LANG=AMERICAN_AMERICA.AL32UTF8 van khuyen nghi khi chay SQL*Plus, nhung khong bat buoc sau fix nay.
+--     Muc V17_3.3 van so ten menu voi UNISTR(...) de bat seed sai.
 --
 -- Chay (Windows, PowerShell):
+--   # NLS_LANG khuyen nghi (khong bat buoc sau khi seed dung UNISTR):
 --   $env:NLS_LANG = "AMERICAN_AMERICA.AL32UTF8"
 --   F:\Database\bin\sqlplus.exe EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V17_3__audit_log.sql
 --
@@ -52,6 +54,8 @@
 WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
 SET DEFINE OFF
 SET SERVEROUTPUT ON SIZE UNLIMITED
+
+PROMPT V17_3: NLS_LANG=AMERICAN_AMERICA.AL32UTF8 khuyen nghi (khong bat buoc - seed dung UNISTR)
 
 PROMPT ============ V17_3.0 Kiem tra truoc ============
 
@@ -135,7 +139,7 @@ MERGE INTO SYS_MENUS t
 USING (
     SELECT x.MENU_CODE, x.MENU_NAME, x.PATH, x.ICON, x.SORT_ORDER, p.ID PARENT_ID
       FROM (
-            SELECT 'MENU_AUDIT_LOG' MENU_CODE, 'Nhật ký hệ thống' MENU_NAME, '/system/audit-logs' PATH,
+            SELECT 'MENU_AUDIT_LOG' MENU_CODE, UNISTR('Nh\1EADt k\00FD h\1EC7 th\1ED1ng') MENU_NAME, '/system/audit-logs' PATH,
                    'shield' ICON, 6 SORT_ORDER FROM DUAL
            ) x
       JOIN SYS_MENUS p ON p.MENU_CODE = 'DIR_SYSTEM'
@@ -151,7 +155,7 @@ WHEN NOT MATCHED THEN INSERT (ID, PARENT_ID, MENU_CODE, MENU_NAME, MENU_TYPE, PA
 
 MERGE INTO SYS_FUNCTIONS t
 USING (
-    SELECT m.ID AS MENU_ID, 'VIEW' AS FUNCTION_CODE, 'Xem danh sách' AS FUNCTION_NAME
+    SELECT m.ID AS MENU_ID, 'VIEW' AS FUNCTION_CODE, UNISTR('Xem danh s\00E1ch') AS FUNCTION_NAME
       FROM SYS_MENUS m
      WHERE m.MENU_CODE = 'MENU_AUDIT_LOG'
        AND m.IS_DELETED = 0
@@ -197,7 +201,7 @@ BEGIN
     -- 'Nhat ky he thong' co dau, viet bang UNISTR (khong phu thuoc bang ma cua file / NLS_LANG).
     IF V_NAME IS NULL OR V_NAME <> UNISTR('Nh\1EADt k\00FD h\1EC7 th\1ED1ng') THEN
         RAISE_APPLICATION_ERROR(-20004,
-            'V17_3: ten menu MENU_AUDIT_LOG sai bang ma - dat NLS_LANG=AMERICAN_AMERICA.AL32UTF8 roi chay lai');
+            'V17_3: ten menu MENU_AUDIT_LOG khong khop UNISTR (kiem tra seed)');
     END IF;
 
     SELECT COUNT(*)

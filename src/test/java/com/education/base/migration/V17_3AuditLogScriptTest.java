@@ -55,7 +55,7 @@ class V17_3AuditLogScriptTest {
             throw new AssertionError("V17_3 phải là UTF-8 hợp lệ", ex);
         }
         String sql = read();
-        assertThat(sql).contains("'Nhật ký hệ thống' MENU_NAME")
+        assertThat(sql).contains("UNISTR('Nh\\1EADt k\\00FD h\\1EC7 th\\1ED1ng') MENU_NAME")
                 .contains("NLS_LANG=AMERICAN_AMERICA.AL32UTF8");
         // Kiểm tra sau so sánh với UNISTR: phát hiện chạy sai bảng mã.
         assertThat(sql).contains("UNISTR('Nh\\1EADt k\\00FD h\\1EC7 th\\1ED1ng')");

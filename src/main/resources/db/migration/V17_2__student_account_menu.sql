@@ -5,7 +5,7 @@
 --
 -- Script nay lam:
 --   V17_2.1 Kiem tra truoc: co thu muc DIR_SYSTEM ("Quan tri he thong") va vai tro ROLE_ADMIN.
---   V17_2.2 Menu MENU_STUDENT_ACCOUNT ('Tài khoản học sinh', /system/student-accounts) duoi DIR_SYSTEM.
+--   V17_2.2 Menu MENU_STUDENT_ACCOUNT ('Tai khoan hoc sinh', /system/student-accounts) duoi DIR_SYSTEM.
 --   V17_2.3 Chuc nang: VIEW / CREATE / RESET_PASSWORD / LOCK
 --           (backend: Permissions.STUDENT_ACCOUNT_*; LOCK dung cho ca khoa va mo khoa).
 --   V17_2.4 Phan quyen: ROLE_ADMIN toan quyen MENU_STUDENT_ACCOUNT (vai tro khac do quan tri vien tu cap).
@@ -16,8 +16,8 @@
 --   * Chay lai nhieu lan an toan: MERGE ON (MENU_CODE) / (MENU_ID, FUNCTION_CODE) / (ROLE_ID, MENU_ID);
 --     ID lay tu SEQ_SYS_MENUS / SEQ_SYS_FUNCTIONS / SEQ_SYS_ROLE_MENU_PERM - KHONG dung ID co dinh.
 --   * Chi DML, khong DDL.
---   * File UTF-8 co dau tieng Viet: chay voi NLS_LANG=AMERICAN_AMERICA.AL32UTF8
---     (PowerShell: $env:NLS_LANG = 'AMERICAN_AMERICA.AL32UTF8'). Sai NLS_LANG -> V17_2.5 bao loi va ROLLBACK.
+--   * MENU_NAME / FUNCTION_NAME dung UNISTR(...) (file thuan ASCII) - khong phu thuoc NLS_LANG.
+--     NLS_LANG=AMERICAN_AMERICA.AL32UTF8 van khuyen nghi khi chay SQL*Plus, nhung khong bat buoc sau fix nay.
 --
 -- THU TU CHAY: sau V17_1. Chay truoc hay sau deploy backend deu duoc (backend cu khong dung menu nay;
 -- truoc khi co V17_2 chi ROLE_ADMIN goi duoc /api/v1/student-accounts/**).
@@ -37,6 +37,8 @@
 WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
 SET DEFINE OFF
 SET SERVEROUTPUT ON SIZE UNLIMITED
+
+PROMPT V17_2: NLS_LANG=AMERICAN_AMERICA.AL32UTF8 khuyen nghi (khong bat buoc - seed dung UNISTR)
 
 PROMPT ============ V17_2.1 Kiem tra truoc ============
 
@@ -61,7 +63,7 @@ MERGE INTO SYS_MENUS t
 USING (
     SELECT x.MENU_CODE, x.MENU_NAME, x.PATH, x.ICON, x.SORT_ORDER, p.ID PARENT_ID
       FROM (
-            SELECT 'MENU_STUDENT_ACCOUNT' MENU_CODE, 'Tài khoản học sinh' MENU_NAME,
+            SELECT 'MENU_STUDENT_ACCOUNT' MENU_CODE, UNISTR('T\00E0i kho\1EA3n h\1ECDc sinh') MENU_NAME,
                    '/system/student-accounts' PATH, 'user-graduate' ICON, 5 SORT_ORDER FROM DUAL
            ) x
       JOIN SYS_MENUS p ON p.MENU_CODE = 'DIR_SYSTEM' AND p.IS_DELETED = 0
@@ -82,10 +84,10 @@ USING (
     SELECT m.ID AS MENU_ID, x.FUNCTION_CODE, x.FUNCTION_NAME
       FROM SYS_MENUS m
       JOIN (
-            SELECT 'VIEW' FUNCTION_CODE, 'Xem danh sách' FUNCTION_NAME FROM DUAL UNION ALL
-            SELECT 'CREATE', 'Tạo tài khoản' FROM DUAL UNION ALL
-            SELECT 'RESET_PASSWORD', 'Đặt lại mật khẩu' FROM DUAL UNION ALL
-            SELECT 'LOCK', 'Khóa / mở khóa' FROM DUAL
+            SELECT 'VIEW' FUNCTION_CODE, UNISTR('Xem danh s\00E1ch') FUNCTION_NAME FROM DUAL UNION ALL
+            SELECT 'CREATE', UNISTR('T\1EA1o t\00E0i kho\1EA3n') FROM DUAL UNION ALL
+            SELECT 'RESET_PASSWORD', UNISTR('\0110\1EB7t l\1EA1i m\1EADt kh\1EA9u') FROM DUAL UNION ALL
+            SELECT 'LOCK', UNISTR('Kh\00F3a / m\1EDF kh\00F3a') FROM DUAL
            ) x ON 1 = 1
      WHERE m.MENU_CODE = 'MENU_STUDENT_ACCOUNT'
        AND m.IS_DELETED = 0
@@ -126,7 +128,7 @@ BEGIN
     -- Ten menu doi chieu voi ban UNISTR (khong phu thuoc ma hoa file / NLS_LANG).
     IF V_NAME IS NULL OR V_NAME <> UNISTR('T\00E0i kho\1EA3n h\1ECDc sinh') THEN
         RAISE_APPLICATION_ERROR(-20003,
-            'V17_2: ten menu sai ma hoa - chay lai voi NLS_LANG=AMERICAN_AMERICA.AL32UTF8');
+            'V17_2: ten menu MENU_STUDENT_ACCOUNT khong khop UNISTR (kiem tra seed)');
     END IF;
 
     SELECT COUNT(*) INTO V_FUNCS
