@@ -161,6 +161,8 @@ class PortalAccessRulesTest {
         assertThat(endpoints).as("số endpoint được quét").hasSizeGreaterThan(60);
         assertThat(endpoints).extracting(Endpoint::pattern)
                 .contains("/api/v1/portal/me",
+                        "/api/v1/portal/me/announcements",
+                        "/api/v1/portal/me/announcements/{id}/read",
                         "/api/v1/auth/me",
                         "/api/v1/student-accounts/search",
                         "/api/v1/student-accounts/bulk",

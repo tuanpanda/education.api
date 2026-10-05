@@ -266,6 +266,33 @@ public class DomainConstants {
     public static final int FINANCE_EXPORT_MAX_ROWS = 20_000;
 
     /** Tên module dùng khi lưu file đính kèm theo từng phân hệ. */
+// ---- Cong hoc sinh - Stream B: thong bao (feat/portal-p1-announce, V18_1) --------------------
+
+    /** Pham vi thong bao - {@code CK_ANN_SCOPE}. */
+    public static final String ANNOUNCEMENT_SCOPE_PATTERN = "ALL|CLASS";
+
+    public static final String ANNOUNCEMENT_SCOPE_ALL = "ALL";
+
+    public static final String ANNOUNCEMENT_SCOPE_CLASS = "CLASS";
+
+    /** Doi tuong thong bao - {@code CK_ANN_AUDIENCE}. */
+    public static final String ANNOUNCEMENT_AUDIENCE_PATTERN = "STUDENT|PARENT|ALL";
+
+    public static final String ANNOUNCEMENT_AUDIENCE_STUDENT = "STUDENT";
+
+    public static final String ANNOUNCEMENT_AUDIENCE_PARENT = "PARENT";
+
+    public static final String ANNOUNCEMENT_AUDIENCE_ALL = "ALL";
+
+    /** Trang thai thong bao - {@code CK_ANN_STATUS}. */
+    public static final String ANNOUNCEMENT_STATUS_PATTERN = "DRAFT|PUBLISHED|ARCHIVED";
+
+    public static final String ANNOUNCEMENT_STATUS_DRAFT = "DRAFT";
+
+    public static final String ANNOUNCEMENT_STATUS_PUBLISHED = "PUBLISHED";
+
+    public static final String ANNOUNCEMENT_STATUS_ARCHIVED = "ARCHIVED";
+
     @UtilityClass
     public static class Module {
         public static final String STUDENT = "STUDENT";

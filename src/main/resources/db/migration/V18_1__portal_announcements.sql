@@ -1,0 +1,207 @@
+-- =============================================================================
+-- EDUCATION - MIGRATION V18_1: CONG HOC SINH PHASE 1 - THONG BAO (EDU_ANNOUNCEMENTS)
+--
+-- Giai doan 1, Stream B (feat/portal-p1-announce). CHI Stream B sua file nay.
+-- (V18_2 = menu MENU_ANNOUNCEMENT - Stream B.)
+--
+-- Script nay lam:
+--   V18_1.1 Sequence SEQ_EDU_ANNOUNCEMENTS
+--   V18_1.2 Bang EDU_ANNOUNCEMENTS: TITLE, CONTENT CLOB, SCOPE_TYPE ALL/CLASS,
+--           CLASS_ID (nullable FK EDU_CLASSES), AUDIENCE STUDENT/PARENT/ALL,
+--           IS_PINNED, STATUS DRAFT/PUBLISHED/ARCHIVED, PUBLISHED_AT, EXPIRES_AT,
+--           audit, IS_DELETED
+--   V18_1.3 Bang EDU_ANNOUNCEMENT_READS: PK (ANNOUNCEMENT_ID, USER_ID), READ_AT
+--   V18_1.4 Index ho tro truy van portal / staff
+--   V18_1.5 Kiem tra sau
+--
+-- QUY UOC:
+--   * WHENEVER SQLERROR EXIT ... ROLLBACK; ket thuc bang COMMIT + EXIT.
+--   * Chay lai nhieu lan an toan: kiem USER_TABLES / USER_SEQUENCES / USER_INDEXES /
+--     USER_CONSTRAINTS truoc khi tao.
+--   * File thuan ASCII (chu co dau viet bang UNISTR neu can) - khong phu thuoc NLS_LANG.
+--
+-- THU TU CHAY: sau V17_3. V18_1 -> V18_2.
+--
+--   sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @src/main/resources/db/migration/V18_1__portal_announcements.sql
+--
+-- ROLLBACK (go bo hoan toan; MAT du lieu thong bao):
+--   DROP TABLE EDU_ANNOUNCEMENT_READS CASCADE CONSTRAINTS PURGE;
+--   DROP TABLE EDU_ANNOUNCEMENTS CASCADE CONSTRAINTS PURGE;
+--   DROP SEQUENCE SEQ_EDU_ANNOUNCEMENTS;
+--   COMMIT;
+-- =============================================================================
+
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+SET DEFINE OFF
+SET SERVEROUTPUT ON SIZE UNLIMITED
+
+PROMPT ============ V18_1.1 Sequence ============
+
+DECLARE
+    PROCEDURE ENSURE_SEQUENCE(P_NAME VARCHAR2, P_DDL VARCHAR2) IS
+        V_COUNT NUMBER;
+    BEGIN
+        SELECT COUNT(*) INTO V_COUNT FROM USER_SEQUENCES WHERE SEQUENCE_NAME = P_NAME;
+        IF V_COUNT = 0 THEN
+            EXECUTE IMMEDIATE P_DDL;
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'created');
+        ELSE
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'already exists');
+        END IF;
+    END;
+BEGIN
+    ENSURE_SEQUENCE('SEQ_EDU_ANNOUNCEMENTS',
+        'CREATE SEQUENCE SEQ_EDU_ANNOUNCEMENTS START WITH 1 INCREMENT BY 1 NOCYCLE');
+END;
+/
+
+PROMPT ============ V18_1.2 Bang EDU_ANNOUNCEMENTS ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'EDU_ANNOUNCEMENTS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE EDU_ANNOUNCEMENTS (
+                ID            NUMBER                              NOT NULL,
+                TITLE         VARCHAR2(200)                       NOT NULL,
+                CONTENT       CLOB                                NOT NULL,
+                SCOPE_TYPE    VARCHAR2(20)                        NOT NULL,
+                CLASS_ID      NUMBER,
+                AUDIENCE      VARCHAR2(20)   DEFAULT 'STUDENT'    NOT NULL,
+                IS_PINNED     NUMBER(1)      DEFAULT 0            NOT NULL,
+                STATUS        VARCHAR2(20)   DEFAULT 'DRAFT'      NOT NULL,
+                PUBLISHED_AT  TIMESTAMP,
+                EXPIRES_AT    TIMESTAMP,
+                IS_DELETED    NUMBER(1)      DEFAULT 0            NOT NULL,
+                CREATED_AT    TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
+                UPDATED_AT    TIMESTAMP,
+                CREATED_BY    VARCHAR2(50),
+                UPDATED_BY    VARCHAR2(50),
+                CONSTRAINT PK_EDU_ANNOUNCEMENTS PRIMARY KEY (ID),
+                CONSTRAINT FK_ANN_CLASS FOREIGN KEY (CLASS_ID) REFERENCES EDU_CLASSES (ID),
+                CONSTRAINT CK_ANN_SCOPE    CHECK (SCOPE_TYPE IN ('ALL', 'CLASS')),
+                CONSTRAINT CK_ANN_AUDIENCE CHECK (AUDIENCE IN ('STUDENT', 'PARENT', 'ALL')),
+                CONSTRAINT CK_ANN_PINNED   CHECK (IS_PINNED IN (0, 1)),
+                CONSTRAINT CK_ANN_STATUS   CHECK (STATUS IN ('DRAFT', 'PUBLISHED', 'ARCHIVED')),
+                CONSTRAINT CK_ANN_DELETED  CHECK (IS_DELETED IN (0, 1)),
+                CONSTRAINT CK_ANN_SCOPE_CLASS CHECK (
+                    (SCOPE_TYPE = 'ALL' AND CLASS_ID IS NULL)
+                    OR (SCOPE_TYPE = 'CLASS' AND CLASS_ID IS NOT NULL)
+                )
+            )]';
+        DBMS_OUTPUT.PUT_LINE('  EDU_ANNOUNCEMENTS                       created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  EDU_ANNOUNCEMENTS                       already exists');
+    END IF;
+END;
+/
+
+COMMENT ON TABLE EDU_ANNOUNCEMENTS IS 'Thong bao cong hoc sinh / nhan vien (Phase 1 Stream B)';
+COMMENT ON COLUMN EDU_ANNOUNCEMENTS.SCOPE_TYPE IS 'ALL = toan trung tam; CLASS = theo lop (CLASS_ID bat buoc)';
+COMMENT ON COLUMN EDU_ANNOUNCEMENTS.AUDIENCE IS 'STUDENT / PARENT / ALL';
+COMMENT ON COLUMN EDU_ANNOUNCEMENTS.STATUS IS 'DRAFT / PUBLISHED / ARCHIVED';
+COMMENT ON COLUMN EDU_ANNOUNCEMENTS.CONTENT IS 'Noi dung HTML da sanitize o backend khi luu';
+
+PROMPT ============ V18_1.3 Bang EDU_ANNOUNCEMENT_READS ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'EDU_ANNOUNCEMENT_READS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE EDU_ANNOUNCEMENT_READS (
+                ANNOUNCEMENT_ID NUMBER                           NOT NULL,
+                USER_ID         NUMBER                           NOT NULL,
+                READ_AT         TIMESTAMP DEFAULT SYSTIMESTAMP   NOT NULL,
+                CONSTRAINT PK_EDU_ANNOUNCEMENT_READS PRIMARY KEY (ANNOUNCEMENT_ID, USER_ID),
+                CONSTRAINT FK_ANN_READ_ANN  FOREIGN KEY (ANNOUNCEMENT_ID) REFERENCES EDU_ANNOUNCEMENTS (ID),
+                CONSTRAINT FK_ANN_READ_USER FOREIGN KEY (USER_ID) REFERENCES SYS_USERS (ID)
+            )]';
+        DBMS_OUTPUT.PUT_LINE('  EDU_ANNOUNCEMENT_READS                  created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  EDU_ANNOUNCEMENT_READS                  already exists');
+    END IF;
+END;
+/
+
+COMMENT ON TABLE EDU_ANNOUNCEMENT_READS IS 'Danh dau da doc thong bao theo USER_ID (PK announcement+user)';
+
+PROMPT ============ V18_1.4 Index ============
+
+DECLARE
+    PROCEDURE ENSURE_INDEX(P_NAME VARCHAR2, P_DDL VARCHAR2) IS
+        V_COUNT NUMBER;
+    BEGIN
+        SELECT COUNT(*) INTO V_COUNT FROM USER_INDEXES WHERE INDEX_NAME = P_NAME;
+        IF V_COUNT = 0 THEN
+            EXECUTE IMMEDIATE P_DDL;
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'created');
+        ELSE
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'already exists');
+        END IF;
+    END;
+BEGIN
+    ENSURE_INDEX('IX_ANN_STATUS_PUBLISHED',
+        'CREATE INDEX IX_ANN_STATUS_PUBLISHED ON EDU_ANNOUNCEMENTS (STATUS, IS_DELETED, PUBLISHED_AT)');
+    ENSURE_INDEX('IX_ANN_SCOPE_CLASS',
+        'CREATE INDEX IX_ANN_SCOPE_CLASS ON EDU_ANNOUNCEMENTS (SCOPE_TYPE, CLASS_ID, IS_DELETED)');
+    ENSURE_INDEX('IX_ANN_EXPIRES',
+        'CREATE INDEX IX_ANN_EXPIRES ON EDU_ANNOUNCEMENTS (EXPIRES_AT)');
+    ENSURE_INDEX('IX_ANN_READ_USER',
+        'CREATE INDEX IX_ANN_READ_USER ON EDU_ANNOUNCEMENT_READS (USER_ID)');
+END;
+/
+
+PROMPT ============ V18_1.5 Kiem tra sau ============
+
+DECLARE
+    V_MISSING VARCHAR2(4000);
+    V_COUNT   NUMBER;
+BEGIN
+    FOR r IN (SELECT n.OBJECT_NAME, n.OBJECT_TYPE, NVL(o.STATUS, 'MISSING') STATUS
+                FROM (SELECT 'EDU_ANNOUNCEMENTS' OBJECT_NAME, 'TABLE' OBJECT_TYPE FROM DUAL UNION ALL
+                      SELECT 'EDU_ANNOUNCEMENT_READS', 'TABLE' FROM DUAL UNION ALL
+                      SELECT 'SEQ_EDU_ANNOUNCEMENTS', 'SEQUENCE' FROM DUAL UNION ALL
+                      SELECT 'IX_ANN_STATUS_PUBLISHED', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_ANN_SCOPE_CLASS', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_ANN_EXPIRES', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_ANN_READ_USER', 'INDEX' FROM DUAL) n
+                LEFT JOIN USER_OBJECTS o ON o.OBJECT_NAME = n.OBJECT_NAME AND o.OBJECT_TYPE = n.OBJECT_TYPE) LOOP
+        DBMS_OUTPUT.PUT_LINE('  ' || RPAD(r.OBJECT_NAME, 40) || r.STATUS);
+        IF r.STATUS <> 'VALID' THEN
+            V_MISSING := V_MISSING || ' ' || r.OBJECT_NAME;
+        END IF;
+    END LOOP;
+
+    SELECT COUNT(*) INTO V_COUNT
+      FROM USER_CONSTRAINTS
+     WHERE TABLE_NAME = 'EDU_ANNOUNCEMENTS'
+       AND CONSTRAINT_NAME IN ('CK_ANN_SCOPE', 'CK_ANN_AUDIENCE', 'CK_ANN_STATUS', 'CK_ANN_SCOPE_CLASS')
+       AND STATUS = 'ENABLED';
+    IF V_COUNT < 4 THEN
+        V_MISSING := V_MISSING || ' EDU_ANNOUNCEMENTS_CHECKS';
+    END IF;
+
+    SELECT COUNT(*) INTO V_COUNT
+      FROM USER_CONSTRAINTS
+     WHERE TABLE_NAME = 'EDU_ANNOUNCEMENT_READS'
+       AND CONSTRAINT_TYPE = 'P'
+       AND STATUS = 'ENABLED';
+    IF V_COUNT <> 1 THEN
+        V_MISSING := V_MISSING || ' EDU_ANNOUNCEMENT_READS_PK';
+    END IF;
+
+    IF V_MISSING IS NOT NULL THEN
+        RAISE_APPLICATION_ERROR(-20001, 'V18_1: thieu / khong hop le:' || V_MISSING);
+    END IF;
+    DBMS_OUTPUT.PUT_LINE('  V18_1                                   OK');
+END;
+/
+
+COMMIT;
+
+PROMPT ============ V18_1 DONE ============
+EXIT

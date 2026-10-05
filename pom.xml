@@ -143,6 +143,13 @@
             <version>${springdoc.version}</version>
         </dependency>
 
+<!-- OWASP Java HTML Sanitizer (noi dung thong bao) -->
+        <dependency>
+            <groupId>com.googlecode.owasp-java-html-sanitizer</groupId>
+            <artifactId>owasp-java-html-sanitizer</artifactId>
+            <version>20260924.2</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

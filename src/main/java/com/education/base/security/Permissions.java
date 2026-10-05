@@ -147,6 +147,15 @@ public class Permissions {
     public static final String STUDENT_ACCOUNT_RESET_PASSWORD = "MENU_STUDENT_ACCOUNT:RESET_PASSWORD";
     public static final String STUDENT_ACCOUNT_LOCK = "MENU_STUDENT_ACCOUNT:LOCK";
 
+// ---- Cong hoc sinh - Stream B thong bao (feat/portal-p1-announce, V18_2) ---------------------
+    // Menu MENU_ANNOUNCEMENT (/academic/announcements, duoi DIR_ACADEMIC).
+    public static final String ANNOUNCEMENT_VIEW = "MENU_ANNOUNCEMENT:VIEW";
+    public static final String ANNOUNCEMENT_CREATE = "MENU_ANNOUNCEMENT:CREATE";
+    public static final String ANNOUNCEMENT_UPDATE = "MENU_ANNOUNCEMENT:UPDATE";
+    public static final String ANNOUNCEMENT_DELETE = "MENU_ANNOUNCEMENT:DELETE";
+    public static final String ANNOUNCEMENT_PUBLISH = "MENU_ANNOUNCEMENT:PUBLISH";
+
+
     /** Ghép mã quyền phẳng từ mã menu và mã chức năng. */
     public static String of(String menuCode, String functionCode) {
         return menuCode + SEPARATOR + functionCode;
