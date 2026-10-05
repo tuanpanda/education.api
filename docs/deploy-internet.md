@@ -111,7 +111,7 @@ New-NetFirewallRule -DisplayName "Block Oracle 1521 inbound (public)" -Direction
 | `AUDIT_ENABLED` | `true` | Ghi nhật ký hệ thống `SYS_AUDIT_LOGS`. Lỗi ghi (chưa chạy V17_3, DB lỗi) chỉ log WARN. |
 | `RATE_LIMIT_ENABLED` | `true` | Bật giới hạn tần suất tổng quát (ngoài login/refresh). |
 | `RATE_LIMIT_MAX_TRACKED_KEYS` | `100000` | Số khóa đếm tối đa trong bộ nhớ (chống tràn RAM). |
-| `RATE_LIMIT_CHANGE_PASSWORD_WINDOW` / `_PER_IP` / `_PER_USER` | `15m` / `30` / `5` | `POST /api/v1/auth/change-password`. |
+| `RATE_LIMIT_CHANGE_PASSWORD_WINDOW` / `_PER_IP` / `_PER_USER` | `15m` / `200` / `5` | `POST /api/v1/auth/change-password`. |
 | `RATE_LIMIT_PORTAL_WINDOW` / `_PER_IP` / `_PER_USER` | `5m` / `0` / `300` | Mọi request `/api/v1/portal/**`. Theo IP mặc định tắt (cả lớp dùng chung IP NAT). |
 | `RATE_LIMIT_UPLOAD_WINDOW` / `_PER_IP` / `_PER_USER` | `1h` / `300` / `60` | Request `multipart/*` (POST/PUT/PATCH) tới `/api/**`: tải file, nhập Excel, (GĐ2) nộp bài. |
 | `UPLOADS_VOLUME` | `education-prod-outputs` | Tên volume file đính kèm của stack prod (script sao lưu dùng tên này). |

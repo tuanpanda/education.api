@@ -54,7 +54,7 @@ class RateLimitConfigurationTest {
         assertThat(changePassword.getPaths()).containsExactly("/api/v1/auth/change-password");
         assertThat(changePassword.getMethods()).containsExactly("POST");
         assertThat(changePassword.getWindow()).isEqualTo(Duration.ofMinutes(15));
-        assertThat(changePassword.getPerIp()).isEqualTo(30);
+        assertThat(changePassword.getPerIp()).isEqualTo(200);
         assertThat(changePassword.getPerUser()).isEqualTo(5);
 
         RateLimitProperties.Rule portal = properties.getRules().get("portal");
