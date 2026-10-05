@@ -1,7 +1,8 @@
 ﻿# Portal Phase 1 Stream A — STATUS
 
 - **Branch:** feat/portal-p1-core
-- **HEAD:** 675d1505615af81e75abab333db4817bd728458f
+- **HEAD:** 1e39e49c2708ac92c326b3f1071619b12920ba9f
+- **Feature commit:** 675d1505615af81e75abab333db4817bd728458f
 - **Base:** feat/portal-p0 @ 031fff6
 - **Machine:** TUANDX
 
@@ -11,7 +12,7 @@
 - PortalAnnouncementQuery stub (unread=0)
 - IDOR + staff-403 coverage
 - mvn test: **1085** run, 0 fail, BUILD SUCCESS
-- Local commit 675d1505615af81e75abab333db4817bd728458f (not pushed)
+- Local commits only (not pushed)
 
 ## APIs
 - GET /api/v1/portal/me
