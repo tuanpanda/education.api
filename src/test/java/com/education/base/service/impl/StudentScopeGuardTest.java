@@ -1,8 +1,10 @@
 package com.education.base.service.impl;
 
 import com.education.base.entity.ClassStudentEntity;
+import com.education.base.entity.TuitionFeeEntity;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.repository.ClassStudentRepository;
+import com.education.base.repository.TuitionFeeRepository;
 import com.education.base.security.PortalStudentContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,6 +25,8 @@ class StudentScopeGuardTest {
     private PortalStudentContext portalStudentContext;
     @Mock
     private ClassStudentRepository classStudentRepository;
+    @Mock
+    private TuitionFeeRepository tuitionFeeRepository;
     @InjectMocks
     private StudentScopeGuard guard;
 
@@ -62,5 +66,41 @@ class StudentScopeGuardTest {
 
         assertThatThrownBy(() -> guard.requireEnrolled(null)).isInstanceOf(OracleBusinessException.class)
                 .extracting("errorCode").isEqualTo(StudentScopeGuard.CLASS_NOT_FOUND);
+    }
+
+    @Test
+    void ownFee_isReturned() {
+        when(portalStudentContext.requireCurrentStudentId()).thenReturn(42L);
+        TuitionFeeEntity fee = TuitionFeeEntity.builder().id(7L).studentId(42L).feeCode("HP1").isDeleted(0).build();
+        when(tuitionFeeRepository.findByIdAndIsDeleted(7L, 0)).thenReturn(Optional.of(fee));
+
+        assertThat(guard.requireOwnFee(7L)).isSameAs(fee);
+    }
+
+    @Test
+    void otherStudentsFee_isNotFound() {
+        when(portalStudentContext.requireCurrentStudentId()).thenReturn(42L);
+        when(tuitionFeeRepository.findByIdAndIsDeleted(7L, 0)).thenReturn(Optional.of(
+                TuitionFeeEntity.builder().id(7L).studentId(99L).feeCode("HP1").isDeleted(0).build()));
+
+        assertThatThrownBy(() -> guard.requireOwnFee(7L)).isInstanceOf(OracleBusinessException.class)
+                .extracting("errorCode").isEqualTo(StudentScopeGuard.FEE_NOT_FOUND);
+    }
+
+    @Test
+    void missingFee_isNotFound() {
+        when(portalStudentContext.requireCurrentStudentId()).thenReturn(42L);
+        when(tuitionFeeRepository.findByIdAndIsDeleted(7L, 0)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> guard.requireOwnFee(7L)).isInstanceOf(OracleBusinessException.class)
+                .extracting("errorCode").isEqualTo(StudentScopeGuard.FEE_NOT_FOUND);
+    }
+
+    @Test
+    void nullFeeId_isNotFound() {
+        when(portalStudentContext.requireCurrentStudentId()).thenReturn(42L);
+
+        assertThatThrownBy(() -> guard.requireOwnFee(null)).isInstanceOf(OracleBusinessException.class)
+                .extracting("errorCode").isEqualTo(StudentScopeGuard.FEE_NOT_FOUND);
     }
 }
