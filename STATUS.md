@@ -1,7 +1,7 @@
-﻿# Portal Phase 1 Stream B - Announcements STATUS
+# Portal Phase 1 Stream B - Announcements STATUS
 
 - **Branch:** feat/portal-p1-announce
-- **HEAD:** (see git log after commit)
+- **HEAD:** efeef4e
 - **Worktree:** E:\JAVA\edu-wt\p1-announce
 - **Machine:** TUANDX (2363ad1b-14e8-45d9-887d-7120c3e27818)
 - **Base:** feat/education-api @ 4cff890
