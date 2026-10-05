@@ -46,7 +46,8 @@ class EntityMappingConventionTest {
                 new Object[]{CodeRuleEntity.class, "SYS_CODE_RULES", "SEQ_SYS_CODE_RULES"},
                 new Object[]{ClassScheduleEntity.class, "EDU_CLASS_SCHEDULES", "SEQ_EDU_CLASS_SCHEDULES"},
                 new Object[]{ClassSessionEntity.class, "EDU_CLASS_SESSIONS", "SEQ_EDU_CLASS_SESSIONS"},
-                new Object[]{UserStudentLinkEntity.class, "EDU_USER_STUDENT_LINKS", "SEQ_EDU_USER_STUDENT_LINKS"});
+                new Object[]{UserStudentLinkEntity.class, "EDU_USER_STUDENT_LINKS", "SEQ_EDU_USER_STUDENT_LINKS"},
+                new Object[]{AnnouncementEntity.class, "EDU_ANNOUNCEMENTS", "SEQ_EDU_ANNOUNCEMENTS"});
     }
 
     @ParameterizedTest(name = "{1}")
@@ -387,7 +388,7 @@ class EntityMappingConventionTest {
                 "BankAccountEntity",
                 "FileEntity", "UserEntity", "RefreshTokenEntity", "RoleEntity",
                 "MenuEntity", "FunctionEntity", "RoleMenuPermissionEntity", "CodeRuleEntity",
-                "ClassScheduleEntity", "ClassSessionEntity", "UserStudentLinkEntity");
+                "ClassScheduleEntity", "ClassSessionEntity", "UserStudentLinkEntity", "AnnouncementEntity");
         assertThat(UserRoleEntity.class.getAnnotation(Entity.class)).isNotNull();
     }
 

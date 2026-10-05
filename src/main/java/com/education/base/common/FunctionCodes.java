@@ -27,6 +27,10 @@ public class FunctionCodes {
     /** Hoàn tiền học phí (MENU_PAYMENT_HISTORY, Stream B / V14_2). */
     public static final String REFUND = "REFUND";
 
+/** Xuat ban thong bao (MENU_ANNOUNCEMENT, Stream B / V18_2). */
+    public static final String PUBLISH = "PUBLISH";
+
+
     /** Chức năng chuẩn theo thứ tự hiển thị; mã khác xếp sau theo bảng chữ cái. */
     public static final List<String> STANDARD = List.of("VIEW", "CREATE", "UPDATE", "DELETE", "EXPORT", "IMPORT");
 
@@ -88,6 +92,7 @@ public class FunctionCodes {
         names.put(CANCEL, "Hủy khoản phí");
         names.put(VOID, "Hủy giao dịch");
         names.put(REFUND, "Hoàn tiền");
+        names.put(PUBLISH, "Xuat ban");
         return Map.copyOf(names);
     }
 }
