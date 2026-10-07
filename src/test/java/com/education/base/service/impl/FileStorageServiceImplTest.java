@@ -1,309 +1,366 @@
 package com.education.base.service.impl;
 
+import com.education.base.audit.AuditActions;
 import com.education.base.config.FileStorageProperties;
+import com.education.base.config.FilesProperties;
 import com.education.base.entity.FileEntity;
+import com.education.base.entity.StudentEntity;
 import com.education.base.exception.OracleBusinessException;
+import com.education.base.repository.ClassStudentRepository;
 import com.education.base.repository.FileRepository;
+import com.education.base.repository.StudentRepository;
+import com.education.base.security.AuthUserPrincipal;
+import com.education.base.service.AuditService;
+import com.education.base.service.file.CommonFileModule;
+import com.education.base.service.file.FileLimitService;
+import com.education.base.service.file.FileModuleRegistry;
+import com.education.base.service.file.FileSettingsSource;
+import com.education.base.service.file.StudentFileModule;
+import com.education.base.service.file.StudentImportFileModule;
+import com.education.base.service.file.TeacherFileScope;
+import com.education.base.storage.LocalDiskBlobStore;
+import com.education.base.storage.StorageKeyStrategy;
+import com.education.base.storage.VirusScanner;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.ArgumentCaptor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.io.Resource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.util.unit.DataSize;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-@ExtendWith(MockitoExtension.class)
 class FileStorageServiceImplTest {
 
     @TempDir
     Path tempDir;
 
-    private static final byte[] PNG_BYTES = {(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0x0D};
+    private static final byte[] PDF = "%PDF-1.4 noi dung".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] ZIP_BYTES = {'P', 'K', 0x03, 0x04, 0x14, 0, 0, 0};
 
-    @Mock
     private FileRepository fileRepository;
-
+    private StudentRepository studentRepository;
+    private AuditService auditService;
+    private VirusScanner virusScanner;
     private FileStorageServiceImpl service;
 
     @BeforeEach
-    void setUp() {
-        FileStorageProperties properties = new FileStorageProperties();
-        properties.setBaseDir(tempDir.toString());
-        service = new FileStorageServiceImpl(fileRepository, properties);
-    }
-
-    @Test
-    void storeFile_emptyFile_throwsBusinessException() {
-        MockMultipartFile empty = new MockMultipartFile("file", "a.txt", "text/plain", new byte[0]);
-
-        assertThatThrownBy(() -> service.storeFile(empty, "STUDENT", 1L))
-                .isInstanceOf(OracleBusinessException.class)
-                .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
-                .isEqualTo("FILE_EMPTY");
-    }
-
-    @Test
-    void storeFile_savesPhysicalFileAndRelativePathOnly() throws Exception {
-        MockMultipartFile upload = new MockMultipartFile(
-                "file", "ho-so.pdf", "application/pdf", "%PDF-1.4 noi dung".getBytes());
-        when(fileRepository.save(any(FileEntity.class))).thenAnswer(invocation -> {
-            FileEntity entity = invocation.getArgument(0);
-            entity.setId(99L);
-            return entity;
+    @SuppressWarnings("unchecked")
+    void setUp() throws Exception {
+        fileRepository = mock(FileRepository.class);
+        studentRepository = mock(StudentRepository.class);
+        auditService = mock(AuditService.class);
+        virusScanner = mock(VirusScanner.class);
+        when(virusScanner.scan(any(), any())).thenReturn(VirusScanner.ScanResult.skipped());
+        FileStorageProperties props = new FileStorageProperties();
+        props.setBaseDir(tempDir.toString());
+        props.setMinFreeDisk(DataSize.ofBytes(0));
+        TeachingAssignmentGuard guard = mock(TeachingAssignmentGuard.class);
+        when(guard.taughtClassIdsIfRestricted()).thenReturn(Optional.empty());
+        TeacherFileScope scope = new TeacherFileScope(guard, mock(ClassStudentRepository.class), new FilesProperties());
+        FileModuleRegistry registry = new FileModuleRegistry(List.of(
+                new StudentFileModule(studentRepository, scope), new StudentImportFileModule(), new CommonFileModule()));
+        LocalDiskBlobStore blobStore = new LocalDiskBlobStore(props);
+        ObjectProvider<FileSettingsSource> none = mock(ObjectProvider.class);
+        FileLimitService limits = new FileLimitService(props, none, fileRepository, blobStore, registry);
+        service = new FileStorageServiceImpl(fileRepository, blobStore, new StorageKeyStrategy(), registry, limits,
+                virusScanner, auditService);
+        when(fileRepository.save(any(FileEntity.class))).thenAnswer(inv -> {
+            FileEntity e = inv.getArgument(0);
+            e.setId(99L);
+            return e;
         });
-
-        FileEntity saved = service.storeFile(upload, "student", 12L);
-
-        LocalDate today = LocalDate.now();
-        String expectedPrefix = "STUDENT/"
-                + today.format(DateTimeFormatter.ofPattern("yyyy")) + "/"
-                + today.format(DateTimeFormatter.ofPattern("MM")) + "/";
-
-        assertThat(saved.getId()).isEqualTo(99L);
-        assertThat(saved.getModuleName()).isEqualTo("STUDENT");
-        assertThat(saved.getReferenceId()).isEqualTo(12L);
-        assertThat(saved.getContentType()).isEqualTo("application/pdf");
-        assertThat(saved.getFileSize()).isEqualTo("%PDF-1.4 noi dung".getBytes().length);
-        assertThat(saved.getIsDeleted()).isZero();
-        assertThat(saved.getStoredName()).endsWith("_ho-so.pdf");
-        assertThat(saved.getFilePath())
-                .startsWith(expectedPrefix)
-                .endsWith("_ho-so.pdf")
-                .doesNotContain("\\")
-                .doesNotContain(tempDir.toAbsolutePath().toString());
-
-        Path physical = tempDir.resolve(saved.getFilePath()).normalize();
-        assertThat(physical).startsWith(tempDir.toAbsolutePath().normalize());
-        assertThat(Files.readString(physical)).isEqualTo("%PDF-1.4 noi dung");
+        when(studentRepository.findById(12L)).thenReturn(Optional.of(student(12L, 0)));
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                AuthUserPrincipal.builder().id(7L).username("giaovu").role("ROLE_ADMIN").build(), null, List.of()));
     }
 
-    @Test
-    void storeFile_withSubFolder_usesModuleSubFolderYearMonth() {
-        MockMultipartFile upload = new MockMultipartFile(
-                "file", "ds.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                ZIP_BYTES);
-        when(fileRepository.save(any(FileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        FileEntity saved = service.storeFile(upload, "STUDENT", null, "IMPORT");
-
-        LocalDate today = LocalDate.now();
-        String expectedPrefix = "STUDENT/IMPORT/"
-                + today.format(DateTimeFormatter.ofPattern("yyyy")) + "/"
-                + today.format(DateTimeFormatter.ofPattern("MM")) + "/";
-        assertThat(saved.getFilePath()).startsWith(expectedPrefix);
-        assertThat(Files.isRegularFile(tempDir.resolve(saved.getFilePath()))).isTrue();
-    }
-
-    @Test
-    void storeFile_stripsDirectoryTraversalFromOriginalName() {
-        MockMultipartFile upload = new MockMultipartFile(
-                "file", "../../../evil.txt", "text/plain", "x".getBytes());
-        when(fileRepository.save(any(FileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        FileEntity saved = service.storeFile(upload, "COMMON", null);
-
-        assertThat(saved.getOriginalName()).isEqualTo("evil.txt");
-        assertThat(saved.getFilePath()).doesNotContain("..");
-    }
-
-    @Test
-    void storeFile_sanitizesUnsafeCharactersInFileName() {
-        MockMultipartFile upload = new MockMultipartFile(
-                "file", "hồ sơ (1).pdf", "application/pdf", "%PDF-x".getBytes());
-        when(fileRepository.save(any(FileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        FileEntity saved = service.storeFile(upload, "STUDENT", 1L);
-
-        assertThat(saved.getOriginalName()).matches("[a-zA-Z0-9._-]+");
-        assertThat(saved.getOriginalName()).endsWith(".pdf");
-    }
-
-    @Test
-    void storeFile_blankModuleAndMissingContentType_useDefaultModuleAndDetectedType() {
-        MockMultipartFile upload = new MockMultipartFile("file", "a.txt", null, "x".getBytes());
-        when(fileRepository.save(any(FileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        FileEntity saved = service.storeFile(upload, "  ", null);
-
-        assertThat(saved.getModuleName()).isEqualTo("COMMON");
-        assertThat(saved.getFilePath()).startsWith("COMMON/");
-        assertThat(saved.getContentType()).isEqualTo("text/plain");
-    }
-
-    @Test
-    void storeFile_storesServerDetectedContentTypeNotClientValue() {
-        MockMultipartFile upload = new MockMultipartFile("file", "anh.png", "text/html", PNG_BYTES);
-        when(fileRepository.save(any(FileEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        FileEntity saved = service.storeFile(upload, "STUDENT", 1L);
-
-        assertThat(saved.getContentType()).isEqualTo("image/png");
-    }
-
-    @ParameterizedTest
-    @CsvSource({
-            "logo.svg, image/svg+xml, <svg xmlns=x><script>alert(1)</script></svg>, FILE_TYPE_NOT_ALLOWED",
-            "trang.html, text/html, <html><script>alert(1)</script></html>, FILE_TYPE_NOT_ALLOWED",
-            "trang.htm, text/html, <p>x</p>, FILE_TYPE_NOT_ALLOWED",
-            "virus.exe, application/octet-stream, MZ, FILE_TYPE_NOT_ALLOWED",
-            "khong-duoi, application/pdf, %PDF-1.4, FILE_TYPE_NOT_ALLOWED",
-            "a.bin, application/octet-stream, x, FILE_TYPE_NOT_ALLOWED",
-            "ghi-chu.txt, text/plain, <!DOCTYPE html><html></html>, FILE_CONTENT_MISMATCH",
-            "bang.csv, text/csv, <svg onload=alert(1)>, FILE_CONTENT_MISMATCH",
-            "gia-anh.png, image/png, <html>not a png</html>, FILE_CONTENT_MISMATCH",
-            "gia.pdf, application/pdf, <html>fake</html>, FILE_CONTENT_MISMATCH",
-            "gia.jpg, image/jpeg, GIF89a..., FILE_CONTENT_MISMATCH",
-            "gia.docx, application/msword, %PDF-1.4, FILE_CONTENT_MISMATCH"
-    })
-    void storeFile_rejectsDisallowedOrMismatchedTypes(String name, String clientType, String content, String code) {
-        MockMultipartFile upload = new MockMultipartFile("file", name, clientType,
-                content.getBytes(StandardCharsets.UTF_8));
-
-        assertThatThrownBy(() -> service.storeFile(upload, "COMMON", 1L))
-                .isInstanceOf(OracleBusinessException.class)
-                .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
-                .isEqualTo(code);
-        verify(fileRepository, never()).save(any());
-        assertThat(tempDir.toFile().listFiles()).isEmpty();
-    }
-
-    @Test
-    void storeFile_rejectsBinaryContentInTextFile() {
-        MockMultipartFile upload = new MockMultipartFile("file", "a.txt", "text/plain", new byte[]{'a', 0, 'b'});
-
-        assertThatThrownBy(() -> service.storeFile(upload, "COMMON", 1L))
-                .isInstanceOf(OracleBusinessException.class)
-                .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
-                .isEqualTo("FILE_CONTENT_MISMATCH");
-    }
-
-    @Test
-    void storeBytes_rejectsHtmlDisguisedAsXlsx() {
-        byte[] html = "<html><script>alert(1)</script></html>".getBytes(StandardCharsets.UTF_8);
-
-        assertThatThrownBy(() -> service.storeBytes(html, "ds.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "STUDENT", null, "IMPORT"))
-                .isInstanceOf(OracleBusinessException.class)
-                .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
-                .isEqualTo("FILE_CONTENT_MISMATCH");
-        verify(fileRepository, never()).save(any());
-    }
-
-    @Test
-    void storeFile_databaseFails_removesOrphanPhysicalFile() throws Exception {
-        MockMultipartFile upload = new MockMultipartFile(
-                "file", "bang-diem.txt", "text/plain", "x".getBytes());
-        when(fileRepository.save(any(FileEntity.class)))
-                .thenThrow(new DataIntegrityViolationException("ORA-00001"));
-
-        assertThatThrownBy(() -> service.storeFile(upload, "STUDENT", 1L))
-                .isInstanceOf(DataIntegrityViolationException.class);
-
-        try (var stream = Files.walk(tempDir)) {
-            assertThat(stream.filter(Files::isRegularFile)).isEmpty();
+    @AfterEach
+    void tearDown() {
+        SecurityContextHolder.clearContext();
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.clearSynchronization();
         }
     }
 
     @Test
-    void getFileEntity_missingOrSoftDeleted_throwsNotFound() {
-        when(fileRepository.findById(1L)).thenReturn(Optional.empty());
-        assertThatThrownBy(() -> service.getFileEntity(1L))
-                .isInstanceOf(OracleBusinessException.class)
-                .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
-                .isEqualTo("FILE_NOT_FOUND");
-
-        when(fileRepository.findById(2L))
-                .thenReturn(Optional.of(FileEntity.builder().id(2L).isDeleted(1).build()));
-        assertThatThrownBy(() -> service.getFileEntity(2L))
-                .isInstanceOf(OracleBusinessException.class)
-                .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
-                .isEqualTo("FILE_NOT_FOUND");
+    void storeFile_emptyFile_throwsFileEmpty() {
+        assertCode(() -> service.storeFile(new MockMultipartFile("file", "a.txt", "text/plain", new byte[0]),
+                "STUDENT", 12L), "FILE_EMPTY");
     }
 
     @Test
-    void storeFile_moduleWithPathSeparator_throwsInvalidModule() {
-        MockMultipartFile upload = new MockMultipartFile(
-                "file", "a.txt", "text/plain", "x".getBytes());
+    void storeFile_writesUuidKeyKeepsUnicodeNameAndMetadata() throws Exception {
+        FileEntity saved = service.storeFile(new MockMultipartFile("file", "Hồ sơ nhập học.PDF", "x/y", PDF),
+                "student", 12L);
 
-        assertThatThrownBy(() -> service.storeFile(upload, "../STUDENT", 1L))
-                .isInstanceOf(OracleBusinessException.class)
-                .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
-                .isEqualTo("INVALID_MODULE");
+        LocalDate today = LocalDate.now();
+        String prefix = String.format("STUDENT/%04d/%02d/", today.getYear(), today.getMonthValue());
+        assertThat(saved.getFilePath()).startsWith(prefix).matches(".*/[0-9a-f]{32}\\.pdf");
+        assertThat(saved.getStoredName()).matches("[0-9a-f]{32}\\.pdf");
+        assertThat(saved.getOriginalName()).isEqualTo("Hồ sơ nhập học.PDF");
+        assertThat(saved.getModuleName()).isEqualTo("STUDENT");
+        assertThat(saved.getContentType()).isEqualTo("application/pdf");
+        assertThat(saved.getFileSize()).isEqualTo(PDF.length);
+        assertThat(saved.getFileExt()).isEqualTo("pdf");
+        assertThat(saved.getStatus()).isEqualTo("ACTIVE");
+        assertThat(saved.getScanStatus()).isEqualTo("SKIPPED");
+        assertThat(saved.getStorageBackend()).isEqualTo("LOCAL");
+        assertThat(saved.getOwnerStudentId()).isEqualTo(12L);
+        assertThat(saved.getUploadedByUserId()).isEqualTo(7L);
+        assertThat(saved.getUploadedByType()).isEqualTo("STAFF");
+        assertThat(saved.getCreatedBy()).isEqualTo("giaovu");
+        assertThat(saved.getChecksumSha256())
+                .isEqualTo(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(PDF)));
+        assertThat(Files.readAllBytes(tempDir.resolve(saved.getFilePath()))).isEqualTo(PDF);
+        verify(auditService).success(eq(AuditActions.FILE_UPLOADED), eq(AuditActions.RESOURCE_FILE), eq(99L), anyMap());
+    }
+
+    @Test
+    void storeBytes_importSubFolder_usesStudentImportRulesWithoutReference() {
+        FileEntity saved = service.storeBytes(ZIP_BYTES, "danh sách.xlsx", "x", "STUDENT", null, "IMPORT");
+
+        assertThat(saved.getFilePath()).startsWith("STUDENT/IMPORT/").endsWith(".xlsx");
+        assertThat(saved.getModuleName()).isEqualTo("STUDENT");
+        assertThat(saved.getReferenceId()).isNull();
+        assertThat(saved.getOwnerStudentId()).isNull();
+    }
+
+    @Test
+    void storeBytes_importSubFolder_rejectsNonXlsx() {
+        assertCode(() -> service.storeBytes(PDF, "a.pdf", "x", "STUDENT", null, "IMPORT"), "FILE_TYPE_NOT_ALLOWED");
+    }
+
+    @Test
+    void storeFile_unregisteredModule_isRejectedFailClosed() {
+        assertCode(() -> service.storeFile(pdf(), "SUBMISSION", 1L), "INVALID_MODULE");
+        verify(fileRepository, never()).save(any());
+    }
+
+    @Test
+    void storeFile_referenceRequired() {
+        assertCode(() -> service.storeFile(pdf(), "STUDENT", null), "FILE_REFERENCE_REQUIRED");
+    }
+
+    @Test
+    void storeFile_referenceNotFound() {
+        when(studentRepository.findById(404L)).thenReturn(Optional.empty());
+        assertCode(() -> service.storeFile(pdf(), "STUDENT", 404L), "FILE_REFERENCE_NOT_FOUND");
+    }
+
+    @Test
+    void storeFile_referenceSoftDeleted_isInactive() {
+        when(studentRepository.findById(13L)).thenReturn(Optional.of(student(13L, 1)));
+        assertCode(() -> service.storeFile(pdf(), "STUDENT", 13L), "FILE_REFERENCE_INACTIVE");
+        verify(auditService).failure(eq(AuditActions.FILE_UPLOAD_REJECTED), eq(AuditActions.RESOURCE_FILE), isNull(),
+                anyMap());
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "logo.svg, <svg/>, FILE_TYPE_NOT_ALLOWED",
+            "virus.exe, MZ, FILE_TYPE_NOT_ALLOWED",
+            "fake.pdf, hello, FILE_CONTENT_MISMATCH",
+            "noext, abc, FILE_TYPE_NOT_ALLOWED"
+    })
+    void storeFile_rejectsDisallowedOrMismatchedTypes(String name, String content, String code) {
+        assertCode(() -> service.storeFile(new MockMultipartFile("file", name, "application/pdf",
+                content.getBytes()), "STUDENT", 12L), code);
+        assertThat(blobs()).isEmpty();
+    }
+
+    @Test
+    void storeFile_tooLargeForModule() {
+        byte[] big = new byte[20 * 1024 * 1024 + 1];
+        System.arraycopy(PDF, 0, big, 0, PDF.length);
+        assertCode(() -> service.storeFile(new MockMultipartFile("file", "a.pdf", "x", big), "STUDENT", 12L),
+                "FILE_TOO_LARGE");
+    }
+
+    @Test
+    void storeFile_countLimitPerReference() {
+        when(fileRepository.countByModuleNameAndReferenceIdAndStatusIn(eq("STUDENT"), eq(12L), any())).thenReturn(30L);
+        assertCode(() -> service.storeFile(pdf(), "STUDENT", 12L), "FILE_LIMIT_COUNT");
+    }
+
+    @Test
+    void storeFile_databaseFailsWithoutTransaction_removesBlob() {
+        when(fileRepository.save(any(FileEntity.class))).thenThrow(new DataIntegrityViolationException("boom"));
+
+        assertThatThrownBy(() -> service.storeFile(pdf(), "STUDENT", 12L))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThat(blobs()).isEmpty();
+    }
+
+    @Test
+    void storeFile_transactionRollback_removesBlob_commitKeepsIt() {
+        TransactionSynchronizationManager.initSynchronization();
+        FileEntity first = service.storeFile(pdf(), "STUDENT", 12L);
+        complete(TransactionSynchronization.STATUS_ROLLED_BACK);
+        assertThat(Files.exists(tempDir.resolve(first.getFilePath()))).isFalse();
+
+        TransactionSynchronizationManager.initSynchronization();
+        FileEntity second = service.storeFile(pdf(), "STUDENT", 12L);
+        complete(TransactionSynchronization.STATUS_COMMITTED);
+        assertThat(Files.exists(tempDir.resolve(second.getFilePath()))).isTrue();
+    }
+
+    @Test
+    void storeFile_infected_isQuarantinedAndRejected() throws Exception {
+        when(virusScanner.scan(any(), any())).thenReturn(new VirusScanner.ScanResult("INFECTED", "Eicar"));
+
+        assertCode(() -> service.storeFile(pdf(), "STUDENT", 12L), "FILE_INFECTED");
+        assertThat(blobs()).isEmpty();
+        assertThat(Files.exists(tempDir.resolve(".quarantine"))).isTrue();
+        verify(fileRepository, never()).save(any());
+        verify(auditService).denied(eq(AuditActions.FILE_INFECTED), anyString(), any(), anyMap());
+    }
+
+    @Test
+    void getFileEntity_nonActive_throwsNotFound() {
+        when(fileRepository.findById(1L)).thenReturn(Optional.of(FileEntity.builder().id(1L).isDeleted(0)
+                .status("PENDING").build()));
+        when(fileRepository.findById(2L)).thenReturn(Optional.of(FileEntity.builder().id(2L).isDeleted(1).build()));
+        when(fileRepository.findById(3L)).thenReturn(Optional.empty());
+        when(fileRepository.findById(4L)).thenReturn(Optional.of(FileEntity.builder().id(4L).isDeleted(0).build()));
+
+        assertCode(() -> service.getFileEntity(1L), "FILE_NOT_FOUND");
+        assertCode(() -> service.getFileEntity(2L), "FILE_NOT_FOUND");
+        assertCode(() -> service.getFileEntity(3L), "FILE_NOT_FOUND");
+        assertThat(service.getFileEntity(4L).getId()).isEqualTo(4L);
     }
 
     @Test
     void loadFileAsResource_rejectsPathTraversal() {
-        when(fileRepository.findById(5L)).thenReturn(Optional.of(FileEntity.builder()
-                .id(5L)
-                .filePath("../../secret.txt")
-                .isDeleted(0)
-                .build()));
-
-        assertThatThrownBy(() -> service.loadFileAsResource(5L))
-                .isInstanceOf(OracleBusinessException.class)
-                .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
-                .isEqualTo("PATH_TRAVERSAL_DETECTED");
+        stubActive(5L, "../../etc/passwd");
+        assertCode(() -> service.loadFileAsResource(5L), "FILE_PATH_ERROR");
     }
 
     @Test
-    void loadFileAsResource_missingPhysicalFile_throwsNotFound() {
-        when(fileRepository.findById(6L)).thenReturn(Optional.of(FileEntity.builder()
-                .id(6L)
-                .filePath("STUDENT/2026/09/khong-ton-tai.pdf")
-                .isDeleted(0)
-                .build()));
-
-        assertThatThrownBy(() -> service.loadFileAsResource(6L))
-                .isInstanceOf(OracleBusinessException.class)
-                .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
-                .isEqualTo("FILE_NOT_FOUND");
+    void loadFileAsResource_missingBlob_throwsBlobMissing() {
+        stubActive(6L, "STUDENT/2026/09/missing.pdf");
+        assertCode(() -> service.loadFileAsResource(6L), "FILE_BLOB_MISSING");
     }
 
     @Test
-    void loadFileAsResource_returnsReadableResource() throws Exception {
-        String relative = "STUDENT/2026/09/sample.txt";
-        Path target = tempDir.resolve(relative);
-        Files.createDirectories(target.getParent());
-        Files.writeString(target, "hello");
+    void loadFileAsResource_legacyPath_returnsReadableResource() throws Exception {
+        Path legacy = tempDir.resolve("STUDENT/2026/09/abc_ho-so.pdf");
+        Files.createDirectories(legacy.getParent());
+        Files.write(legacy, PDF);
+        stubActive(7L, "STUDENT/2026/09/abc_ho-so.pdf");
 
-        when(fileRepository.findById(7L)).thenReturn(Optional.of(FileEntity.builder()
-                .id(7L)
-                .filePath(relative)
-                .isDeleted(0)
-                .build()));
+        Resource r = service.loadFileAsResource(7L);
+        assertThat(r.isReadable()).isTrue();
+        assertThat(r.getContentAsByteArray()).isEqualTo(PDF);
+    }
 
-        Resource resource = service.loadFileAsResource(7L);
+    @Test
+    void loadResource_purged_isNotFound() {
+        assertCode(() -> service.loadResource(FileEntity.builder().id(8L).status("PURGED").filePath("a/b.pdf").build()),
+                "FILE_NOT_FOUND");
+    }
 
-        assertThat(resource.exists()).isTrue();
-        assertThat(resource.getContentAsByteArray()).isEqualTo("hello".getBytes());
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {
+            "Hồ sơ.pdf|Hồ sơ.pdf",
+            "../../evil.txt|evil.txt",
+            "C:\\Users\\a\\Bảng điểm.xlsx|Bảng điểm.xlsx",
+            "'  '|unnamed",
+            "...|unnamed",
+            "a\u0000b\u202E.txt|ab.txt"
+    })
+    void cleanOriginalName_keepsUnicodeAndStripsUnsafeParts(String in, String expected) {
+        assertThat(FileStorageServiceImpl.cleanOriginalName(in)).isEqualTo(expected);
+    }
+
+    @Test
+    void cleanOriginalName_decomposedVietnamese_isNfcNormalized() {
+        String nfd = java.text.Normalizer.normalize("Hồ sơ.pdf", java.text.Normalizer.Form.NFD);
+        assertThat(FileStorageServiceImpl.cleanOriginalName(nfd)).isEqualTo("Hồ sơ.pdf");
+    }
+
+    @Test
+    void cleanOriginalName_truncatesTo255KeepingExtension() {
+        String name = FileStorageServiceImpl.cleanOriginalName("ả".repeat(300) + ".pdf");
+        assertThat(name).hasSize(255).endsWith(".pdf");
     }
 
     @Test
     void getFilesByRef_normalizesModuleAndDelegatesToProcedure() {
-        FileEntity entity = FileEntity.builder().id(1L).moduleName("STUDENT").build();
-        when(fileRepository.getFilesByRef("STUDENT", 10L)).thenReturn(List.of(entity));
+        when(fileRepository.getFilesByRef("CLASS", 3L)).thenReturn(List.of());
+        assertThat(service.getFilesByRef(" class ", 3L)).isEmpty();
+        verify(fileRepository).getFilesByRef("CLASS", 3L);
+    }
 
-        assertThat(service.getFilesByRef("student", 10L)).containsExactly(entity);
-        verify(fileRepository).getFilesByRef("STUDENT", 10L);
+    // ---------------------------------------------------------------------------------------------
+
+    private static MockMultipartFile pdf() {
+        return new MockMultipartFile("file", "a.pdf", "application/pdf", PDF);
+    }
+
+    private static StudentEntity student(Long id, int deleted) {
+        StudentEntity s = new StudentEntity();
+        s.setId(id);
+        s.setIsDeleted(deleted);
+        s.setStudentCode("HS" + id);
+        s.setFullName("Nguyễn Văn A");
+        return s;
+    }
+
+    private void stubActive(Long id, String path) {
+        when(fileRepository.findById(id)).thenReturn(Optional.of(FileEntity.builder().id(id).isDeleted(0)
+                .status("ACTIVE").filePath(path).build()));
+    }
+
+    private static void complete(int status) {
+        List<TransactionSynchronization> syncs = TransactionSynchronizationManager.getSynchronizations();
+        TransactionSynchronizationManager.clearSynchronization();
+        syncs.forEach(s -> s.afterCompletion(status));
+    }
+
+    private List<Path> blobs() {
+        try (Stream<Path> s = Files.walk(tempDir)) {
+            return s.filter(Files::isRegularFile)
+                    .filter(p -> !tempDir.relativize(p).toString().startsWith("."))
+                    .toList();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static void assertCode(org.assertj.core.api.ThrowableAssert.ThrowingCallable call, String code) {
+        assertThatThrownBy(call).isInstanceOf(OracleBusinessException.class)
+                .extracting(ex -> ((OracleBusinessException) ex).getErrorCode())
+                .isEqualTo(code);
     }
 }

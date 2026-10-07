@@ -661,3 +661,6 @@ thêm endpoint mới trong vùng đường dẫn của chính luồng (ghi lại
 | # | Ngày | Luồng đề xuất | Nội dung thay đổi | Ảnh hưởng | Duyệt |
 |---|---|---|---|---|---|
 | - | - | - | (chưa có) | - | - |
+| A1 | 2026-10-07 | A | `GlobalExceptionHandler` (không thuộc luồng nào): ánh xạ `FILE_BLOB_MISSING` -> 404 như mục 9.1 (hiện trả 400 vì chỉ mã `*_NOT_FOUND` là 404). Trùng yêu cầu B6. | FE nhận 400 thay vì 404 cho tới khi sửa; `code` đúng | chờ |
+| A2 | 2026-10-07 | A | Không phá vỡ: thêm `default canDownload(user, file)` và `default referenceActive(refId)` vào `FileModuleDescriptor`; thêm `FileStorageService.loadResource(FileEntity)` (đọc mọi trạng thái trừ PURGED, cho màn quản trị); `FileLimitService.evictCache()` để B gọi sau khi lưu cấu hình. | B, D dùng được; không bắt buộc | - |
+| A3 | 2026-10-07 | A | Hành vi: module `COMMON` fail-closed - đọc cần `MENU_FILE_EXPLORER:UPLOAD` + VIEW/DOWNLOAD; xoá chỉ file do chính mình upload. `FileLifecycleService` không ghi audit (B4), `purge` nhận cả `PENDING` (B3), `PURGE_AFTER` theo `TRASH_RETENTION_DAYS` của module (B5). | ADMISSION không đọc COMMON | - |

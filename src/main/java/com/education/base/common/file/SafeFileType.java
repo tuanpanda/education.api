@@ -205,4 +205,25 @@ public enum SafeFileType {
                 "Định dạng file không được hỗ trợ. Chỉ chấp nhận ảnh (jpg, png, gif, webp), pdf, "
                         + "doc/docx, xls/xlsx, csv, txt, zip.");
     }
+
+    /** Mọi đuôi của allow-list (chữ thường, không dấu chấm), theo thứ tự khai báo. */
+    public static java.util.List<String> allExtensions() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (SafeFileType t : values()) {
+            t.extensions.stream().sorted(java.util.Comparator.comparing(String::length).thenComparing(e -> e))
+                    .forEach(out::add);
+        }
+        return out;
+    }
+
+    /** Đuôi được xem inline (ảnh + pdf). */
+    public static java.util.List<String> inlineExtensions() {
+        return allExtensions().stream().filter(e -> byExtension(e).map(SafeFileType::isInlineSafe).orElse(false))
+                .toList();
+    }
+
+    /** Đuôi chữ thường của tên file (không dấu chấm) hoặc {@code null}. */
+    public static String extensionOfName(String filename) {
+        return extensionOf(filename);
+    }
 }
