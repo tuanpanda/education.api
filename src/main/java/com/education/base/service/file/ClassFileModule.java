@@ -57,7 +57,7 @@ public class ClassFileModule extends AbstractFileModule {
         }
         return repository.findById(referenceId)
                 .map(e -> new FileReferenceInfo(code(), referenceId, "Lớp " + e.getClassCode() + " - " + e.getClassName(),
-                        "/classes?id=" + referenceId,
+                        "/academic/classes?id=" + referenceId,
                         e.getIsDeleted() != null && e.getIsDeleted() != 0
                                 ? FileConstants.RefState.DELETED : FileConstants.RefState.ACTIVE))
                 .orElseGet(() -> FileReferenceInfo.notFound(code(), referenceId));

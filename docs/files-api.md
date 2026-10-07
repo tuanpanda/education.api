@@ -224,7 +224,7 @@ Ghi chú:
   "id": 101, "originalName": "hoc-ba.pdf", "fileExt": "pdf", "contentType": "application/pdf", "fileSize": 245760,
   "moduleName": "STUDENT", "referenceId": 12,
   "usage": { "moduleName": "STUDENT", "referenceId": 12, "label": "HS000012 - Nguyễn Văn A",
-             "uiRoute": "/students/list?id=12", "state": "ACTIVE" },
+             "uiRoute": "/students/list?view=12", "state": "ACTIVE" },
   "status": "ACTIVE", "scanStatus": "SKIPPED",
   "uploadedByUserId": 5, "uploadedByUsername": "giaovien01", "uploadedByFullName": "Trần Thị B", "uploadedByType": "STAFF",
   "ownerStudentId": 12, "ownerStudentCode": "HS000012", "ownerStudentName": "Nguyễn Văn A",
