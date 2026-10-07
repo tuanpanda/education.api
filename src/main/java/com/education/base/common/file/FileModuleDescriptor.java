@@ -27,6 +27,13 @@ public interface FileModuleDescriptor {
     /** Người dùng (đã đăng nhập, không phải admin) có được xem/tải file này của module không. */
     boolean canRead(AuthUserPrincipal user, FileEntity file);
 
+    /**
+     * Có được TẢI file này không (mặc định = {@link #canRead}). Module {@code COMMON} cần thêm quyền tải riêng.
+     */
+    default boolean canDownload(AuthUserPrincipal user, FileEntity file) {
+        return canRead(user, file);
+    }
+
     /** Có được upload file gắn vào bản ghi {@code referenceId} (có thể NULL nếu module cho phép) không. */
     boolean canUpload(AuthUserPrincipal user, Long referenceId);
 
@@ -55,6 +62,18 @@ public interface FileModuleDescriptor {
 
     /** "Nơi sử dụng" cho màn quản trị: nhãn, route UI, trạng thái bản ghi. */
     FileReferenceInfo describeReference(Long referenceId);
+
+    /**
+     * {@code true} khi bản ghi tham chiếu còn hoạt động (QĐ-F9). Mặc định dựa trên {@link #describeReference};
+     * {@code referenceId = null} luôn {@code true}.
+     */
+    default boolean referenceActive(Long referenceId) {
+        if (referenceId == null) {
+            return true;
+        }
+        FileReferenceInfo info = describeReference(referenceId);
+        return info != null && FileConstants.RefState.ACTIVE.equals(info.state());
+    }
 
     /** Học sinh sở hữu (tính quota) - rỗng nếu module không tính quota học sinh. */
     default Optional<Long> ownerStudentId(Long referenceId) {
