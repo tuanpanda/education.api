@@ -660,4 +660,9 @@ thêm endpoint mới trong vùng đường dẫn của chính luồng (ghi lại
 
 | # | Ngày | Luồng đề xuất | Nội dung thay đổi | Ảnh hưởng | Duyệt |
 |---|---|---|---|---|---|
-| - | - | - | (chưa có) | - | - |
+| B1 | 2026-10-07 | B | Thêm `repository/FileAdminRepository.java` (mới, thuộc B): `JpaRepository<FileEntity,Long>` + `JpaSpecificationExecutor` + truy vấn thống kê / job / `fillChecksum` (chỉ ghi `CHECKSUM_SHA256` khi đang NULL). Không sửa `FileRepository` của A. | A: không phải sửa gì; ghi nhận B ghi cột checksum qua backfill. | chờ A |
+| B2 | 2026-10-07 | B | `FileFilterRequest.status` nhận thêm `ALL` (đúng như mục 5.1 đã ghi; hằng `FileFilterRequest.STATUS_ALL`). | C: không đổi (đã dùng `ALL`). | tự duyệt (file của B) |
+| B3 | 2026-10-07 | B | `FileLifecycleService.purge` cần chấp nhận cả file `PENDING` (job dọn upload chưa gắn > `pending-hours`); hiện javadoc chỉ ghi "đang ở thùng rác". | A: cài `purge` cho `DELETED` và `PENDING`. | chờ A |
+| B4 | 2026-10-07 | B | Nhật ký: `FileLifecycleService` **không** tự ghi audit; tầng gọi ghi (`FILE_DELETED` via=ADMIN, `FILE_RESTORED`, `FILE_PURGED` của B; job ghi actor `SYSTEM`). Tránh ghi trùng. | A: nếu lifecycle đang audit thì bỏ, hoặc báo lại để B bỏ. | chờ A |
+| B5 | 2026-10-07 | B | `softDelete` nên đặt `PURGE_AFTER` theo `SYS_FILE_MODULE_SETTINGS.TRASH_RETENTION_DAYS` của module (qua `FileSettingsSource`), fallback `app.storage.retention.trash-days`. Job của B chỉ đọc `PURGE_AFTER`. | A | chờ A |
+| B6 | 2026-10-07 | B | Mục 9.1 ghi `FILE_BLOB_MISSING` = 404 nhưng `GlobalExceptionHandler` chỉ map `*_NOT_FOUND` -> 404, nên thực tế trả **400**. Đề xuất sửa tài liệu thành 400 (hoặc A thêm mã vào handler). | A, C | chờ A |
