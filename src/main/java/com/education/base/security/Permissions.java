@@ -115,9 +115,33 @@ public class Permissions {
     public static final String BANK_ACCOUNT_DELETE = "MENU_BANK_ACCOUNT:DELETE";
 
     // ---- Tài liệu & Báo cáo ---------------------------------------------------
+    // FILE_VIEW / FILE_UPLOAD / FILE_DOWNLOAD: quyền cũ của module file COMMON (FileAccessPolicy). Kho tài liệu
+    // dùng khối DOC_LIBRARY_* bên dưới (cùng menu MENU_FILE_EXPLORER).
     public static final String FILE_VIEW = "MENU_FILE_EXPLORER:VIEW";
     public static final String FILE_UPLOAD = "MENU_FILE_EXPLORER:UPLOAD";
     public static final String FILE_DOWNLOAD = "MENU_FILE_EXPLORER:DOWNLOAD";
+
+    // ---- Quản lý file - Luồng B (feat/files-admin, V19_3) ---------------------------------------------
+    // Chỉ Luồng B sửa khối này. Menu MENU_FILE_MANAGER (/system/files, dưới DIR_SYSTEM); mặc định chỉ ROLE_ADMIN (QĐ-F5).
+    public static final String FILE_MANAGER_VIEW = "MENU_FILE_MANAGER:VIEW";
+    public static final String FILE_MANAGER_DOWNLOAD = "MENU_FILE_MANAGER:DOWNLOAD";
+    public static final String FILE_MANAGER_DELETE = "MENU_FILE_MANAGER:DELETE";
+    public static final String FILE_MANAGER_RESTORE = "MENU_FILE_MANAGER:RESTORE";
+    public static final String FILE_MANAGER_PURGE = "MENU_FILE_MANAGER:PURGE";
+    public static final String FILE_MANAGER_CONFIG = "MENU_FILE_MANAGER:CONFIG";
+    public static final String FILE_MANAGER_MAINTAIN = "MENU_FILE_MANAGER:MAINTAIN";
+
+    // ---- Kho tài liệu - Luồng D (feat/files-docs, V19_4) -----------------------------------------------
+    // Chỉ Luồng D sửa khối này. Menu MENU_FILE_EXPLORER ("Kho Tài liệu", /documents/files): VIEW/UPLOAD/DOWNLOAD/DELETE
+    // seed từ V1; UPDATE/SHARE/MANAGE do V19_4 seed. Ghi (tạo/sửa/xoá/chia sẻ) chỉ với UPLOAD (mục của chính mình),
+    // UPDATE / DELETE / SHARE (mọi mục nhìn thấy) hoặc MANAGE (toàn kho + thư mục) - xem docs/files-api.md.
+    public static final String DOC_LIBRARY_VIEW = "MENU_FILE_EXPLORER:VIEW";
+    public static final String DOC_LIBRARY_DOWNLOAD = "MENU_FILE_EXPLORER:DOWNLOAD";
+    public static final String DOC_LIBRARY_UPLOAD = "MENU_FILE_EXPLORER:UPLOAD";
+    public static final String DOC_LIBRARY_UPDATE = "MENU_FILE_EXPLORER:UPDATE";
+    public static final String DOC_LIBRARY_DELETE = "MENU_FILE_EXPLORER:DELETE";
+    public static final String DOC_LIBRARY_SHARE = "MENU_FILE_EXPLORER:SHARE";
+    public static final String DOC_LIBRARY_MANAGE = "MENU_FILE_EXPLORER:MANAGE";
 
     public static final String DASHBOARD_VIEW = "MENU_DASHBOARD:VIEW";
 

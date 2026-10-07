@@ -1,0 +1,536 @@
+-- =============================================================================
+-- EDUCATION - MIGRATION V19_4: KHO TAI LIEU DUNG CHUNG (DOC_FOLDERS / DOC_ITEMS / DOC_SHARES)
+--
+-- QD-F6 (chot 07/10/2026): lam kho tai lieu ngay, dung lai menu MENU_FILE_EXPLORER ("Kho Tai lieu",
+-- /documents/files). Noi dung file luu o SYS_ATTACHED_FILES voi MODULE_NAME = 'LIBRARY',
+-- REFERENCE_ID = DOC_ITEMS.ID (Luong D; xem docs/files-api.md). Can V19_1 + V19_2.
+--
+-- Script nay lam:
+--   V19_4.1 Kiem tra truoc: V19_1 (SYS_ATTACHED_FILES.STATUS), V19_2 (SYS_FILE_MODULE_SETTINGS),
+--           MENU_FILE_EXPLORER, DIR_DOCUMENT, ROLE_ADMIN, bang EDU_CLASSES / SYS_ROLES / SYS_USERS.
+--   V19_4.2 Sequence SEQ_DOC_FOLDERS, SEQ_DOC_ITEMS, SEQ_DOC_SHARES.
+--   V19_4.3 Bang DOC_FOLDERS (cay thu muc: PARENT_ID + TREE_PATH '/1/5/9/' + DEPTH <= 8; ten khong trung
+--           giua cac thu muc anh em chua xoa).
+--   V19_4.4 Bang DOC_ITEMS (muc tai lieu: FILE_ID -> SYS_ATTACHED_FILES unique, TITLE, DESCRIPTION, TAGS dang
+--           ',tag1,tag2,', VERSION_NO, VERSION_NOTE, OWNER_USER_ID).
+--   V19_4.5 Bang DOC_SHARES (chia se thu muc HOAC muc cho ALL_STAFF / ROLE (ROLE_ID) / CLASS (CLASS_ID);
+--           VISIBLE_TO_STUDENTS chi voi CLASS - de cong hoc sinh GD3 hien tai lieu lop; EXPIRES_AT tuy chon).
+--   V19_4.6 Index.
+--   V19_4.7 Cau hinh module file LIBRARY (50 MB/file, khong gioi han so file/ban ghi, theo SafeFileType).
+--   V19_4.8 Menu: dam bao DIR_DOCUMENT + MENU_FILE_EXPLORER hien (IS_HIDDEN=0); chuc nang VIEW / DOWNLOAD /
+--           UPLOAD / UPDATE / DELETE / SHARE / MANAGE (Permissions.DOC_LIBRARY_*).
+--   V19_4.9 Phan quyen: ROLE_ADMIN toan quyen; ROLE_TEACHER, ROLE_ACCOUNTANT: bo sung VIEW,UPLOAD,DOWNLOAD neu
+--           thieu (giu nguyen quyen da chinh tren man Phan quyen); ROLE_ADMISSION: bo sung VIEW,DOWNLOAD
+--           (+ DIR_DOCUMENT:VIEW). Khong vai tro nghiep vu nao duoc UPDATE / DELETE / SHARE / MANAGE mac dinh.
+--   V19_4.10 Kiem tra sau.
+--
+-- QUY UOC:
+--   * WHENEVER SQLERROR EXIT ... ROLLBACK; ket thuc bang COMMIT + EXIT.
+--   * Chay lai an toan: kiem USER_TABLES / USER_SEQUENCES / USER_INDEXES; MERGE theo khoa nghiep vu;
+--     phan quyen vai tro nghiep vu chi THEM ma chuc nang con thieu.
+--   * File thuan ASCII; tieng Viet bang UNISTR; ID tu SEQ_<TABLE>. DDL tu commit.
+--
+-- THU TU CHAY: sau V19_3. V19_1 -> V19_2 -> V19_3 -> V19_4.
+--
+--   (Windows PowerShell; nhap tai khoan/mat khau khi sqlplus hoi - KHONG ghi mat khau vao file)
+--   $env:NLS_LANG = "AMERICAN_AMERICA.AL32UTF8"
+--   F:\Database\bin\sqlplus.exe -L <schema_user>@//localhost:1521/ORCL @src/main/resources/db/migration/V19_4__document_library.sql
+--
+-- ROLLBACK (go bo kho tai lieu; MAT cay thu muc, muc va chia se. File noi dung (MODULE_NAME='LIBRARY') van con
+-- trong SYS_ATTACHED_FILES - xoa mem qua man Quan ly file neu can):
+--   DROP TABLE DOC_SHARES CASCADE CONSTRAINTS PURGE;
+--   DROP TABLE DOC_ITEMS CASCADE CONSTRAINTS PURGE;
+--   DROP TABLE DOC_FOLDERS CASCADE CONSTRAINTS PURGE;
+--   DROP SEQUENCE SEQ_DOC_SHARES;
+--   DROP SEQUENCE SEQ_DOC_ITEMS;
+--   DROP SEQUENCE SEQ_DOC_FOLDERS;
+--   DELETE FROM SYS_FILE_MODULE_SETTINGS WHERE MODULE_NAME = 'LIBRARY';
+--   UPDATE SYS_FUNCTIONS SET IS_DELETED = 1, UPDATED_AT = SYSTIMESTAMP
+--    WHERE FUNCTION_CODE IN ('UPDATE', 'SHARE', 'MANAGE')
+--      AND MENU_ID IN (SELECT ID FROM SYS_MENUS WHERE MENU_CODE = 'MENU_FILE_EXPLORER');
+--   UPDATE SYS_ROLE_MENU_PERMISSIONS
+--      SET ALLOWED_FUNCTIONS = TRIM(BOTH ',' FROM REPLACE(REPLACE(REPLACE(',' || ALLOWED_FUNCTIONS || ',',
+--              ',UPDATE,', ','), ',SHARE,', ','), ',MANAGE,', ',')),
+--          UPDATED_AT = SYSTIMESTAMP, UPDATED_BY = 'V19_4_ROLLBACK'
+--    WHERE MENU_ID IN (SELECT ID FROM SYS_MENUS WHERE MENU_CODE = 'MENU_FILE_EXPLORER');
+--   DELETE FROM SYS_ROLE_MENU_PERMISSIONS
+--    WHERE CREATED_BY = 'V19_4_MIGRATION'
+--      AND MENU_ID IN (SELECT ID FROM SYS_MENUS WHERE MENU_CODE IN ('MENU_FILE_EXPLORER', 'DIR_DOCUMENT'));
+--   COMMIT;
+--   (Quyen VIEW/UPLOAD/DOWNLOAD duoc THEM vao dong da co cua ROLE_TEACHER / ROLE_ACCOUNTANT khong tu go;
+--    sua tay tren man Phan quyen neu can.)
+-- =============================================================================
+
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+SET DEFINE OFF
+SET SERVEROUTPUT ON SIZE UNLIMITED
+
+PROMPT V19_4: NLS_LANG=AMERICAN_AMERICA.AL32UTF8 khuyen nghi (khong bat buoc - seed dung UNISTR)
+
+PROMPT ============ V19_4.1 Kiem tra truoc ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT
+      FROM USER_TAB_COLUMNS
+     WHERE TABLE_NAME = 'SYS_ATTACHED_FILES' AND COLUMN_NAME = 'STATUS';
+    IF V_COUNT <> 1 THEN
+        RAISE_APPLICATION_ERROR(-20001, 'V19_4: chua co SYS_ATTACHED_FILES.STATUS - chay V19_1 truoc');
+    END IF;
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'SYS_FILE_MODULE_SETTINGS';
+    IF V_COUNT <> 1 THEN
+        RAISE_APPLICATION_ERROR(-20002, 'V19_4: chua co SYS_FILE_MODULE_SETTINGS - chay V19_2 truoc');
+    END IF;
+    FOR r IN (SELECT 'EDU_CLASSES' T FROM DUAL UNION ALL
+              SELECT 'SYS_ROLES' FROM DUAL UNION ALL
+              SELECT 'SYS_USERS' FROM DUAL) LOOP
+        SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = r.T;
+        IF V_COUNT <> 1 THEN
+            RAISE_APPLICATION_ERROR(-20003, 'V19_4: khong tim thay bang ' || r.T);
+        END IF;
+    END LOOP;
+    SELECT COUNT(*) INTO V_COUNT FROM SYS_MENUS WHERE MENU_CODE IN ('DIR_DOCUMENT', 'MENU_FILE_EXPLORER');
+    IF V_COUNT <> 2 THEN
+        RAISE_APPLICATION_ERROR(-20004, 'V19_4: khong tim thay DIR_DOCUMENT / MENU_FILE_EXPLORER (V1)');
+    END IF;
+    SELECT COUNT(*) INTO V_COUNT FROM SYS_ROLES WHERE ROLE_CODE = 'ROLE_ADMIN' AND IS_DELETED = 0;
+    IF V_COUNT <> 1 THEN
+        RAISE_APPLICATION_ERROR(-20005, 'V19_4: khong tim thay vai tro ROLE_ADMIN');
+    END IF;
+    DBMS_OUTPUT.PUT_LINE('  V19_1, V19_2, menu, vai tro             OK');
+END;
+/
+
+PROMPT ============ V19_4.2 Sequence ============
+
+DECLARE
+    PROCEDURE ENSURE_SEQUENCE(P_NAME VARCHAR2) IS
+        V_COUNT NUMBER;
+    BEGIN
+        SELECT COUNT(*) INTO V_COUNT FROM USER_SEQUENCES WHERE SEQUENCE_NAME = P_NAME;
+        IF V_COUNT = 0 THEN
+            EXECUTE IMMEDIATE 'CREATE SEQUENCE ' || P_NAME || ' START WITH 1 INCREMENT BY 1 NOCYCLE';
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'created');
+        ELSE
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'already exists');
+        END IF;
+    END;
+BEGIN
+    ENSURE_SEQUENCE('SEQ_DOC_FOLDERS');
+    ENSURE_SEQUENCE('SEQ_DOC_ITEMS');
+    ENSURE_SEQUENCE('SEQ_DOC_SHARES');
+END;
+/
+
+PROMPT ============ V19_4.3 Bang DOC_FOLDERS ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'DOC_FOLDERS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE DOC_FOLDERS (
+                ID            NUMBER(19)                          NOT NULL,
+                PARENT_ID     NUMBER(19),
+                NAME          VARCHAR2(200 CHAR)                  NOT NULL,
+                DESCRIPTION   VARCHAR2(1000 CHAR),
+                SORT_ORDER    NUMBER(5)      DEFAULT 0            NOT NULL,
+                TREE_PATH     VARCHAR2(1000)                      NOT NULL,
+                DEPTH         NUMBER(2)                           NOT NULL,
+                OWNER_USER_ID NUMBER(19),
+                IS_DELETED    NUMBER(1)      DEFAULT 0            NOT NULL,
+                DELETED_AT    TIMESTAMP(6),
+                DELETED_BY    VARCHAR2(50),
+                CREATED_AT    TIMESTAMP(6)   DEFAULT SYSTIMESTAMP NOT NULL,
+                UPDATED_AT    TIMESTAMP(6),
+                CREATED_BY    VARCHAR2(50),
+                UPDATED_BY    VARCHAR2(50),
+                CONSTRAINT PK_DOC_FOLDERS PRIMARY KEY (ID),
+                CONSTRAINT FK_DOC_FOLDERS_PARENT FOREIGN KEY (PARENT_ID) REFERENCES DOC_FOLDERS (ID),
+                CONSTRAINT FK_DOC_FOLDERS_OWNER  FOREIGN KEY (OWNER_USER_ID) REFERENCES SYS_USERS (ID),
+                CONSTRAINT CK_DOC_FOLDERS_PARENT  CHECK (PARENT_ID IS NULL OR PARENT_ID <> ID),
+                CONSTRAINT CK_DOC_FOLDERS_DEPTH   CHECK (DEPTH BETWEEN 1 AND 8),
+                CONSTRAINT CK_DOC_FOLDERS_PATH    CHECK (TREE_PATH LIKE '/%/'),
+                CONSTRAINT CK_DOC_FOLDERS_DELETED CHECK (IS_DELETED IN (0, 1))
+            )]';
+        DBMS_OUTPUT.PUT_LINE('  DOC_FOLDERS                             created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  DOC_FOLDERS                             already exists');
+    END IF;
+END;
+/
+
+COMMENT ON TABLE DOC_FOLDERS IS 'Kho tai lieu: cay thu muc (PARENT_ID NULL = goc)';
+COMMENT ON COLUMN DOC_FOLDERS.TREE_PATH IS 'Duong dan ID tu goc gom ca chinh no, vi du /1/5/9/ - ung dung cap nhat khi tao / di chuyen';
+COMMENT ON COLUMN DOC_FOLDERS.DEPTH IS 'Do sau: thu muc goc = 1, toi da 8';
+
+PROMPT ============ V19_4.4 Bang DOC_ITEMS ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'DOC_ITEMS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE DOC_ITEMS (
+                ID            NUMBER(19)                          NOT NULL,
+                FOLDER_ID     NUMBER(19),
+                FILE_ID       NUMBER(19)                          NOT NULL,
+                TITLE         VARCHAR2(255 CHAR)                  NOT NULL,
+                DESCRIPTION   VARCHAR2(2000 CHAR),
+                TAGS          VARCHAR2(500 CHAR),
+                VERSION_NO    NUMBER(5)      DEFAULT 1            NOT NULL,
+                VERSION_NOTE  VARCHAR2(500 CHAR),
+                OWNER_USER_ID NUMBER(19)                          NOT NULL,
+                IS_DELETED    NUMBER(1)      DEFAULT 0            NOT NULL,
+                DELETED_AT    TIMESTAMP(6),
+                DELETED_BY    VARCHAR2(50),
+                CREATED_AT    TIMESTAMP(6)   DEFAULT SYSTIMESTAMP NOT NULL,
+                UPDATED_AT    TIMESTAMP(6),
+                CREATED_BY    VARCHAR2(50),
+                UPDATED_BY    VARCHAR2(50),
+                CONSTRAINT PK_DOC_ITEMS PRIMARY KEY (ID),
+                CONSTRAINT UQ_DOC_ITEMS_FILE UNIQUE (FILE_ID),
+                CONSTRAINT FK_DOC_ITEMS_FOLDER FOREIGN KEY (FOLDER_ID) REFERENCES DOC_FOLDERS (ID),
+                CONSTRAINT FK_DOC_ITEMS_FILE   FOREIGN KEY (FILE_ID) REFERENCES SYS_ATTACHED_FILES (ID),
+                CONSTRAINT FK_DOC_ITEMS_OWNER  FOREIGN KEY (OWNER_USER_ID) REFERENCES SYS_USERS (ID),
+                CONSTRAINT CK_DOC_ITEMS_VERSION CHECK (VERSION_NO >= 1),
+                CONSTRAINT CK_DOC_ITEMS_TAGS    CHECK (TAGS IS NULL OR TAGS LIKE ',%,'),
+                CONSTRAINT CK_DOC_ITEMS_DELETED CHECK (IS_DELETED IN (0, 1))
+            )]';
+        DBMS_OUTPUT.PUT_LINE('  DOC_ITEMS                               created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  DOC_ITEMS                               already exists');
+    END IF;
+END;
+/
+
+COMMENT ON TABLE DOC_ITEMS IS 'Kho tai lieu: muc tai lieu, file hien tai = SYS_ATTACHED_FILES (MODULE_NAME=LIBRARY, REFERENCE_ID=DOC_ITEMS.ID)';
+COMMENT ON COLUMN DOC_ITEMS.FOLDER_ID IS 'NULL = muc o goc kho';
+COMMENT ON COLUMN DOC_ITEMS.TAGS IS 'Tag chu thuong, khong chua dau phay, dang ,tag1,tag2, (loc chinh xac bang LIKE ''%,tag,%'')';
+COMMENT ON COLUMN DOC_ITEMS.VERSION_NO IS 'Tang 1 moi lan thay file; file cu vao thung rac (khong luu lich su phien ban)';
+COMMENT ON COLUMN DOC_ITEMS.OWNER_USER_ID IS 'Nguoi tao muc - co quyen sua / xoa / chia se muc cua minh khi co MENU_FILE_EXPLORER:UPLOAD';
+
+PROMPT ============ V19_4.5 Bang DOC_SHARES ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'DOC_SHARES';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE DOC_SHARES (
+                ID                  NUMBER(19)                          NOT NULL,
+                FOLDER_ID           NUMBER(19),
+                ITEM_ID             NUMBER(19),
+                TARGET_TYPE         VARCHAR2(20)                        NOT NULL,
+                ROLE_ID             NUMBER(19),
+                CLASS_ID            NUMBER(19),
+                VISIBLE_TO_STUDENTS NUMBER(1)      DEFAULT 0            NOT NULL,
+                EXPIRES_AT          TIMESTAMP(6),
+                CREATED_AT          TIMESTAMP(6)   DEFAULT SYSTIMESTAMP NOT NULL,
+                UPDATED_AT          TIMESTAMP(6),
+                CREATED_BY          VARCHAR2(50),
+                UPDATED_BY          VARCHAR2(50),
+                CONSTRAINT PK_DOC_SHARES PRIMARY KEY (ID),
+                CONSTRAINT FK_DOC_SHARES_FOLDER FOREIGN KEY (FOLDER_ID) REFERENCES DOC_FOLDERS (ID),
+                CONSTRAINT FK_DOC_SHARES_ITEM   FOREIGN KEY (ITEM_ID) REFERENCES DOC_ITEMS (ID),
+                CONSTRAINT FK_DOC_SHARES_ROLE   FOREIGN KEY (ROLE_ID) REFERENCES SYS_ROLES (ID),
+                CONSTRAINT FK_DOC_SHARES_CLASS  FOREIGN KEY (CLASS_ID) REFERENCES EDU_CLASSES (ID),
+                CONSTRAINT CK_DOC_SHARES_SUBJECT CHECK (
+                    (FOLDER_ID IS NOT NULL AND ITEM_ID IS NULL) OR (FOLDER_ID IS NULL AND ITEM_ID IS NOT NULL)
+                ),
+                CONSTRAINT CK_DOC_SHARES_TARGET CHECK (TARGET_TYPE IN ('ALL_STAFF', 'ROLE', 'CLASS')),
+                CONSTRAINT CK_DOC_SHARES_TARGET_ID CHECK (
+                    (TARGET_TYPE = 'ALL_STAFF' AND ROLE_ID IS NULL AND CLASS_ID IS NULL)
+                    OR (TARGET_TYPE = 'ROLE' AND ROLE_ID IS NOT NULL AND CLASS_ID IS NULL)
+                    OR (TARGET_TYPE = 'CLASS' AND CLASS_ID IS NOT NULL AND ROLE_ID IS NULL)
+                ),
+                CONSTRAINT CK_DOC_SHARES_STUDENTS CHECK (
+                    VISIBLE_TO_STUDENTS IN (0, 1) AND (VISIBLE_TO_STUDENTS = 0 OR TARGET_TYPE = 'CLASS')
+                )
+            )]';
+        DBMS_OUTPUT.PUT_LINE('  DOC_SHARES                              created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  DOC_SHARES                              already exists');
+    END IF;
+END;
+/
+
+COMMENT ON TABLE DOC_SHARES IS 'Kho tai lieu: chia se thu muc (ap dung ca cay con) hoac muc cho ALL_STAFF / ROLE / CLASS';
+COMMENT ON COLUMN DOC_SHARES.CLASS_ID IS 'CLASS: nhan vien day lop (EDU_CLASSES.TEACHER_ID hoac buoi day chua huy) nhin thay';
+COMMENT ON COLUMN DOC_SHARES.VISIBLE_TO_STUDENTS IS '1 = hoc sinh dang hoc lop (EDU_CLASS_STUDENTS ENROLLED) xem duoc tren cong hoc sinh (GD3, chua co endpoint)';
+COMMENT ON COLUMN DOC_SHARES.EXPIRES_AT IS 'NULL = khong het han';
+
+PROMPT ============ V19_4.6 Index ============
+
+DECLARE
+    PROCEDURE ENSURE_INDEX(P_NAME VARCHAR2, P_DDL VARCHAR2) IS
+        V_COUNT NUMBER;
+    BEGIN
+        SELECT COUNT(*) INTO V_COUNT FROM USER_INDEXES WHERE INDEX_NAME = P_NAME;
+        IF V_COUNT = 0 THEN
+            EXECUTE IMMEDIATE P_DDL;
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'created');
+        ELSE
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'already exists');
+        END IF;
+    END;
+BEGIN
+    -- Ten thu muc khong trung giua anh em CHUA XOA (dong da xoa co khoa NULL -> khong vao index).
+    ENSURE_INDEX('UQ_DOC_FOLDERS_SIBLING_NAME',
+        'CREATE UNIQUE INDEX UQ_DOC_FOLDERS_SIBLING_NAME ON DOC_FOLDERS ('
+        || 'CASE WHEN IS_DELETED = 0 THEN NVL(PARENT_ID, 0) END, '
+        || 'CASE WHEN IS_DELETED = 0 THEN UPPER(NAME) END)');
+    ENSURE_INDEX('IX_DOC_FOLDERS_PARENT',
+        'CREATE INDEX IX_DOC_FOLDERS_PARENT ON DOC_FOLDERS (PARENT_ID, IS_DELETED)');
+    ENSURE_INDEX('IX_DOC_FOLDERS_TREE_PATH',
+        'CREATE INDEX IX_DOC_FOLDERS_TREE_PATH ON DOC_FOLDERS (TREE_PATH)');
+    ENSURE_INDEX('IX_DOC_ITEMS_FOLDER',
+        'CREATE INDEX IX_DOC_ITEMS_FOLDER ON DOC_ITEMS (FOLDER_ID, IS_DELETED)');
+    ENSURE_INDEX('IX_DOC_ITEMS_OWNER',
+        'CREATE INDEX IX_DOC_ITEMS_OWNER ON DOC_ITEMS (OWNER_USER_ID, IS_DELETED)');
+    -- Moi (thu muc|muc, dich) chi 1 dong.
+    ENSURE_INDEX('UQ_DOC_SHARES_TARGET',
+        'CREATE UNIQUE INDEX UQ_DOC_SHARES_TARGET ON DOC_SHARES ('
+        || 'NVL(FOLDER_ID, 0), NVL(ITEM_ID, 0), TARGET_TYPE, NVL(ROLE_ID, 0), NVL(CLASS_ID, 0))');
+    ENSURE_INDEX('IX_DOC_SHARES_FOLDER',
+        'CREATE INDEX IX_DOC_SHARES_FOLDER ON DOC_SHARES (FOLDER_ID)');
+    ENSURE_INDEX('IX_DOC_SHARES_ITEM',
+        'CREATE INDEX IX_DOC_SHARES_ITEM ON DOC_SHARES (ITEM_ID)');
+    ENSURE_INDEX('IX_DOC_SHARES_ROLE',
+        'CREATE INDEX IX_DOC_SHARES_ROLE ON DOC_SHARES (ROLE_ID)');
+    -- Cong hoc sinh GD3: tai lieu cua cac lop hoc sinh dang hoc.
+    ENSURE_INDEX('IX_DOC_SHARES_CLASS',
+        'CREATE INDEX IX_DOC_SHARES_CLASS ON DOC_SHARES (CLASS_ID, VISIBLE_TO_STUDENTS)');
+END;
+/
+
+PROMPT ============ V19_4.7 Cau hinh module file LIBRARY ============
+
+-- 50 MB = gioi han multipart toan cuc; khong gioi han so file / tong theo ban ghi (moi muc chi 1 file ACTIVE,
+-- dam bao boi DOC_ITEMS.FILE_ID); ALLOWED_EXTENSIONS NULL = theo SafeFileType. Chi them neu chua co.
+MERGE INTO SYS_FILE_MODULE_SETTINGS t
+USING (SELECT 'LIBRARY' MODULE_NAME FROM DUAL) s ON (t.MODULE_NAME = s.MODULE_NAME)
+WHEN NOT MATCHED THEN INSERT (MODULE_NAME, MAX_FILE_SIZE_BYTES, MAX_FILES_PER_REF, MAX_TOTAL_BYTES_PER_REF,
+                              ALLOWED_EXTENSIONS, TRASH_RETENTION_DAYS, COUNT_TO_STUDENT_QUOTA, IS_ACTIVE, CREATED_BY)
+                      VALUES ('LIBRARY', 52428800, NULL, NULL, NULL, 30, 0, 1, 'V19_4_MIGRATION');
+
+PROMPT ============ V19_4.8 Menu MENU_FILE_EXPLORER + chuc nang ============
+
+UPDATE SYS_MENUS
+   SET IS_HIDDEN = 0, IS_DELETED = 0, STATUS = 'ACTIVE', UPDATED_AT = SYSTIMESTAMP, UPDATED_BY = 'V19_4_MIGRATION'
+ WHERE MENU_CODE IN ('DIR_DOCUMENT', 'MENU_FILE_EXPLORER')
+   AND (IS_HIDDEN <> 0 OR IS_DELETED <> 0 OR STATUS <> 'ACTIVE');
+
+MERGE INTO SYS_FUNCTIONS t
+USING (
+    SELECT m.ID AS MENU_ID, x.FUNCTION_CODE, x.FUNCTION_NAME
+      FROM SYS_MENUS m
+      JOIN (
+            SELECT 'VIEW' FUNCTION_CODE, UNISTR('Xem kho t\00E0i li\1EC7u') FUNCTION_NAME FROM DUAL UNION ALL
+            SELECT 'DOWNLOAD', UNISTR('Xem / t\1EA3i t\00E0i li\1EC7u v\1EC1') FROM DUAL UNION ALL
+            SELECT 'UPLOAD', UNISTR('T\1EA3i t\00E0i li\1EC7u l\00EAn (s\1EEDa, x\00F3a, chia s\1EBB t\00E0i li\1EC7u c\1EE7a m\00ECnh)') FROM DUAL UNION ALL
+            SELECT 'UPDATE', UNISTR('S\1EEDa m\1ECDi t\00E0i li\1EC7u') FROM DUAL UNION ALL
+            SELECT 'DELETE', UNISTR('X\00F3a m\1ECDi t\00E0i li\1EC7u') FROM DUAL UNION ALL
+            SELECT 'SHARE', UNISTR('Chia s\1EBB m\1ECDi t\00E0i li\1EC7u') FROM DUAL UNION ALL
+            SELECT 'MANAGE', UNISTR('Qu\1EA3n l\00FD kho (th\01B0 m\1EE5c, xem to\00E0n b\1ED9)') FROM DUAL
+           ) x ON 1 = 1
+     WHERE m.MENU_CODE = 'MENU_FILE_EXPLORER'
+) s ON (t.MENU_ID = s.MENU_ID AND t.FUNCTION_CODE = s.FUNCTION_CODE)
+WHEN MATCHED THEN UPDATE SET t.FUNCTION_NAME = s.FUNCTION_NAME, t.IS_DELETED = 0, t.UPDATED_AT = SYSTIMESTAMP
+WHEN NOT MATCHED THEN INSERT (ID, MENU_ID, FUNCTION_CODE, FUNCTION_NAME, IS_DELETED)
+                      VALUES (SEQ_SYS_FUNCTIONS.NEXTVAL, s.MENU_ID, s.FUNCTION_CODE, s.FUNCTION_NAME, 0);
+
+-- DIR_DOCUMENT can chuc nang VIEW de hien thu muc tren sidebar (V1 da seed; dam bao lai).
+MERGE INTO SYS_FUNCTIONS t
+USING (SELECT m.ID AS MENU_ID FROM SYS_MENUS m WHERE m.MENU_CODE = 'DIR_DOCUMENT') s
+ON (t.MENU_ID = s.MENU_ID AND t.FUNCTION_CODE = 'VIEW')
+WHEN MATCHED THEN UPDATE SET t.IS_DELETED = 0
+WHEN NOT MATCHED THEN INSERT (ID, MENU_ID, FUNCTION_CODE, FUNCTION_NAME, IS_DELETED)
+                      VALUES (SEQ_SYS_FUNCTIONS.NEXTVAL, s.MENU_ID, 'VIEW', UNISTR('Xem'), 0);
+
+PROMPT ============ V19_4.9 Phan quyen ============
+
+-- ROLE_ADMIN: toan quyen MENU_FILE_EXPLORER + DIR_DOCUMENT (sinh tu SYS_FUNCTIONS).
+MERGE INTO SYS_ROLE_MENU_PERMISSIONS t
+USING (
+    SELECT r.ID AS ROLE_ID,
+           f.MENU_ID,
+           LISTAGG(f.FUNCTION_CODE, ',') WITHIN GROUP (ORDER BY f.ID) AS ALLOWED_FUNCTIONS
+      FROM SYS_FUNCTIONS f
+      JOIN SYS_MENUS m ON m.ID = f.MENU_ID AND m.MENU_CODE IN ('MENU_FILE_EXPLORER', 'DIR_DOCUMENT')
+      CROSS JOIN SYS_ROLES r
+     WHERE r.ROLE_CODE = 'ROLE_ADMIN'
+       AND f.IS_DELETED = 0
+     GROUP BY r.ID, f.MENU_ID
+) s ON (t.ROLE_ID = s.ROLE_ID AND t.MENU_ID = s.MENU_ID)
+WHEN MATCHED THEN UPDATE SET t.ALLOWED_FUNCTIONS = s.ALLOWED_FUNCTIONS, t.UPDATED_AT = SYSTIMESTAMP,
+                             t.UPDATED_BY = 'V19_4_MIGRATION'
+WHEN NOT MATCHED THEN INSERT (ID, ROLE_ID, MENU_ID, ALLOWED_FUNCTIONS, CREATED_BY)
+                      VALUES (SEQ_SYS_ROLE_MENU_PERM.NEXTVAL, s.ROLE_ID, s.MENU_ID, s.ALLOWED_FUNCTIONS, 'V19_4_MIGRATION');
+
+-- Vai tro nghiep vu: chi THEM ma chuc nang con thieu (khong go quyen da chinh tren man Phan quyen).
+DECLARE
+    PROCEDURE GRANT_FUNCS(P_ROLE VARCHAR2, P_MENU VARCHAR2, P_FUNCS VARCHAR2) IS
+        V_ROLE_ID SYS_ROLES.ID%TYPE;
+        V_MENU_ID SYS_MENUS.ID%TYPE;
+        V_CUR     SYS_ROLE_MENU_PERMISSIONS.ALLOWED_FUNCTIONS%TYPE;
+        V_NEW     VARCHAR2(500);
+        V_CODE    VARCHAR2(50);
+        V_EXISTS  NUMBER;
+        V_FOUND   BOOLEAN := TRUE;
+        V_POS     PLS_INTEGER := 1;
+        V_NEXT    PLS_INTEGER;
+    BEGIN
+        BEGIN
+            SELECT ID INTO V_ROLE_ID FROM SYS_ROLES WHERE ROLE_CODE = P_ROLE AND IS_DELETED = 0;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_ROLE || ' / ' || P_MENU, 40) || 'skip (khong co vai tro)');
+                RETURN;
+        END;
+        SELECT ID INTO V_MENU_ID FROM SYS_MENUS WHERE MENU_CODE = P_MENU;
+        BEGIN
+            SELECT ALLOWED_FUNCTIONS INTO V_CUR
+              FROM SYS_ROLE_MENU_PERMISSIONS
+             WHERE ROLE_ID = V_ROLE_ID AND MENU_ID = V_MENU_ID;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                V_FOUND := FALSE;
+                V_CUR := NULL;
+        END;
+        V_NEW := V_CUR;
+        LOOP
+            V_NEXT := INSTR(P_FUNCS, ',', V_POS);
+            V_CODE := CASE WHEN V_NEXT = 0 THEN SUBSTR(P_FUNCS, V_POS) ELSE SUBSTR(P_FUNCS, V_POS, V_NEXT - V_POS) END;
+            SELECT COUNT(*) INTO V_EXISTS
+              FROM SYS_FUNCTIONS
+             WHERE MENU_ID = V_MENU_ID AND FUNCTION_CODE = V_CODE AND IS_DELETED = 0;
+            IF V_EXISTS = 1 AND INSTR(',' || V_NEW || ',', ',' || V_CODE || ',') = 0 THEN
+                V_NEW := CASE WHEN V_NEW IS NULL THEN V_CODE ELSE V_NEW || ',' || V_CODE END;
+            END IF;
+            EXIT WHEN V_NEXT = 0;
+            V_POS := V_NEXT + 1;
+        END LOOP;
+
+        IF NOT V_FOUND THEN
+            INSERT INTO SYS_ROLE_MENU_PERMISSIONS (ID, ROLE_ID, MENU_ID, ALLOWED_FUNCTIONS, CREATED_BY)
+            VALUES (SEQ_SYS_ROLE_MENU_PERM.NEXTVAL, V_ROLE_ID, V_MENU_ID, V_NEW, 'V19_4_MIGRATION');
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_ROLE || ' / ' || P_MENU, 40) || 'inserted ' || V_NEW);
+        ELSIF NVL(V_NEW, '-') <> NVL(V_CUR, '-') THEN
+            UPDATE SYS_ROLE_MENU_PERMISSIONS
+               SET ALLOWED_FUNCTIONS = V_NEW, UPDATED_AT = SYSTIMESTAMP, UPDATED_BY = 'V19_4_MIGRATION'
+             WHERE ROLE_ID = V_ROLE_ID AND MENU_ID = V_MENU_ID;
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_ROLE || ' / ' || P_MENU, 40) || V_CUR || ' -> ' || V_NEW);
+        ELSE
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_ROLE || ' / ' || P_MENU, 40) || 'unchanged ' || V_CUR);
+        END IF;
+    END;
+BEGIN
+    GRANT_FUNCS('ROLE_TEACHER',    'DIR_DOCUMENT',       'VIEW');
+    GRANT_FUNCS('ROLE_TEACHER',    'MENU_FILE_EXPLORER', 'VIEW,UPLOAD,DOWNLOAD');
+    GRANT_FUNCS('ROLE_ACCOUNTANT', 'DIR_DOCUMENT',       'VIEW');
+    GRANT_FUNCS('ROLE_ACCOUNTANT', 'MENU_FILE_EXPLORER', 'VIEW,UPLOAD,DOWNLOAD');
+    GRANT_FUNCS('ROLE_ADMISSION',  'DIR_DOCUMENT',       'VIEW');
+    GRANT_FUNCS('ROLE_ADMISSION',  'MENU_FILE_EXPLORER', 'VIEW,DOWNLOAD');
+END;
+/
+
+PROMPT ============ V19_4.10 Kiem tra sau ============
+
+DECLARE
+    V_MISSING VARCHAR2(4000);
+    V_COUNT   NUMBER;
+BEGIN
+    FOR r IN (SELECT n.OBJECT_NAME, n.OBJECT_TYPE, NVL(o.STATUS, 'MISSING') STATUS
+                FROM (SELECT 'DOC_FOLDERS' OBJECT_NAME, 'TABLE' OBJECT_TYPE FROM DUAL UNION ALL
+                      SELECT 'DOC_ITEMS', 'TABLE' FROM DUAL UNION ALL
+                      SELECT 'DOC_SHARES', 'TABLE' FROM DUAL UNION ALL
+                      SELECT 'SEQ_DOC_FOLDERS', 'SEQUENCE' FROM DUAL UNION ALL
+                      SELECT 'SEQ_DOC_ITEMS', 'SEQUENCE' FROM DUAL UNION ALL
+                      SELECT 'SEQ_DOC_SHARES', 'SEQUENCE' FROM DUAL UNION ALL
+                      SELECT 'UQ_DOC_FOLDERS_SIBLING_NAME', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_DOC_FOLDERS_PARENT', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_DOC_FOLDERS_TREE_PATH', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_DOC_ITEMS_FOLDER', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_DOC_ITEMS_OWNER', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'UQ_DOC_SHARES_TARGET', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_DOC_SHARES_FOLDER', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_DOC_SHARES_ITEM', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_DOC_SHARES_ROLE', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_DOC_SHARES_CLASS', 'INDEX' FROM DUAL) n
+                LEFT JOIN USER_OBJECTS o ON o.OBJECT_NAME = n.OBJECT_NAME AND o.OBJECT_TYPE = n.OBJECT_TYPE) LOOP
+        DBMS_OUTPUT.PUT_LINE('  ' || RPAD(r.OBJECT_NAME, 40) || r.STATUS);
+        IF r.STATUS <> 'VALID' THEN
+            V_MISSING := V_MISSING || ' ' || r.OBJECT_NAME;
+        END IF;
+    END LOOP;
+
+    SELECT COUNT(*) INTO V_COUNT
+      FROM USER_CONSTRAINTS
+     WHERE TABLE_NAME = 'DOC_SHARES'
+       AND CONSTRAINT_NAME IN ('CK_DOC_SHARES_SUBJECT', 'CK_DOC_SHARES_TARGET', 'CK_DOC_SHARES_TARGET_ID',
+                               'CK_DOC_SHARES_STUDENTS')
+       AND STATUS = 'ENABLED';
+    IF V_COUNT <> 4 THEN
+        V_MISSING := V_MISSING || ' DOC_SHARES_CHECKS(' || V_COUNT || '/4)';
+    END IF;
+
+    SELECT COUNT(*) INTO V_COUNT FROM SYS_FILE_MODULE_SETTINGS WHERE MODULE_NAME = 'LIBRARY';
+    IF V_COUNT <> 1 THEN
+        V_MISSING := V_MISSING || ' LIBRARY_SETTINGS';
+    END IF;
+
+    SELECT COUNT(*) INTO V_COUNT
+      FROM SYS_MENUS
+     WHERE MENU_CODE IN ('DIR_DOCUMENT', 'MENU_FILE_EXPLORER') AND IS_HIDDEN = 0 AND IS_DELETED = 0;
+    IF V_COUNT <> 2 THEN
+        V_MISSING := V_MISSING || ' MENU_VISIBLE(' || V_COUNT || '/2)';
+    END IF;
+
+    SELECT COUNT(*) INTO V_COUNT
+      FROM SYS_FUNCTIONS f
+      JOIN SYS_MENUS m ON m.ID = f.MENU_ID AND m.MENU_CODE = 'MENU_FILE_EXPLORER'
+     WHERE f.IS_DELETED = 0
+       AND f.FUNCTION_CODE IN ('VIEW', 'DOWNLOAD', 'UPLOAD', 'UPDATE', 'DELETE', 'SHARE', 'MANAGE');
+    IF V_COUNT <> 7 THEN
+        V_MISSING := V_MISSING || ' FUNCTIONS(' || V_COUNT || '/7)';
+    END IF;
+
+    SELECT COUNT(*) INTO V_COUNT
+      FROM SYS_ROLE_MENU_PERMISSIONS p
+      JOIN SYS_MENUS m ON m.ID = p.MENU_ID AND m.MENU_CODE = 'MENU_FILE_EXPLORER'
+      JOIN SYS_ROLES r ON r.ID = p.ROLE_ID AND r.ROLE_CODE = 'ROLE_ADMIN'
+     WHERE INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',VIEW,') > 0
+       AND INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',DOWNLOAD,') > 0
+       AND INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',UPLOAD,') > 0
+       AND INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',UPDATE,') > 0
+       AND INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',DELETE,') > 0
+       AND INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',SHARE,') > 0
+       AND INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',MANAGE,') > 0;
+    IF V_COUNT <> 1 THEN
+        V_MISSING := V_MISSING || ' ROLE_ADMIN_PERMS';
+    END IF;
+
+    IF V_MISSING IS NOT NULL THEN
+        RAISE_APPLICATION_ERROR(-20006, 'V19_4: thieu / khong hop le:' || V_MISSING);
+    END IF;
+
+    FOR r IN (SELECT ro.ROLE_CODE, p.ALLOWED_FUNCTIONS
+                FROM SYS_ROLE_MENU_PERMISSIONS p
+                JOIN SYS_MENUS m ON m.ID = p.MENU_ID AND m.MENU_CODE = 'MENU_FILE_EXPLORER'
+                JOIN SYS_ROLES ro ON ro.ID = p.ROLE_ID
+               ORDER BY ro.ROLE_CODE) LOOP
+        DBMS_OUTPUT.PUT_LINE('  MENU_FILE_EXPLORER ' || RPAD(r.ROLE_CODE, 20) || r.ALLOWED_FUNCTIONS);
+    END LOOP;
+    DBMS_OUTPUT.PUT_LINE('  V19_4                                   OK');
+END;
+/
+
+COMMIT;
+
+PROMPT ============ V19_4 DONE ============
+EXIT

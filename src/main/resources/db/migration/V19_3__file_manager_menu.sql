@@ -1,0 +1,174 @@
+-- =============================================================================
+-- EDUCATION - MIGRATION V19_3: MENU "QUAN LY FILE" (MENU_FILE_MANAGER)
+--
+-- Tinh nang "Quan ly file" (feat/files; xem docs/files-api.md).
+--
+-- Script nay lam:
+--   V19_3.1 Kiem tra truoc: DIR_SYSTEM, ROLE_ADMIN.
+--   V19_3.2 Menu MENU_FILE_MANAGER ('Quan ly file', /system/files, icon folder-open) duoi DIR_SYSTEM, SORT_ORDER 7
+--           (sau MENU_AUDIT_LOG = 6; QD-F13).
+--   V19_3.3 Chuc nang: VIEW / DOWNLOAD / DELETE / RESTORE / PURGE / CONFIG / MAINTAIN
+--           (backend: Permissions.FILE_MANAGER_*).
+--   V19_3.4 Phan quyen: chi ROLE_ADMIN (toan quyen) - QD-F5. Vai tro khac cap qua man Phan quyen neu can.
+--   V19_3.5 Kiem tra sau.
+--
+--   KHONG an MENU_FILE_EXPLORER ("Kho Tai lieu"): QD-F6 da chot lam kho tai lieu ngay (V19_4).
+--
+-- QUY UOC:
+--   * WHENEVER SQLERROR EXIT ... ROLLBACK; ket thuc bang COMMIT + EXIT.
+--   * Chay lai an toan: MERGE ON (MENU_CODE) / (MENU_ID, FUNCTION_CODE) / (ROLE_ID, MENU_ID);
+--     ID tu SEQ_SYS_MENUS / SEQ_SYS_FUNCTIONS / SEQ_SYS_ROLE_MENU_PERM.
+--   * Chi DML, khong DDL. MENU_NAME / FUNCTION_NAME dung UNISTR(...) - khong phu thuoc NLS_LANG.
+--
+-- THU TU CHAY: sau V19_2. V19_1 -> V19_2 -> V19_3 -> V19_4.
+--
+--   (Windows PowerShell; nhap tai khoan/mat khau khi sqlplus hoi - KHONG ghi mat khau vao file)
+--   $env:NLS_LANG = "AMERICAN_AMERICA.AL32UTF8"
+--   F:\Database\bin\sqlplus.exe -L <schema_user>@//localhost:1521/ORCL @src/main/resources/db/migration/V19_3__file_manager_menu.sql
+--
+-- ROLLBACK:
+--   DELETE FROM SYS_ROLE_MENU_PERMISSIONS
+--    WHERE MENU_ID IN (SELECT ID FROM SYS_MENUS WHERE MENU_CODE = 'MENU_FILE_MANAGER');
+--   UPDATE SYS_FUNCTIONS SET IS_DELETED = 1, UPDATED_AT = SYSTIMESTAMP
+--    WHERE MENU_ID IN (SELECT ID FROM SYS_MENUS WHERE MENU_CODE = 'MENU_FILE_MANAGER');
+--   UPDATE SYS_MENUS SET IS_DELETED = 1, IS_HIDDEN = 1, UPDATED_AT = SYSTIMESTAMP, UPDATED_BY = 'V19_3_ROLLBACK'
+--    WHERE MENU_CODE = 'MENU_FILE_MANAGER';
+--   COMMIT;
+-- =============================================================================
+
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+SET DEFINE OFF
+SET SERVEROUTPUT ON SIZE UNLIMITED
+
+PROMPT V19_3: NLS_LANG=AMERICAN_AMERICA.AL32UTF8 khuyen nghi (khong bat buoc - seed dung UNISTR)
+
+PROMPT ============ V19_3.1 Kiem tra truoc ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM SYS_MENUS WHERE MENU_CODE = 'DIR_SYSTEM' AND IS_DELETED = 0;
+    IF V_COUNT <> 1 THEN
+        RAISE_APPLICATION_ERROR(-20001, 'V19_3: khong tim thay thu muc DIR_SYSTEM');
+    END IF;
+    SELECT COUNT(*) INTO V_COUNT FROM SYS_ROLES WHERE ROLE_CODE = 'ROLE_ADMIN' AND IS_DELETED = 0;
+    IF V_COUNT <> 1 THEN
+        RAISE_APPLICATION_ERROR(-20002, 'V19_3: khong tim thay vai tro ROLE_ADMIN');
+    END IF;
+    DBMS_OUTPUT.PUT_LINE('  DIR_SYSTEM, ROLE_ADMIN                  OK');
+END;
+/
+
+PROMPT ============ V19_3.2 Menu MENU_FILE_MANAGER ============
+
+MERGE INTO SYS_MENUS t
+USING (
+    SELECT x.MENU_CODE, x.MENU_NAME, x.PATH, x.ICON, x.SORT_ORDER, p.ID PARENT_ID
+      FROM (
+            SELECT 'MENU_FILE_MANAGER' MENU_CODE, UNISTR('Qu\1EA3n l\00FD file') MENU_NAME,
+                   '/system/files' PATH, 'folder-open' ICON, 7 SORT_ORDER FROM DUAL
+           ) x
+      JOIN SYS_MENUS p ON p.MENU_CODE = 'DIR_SYSTEM' AND p.IS_DELETED = 0
+) s ON (t.MENU_CODE = s.MENU_CODE)
+WHEN MATCHED THEN UPDATE SET t.PARENT_ID = s.PARENT_ID, t.MENU_NAME = s.MENU_NAME, t.PATH = s.PATH,
+                             t.ICON = s.ICON, t.MENU_TYPE = 'MENU',
+                             t.IS_HIDDEN = 0, t.IS_DELETED = 0, t.STATUS = 'ACTIVE',
+                             t.UPDATED_AT = SYSTIMESTAMP, t.UPDATED_BY = 'V19_3_MIGRATION'
+WHEN NOT MATCHED THEN INSERT (ID, PARENT_ID, MENU_CODE, MENU_NAME, MENU_TYPE, PATH, ICON, SORT_ORDER,
+                              IS_HIDDEN, STATUS, IS_DELETED, CREATED_BY)
+                      VALUES (SEQ_SYS_MENUS.NEXTVAL, s.PARENT_ID, s.MENU_CODE, s.MENU_NAME, 'MENU', s.PATH, s.ICON,
+                              s.SORT_ORDER, 0, 'ACTIVE', 0, 'V19_3_MIGRATION');
+
+PROMPT ============ V19_3.3 Chuc nang ============
+
+MERGE INTO SYS_FUNCTIONS t
+USING (
+    SELECT m.ID AS MENU_ID, x.FUNCTION_CODE, x.FUNCTION_NAME
+      FROM SYS_MENUS m
+      JOIN (
+            SELECT 'VIEW' FUNCTION_CODE, UNISTR('Xem danh s\00E1ch') FUNCTION_NAME FROM DUAL UNION ALL
+            SELECT 'DOWNLOAD', UNISTR('Xem / t\1EA3i n\1ED9i dung') FROM DUAL UNION ALL
+            SELECT 'DELETE', UNISTR('X\00F3a (th\00F9ng r\00E1c)') FROM DUAL UNION ALL
+            SELECT 'RESTORE', UNISTR('Kh\00F4i ph\1EE5c') FROM DUAL UNION ALL
+            SELECT 'PURGE', UNISTR('X\00F3a v\0129nh vi\1EC5n') FROM DUAL UNION ALL
+            SELECT 'CONFIG', UNISTR('C\1EA5u h\00ECnh gi\1EDBi h\1EA1n, quota') FROM DUAL UNION ALL
+            SELECT 'MAINTAIN', UNISTR('\0110\1ED1i so\00E1t, b\1EA3o tr\00EC') FROM DUAL
+           ) x ON 1 = 1
+     WHERE m.MENU_CODE = 'MENU_FILE_MANAGER'
+       AND m.IS_DELETED = 0
+) s ON (t.MENU_ID = s.MENU_ID AND t.FUNCTION_CODE = s.FUNCTION_CODE)
+WHEN MATCHED THEN UPDATE SET t.FUNCTION_NAME = s.FUNCTION_NAME, t.IS_DELETED = 0
+WHEN NOT MATCHED THEN INSERT (ID, MENU_ID, FUNCTION_CODE, FUNCTION_NAME, IS_DELETED)
+                      VALUES (SEQ_SYS_FUNCTIONS.NEXTVAL, s.MENU_ID, s.FUNCTION_CODE, s.FUNCTION_NAME, 0);
+
+PROMPT ============ V19_3.4 Phan quyen ROLE_ADMIN ============
+
+MERGE INTO SYS_ROLE_MENU_PERMISSIONS t
+USING (
+    SELECT r.ID AS ROLE_ID,
+           f.MENU_ID,
+           LISTAGG(f.FUNCTION_CODE, ',') WITHIN GROUP (ORDER BY f.ID) AS ALLOWED_FUNCTIONS
+      FROM SYS_FUNCTIONS f
+      JOIN SYS_MENUS m ON m.ID = f.MENU_ID AND m.IS_DELETED = 0 AND m.MENU_CODE = 'MENU_FILE_MANAGER'
+      CROSS JOIN SYS_ROLES r
+     WHERE r.ROLE_CODE = 'ROLE_ADMIN'
+       AND f.IS_DELETED = 0
+     GROUP BY r.ID, f.MENU_ID
+) s ON (t.ROLE_ID = s.ROLE_ID AND t.MENU_ID = s.MENU_ID)
+WHEN MATCHED THEN UPDATE SET t.ALLOWED_FUNCTIONS = s.ALLOWED_FUNCTIONS, t.UPDATED_AT = SYSTIMESTAMP,
+                             t.UPDATED_BY = 'V19_3_MIGRATION'
+WHEN NOT MATCHED THEN INSERT (ID, ROLE_ID, MENU_ID, ALLOWED_FUNCTIONS, CREATED_BY)
+                      VALUES (SEQ_SYS_ROLE_MENU_PERM.NEXTVAL, s.ROLE_ID, s.MENU_ID, s.ALLOWED_FUNCTIONS, 'V19_3_MIGRATION');
+
+PROMPT ============ V19_3.5 Kiem tra sau ============
+
+DECLARE
+    V_NAME  SYS_MENUS.MENU_NAME%TYPE;
+    V_FUNCS NUMBER;
+    V_ADMIN NUMBER;
+    V_OTHER NUMBER;
+BEGIN
+    SELECT MENU_NAME INTO V_NAME
+      FROM SYS_MENUS
+     WHERE MENU_CODE = 'MENU_FILE_MANAGER' AND IS_DELETED = 0 AND IS_HIDDEN = 0;
+    IF V_NAME IS NULL OR V_NAME <> UNISTR('Qu\1EA3n l\00FD file') THEN
+        RAISE_APPLICATION_ERROR(-20003, 'V19_3: ten menu MENU_FILE_MANAGER khong khop UNISTR (kiem tra seed)');
+    END IF;
+
+    SELECT COUNT(*) INTO V_FUNCS
+      FROM SYS_FUNCTIONS f
+      JOIN SYS_MENUS m ON m.ID = f.MENU_ID AND m.MENU_CODE = 'MENU_FILE_MANAGER'
+     WHERE f.IS_DELETED = 0
+       AND f.FUNCTION_CODE IN ('VIEW', 'DOWNLOAD', 'DELETE', 'RESTORE', 'PURGE', 'CONFIG', 'MAINTAIN');
+    IF V_FUNCS <> 7 THEN
+        RAISE_APPLICATION_ERROR(-20004, 'V19_3: MENU_FILE_MANAGER co ' || V_FUNCS || '/7 chuc nang');
+    END IF;
+
+    SELECT COUNT(*) INTO V_ADMIN
+      FROM SYS_ROLE_MENU_PERMISSIONS p
+      JOIN SYS_MENUS m ON m.ID = p.MENU_ID AND m.MENU_CODE = 'MENU_FILE_MANAGER'
+      JOIN SYS_ROLES r ON r.ID = p.ROLE_ID AND r.ROLE_CODE = 'ROLE_ADMIN'
+     WHERE INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',VIEW,') > 0
+       AND INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',DOWNLOAD,') > 0
+       AND INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',DELETE,') > 0
+       AND INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',RESTORE,') > 0
+       AND INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',PURGE,') > 0
+       AND INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',CONFIG,') > 0
+       AND INSTR(',' || p.ALLOWED_FUNCTIONS || ',', ',MAINTAIN,') > 0;
+    IF V_ADMIN <> 1 THEN
+        RAISE_APPLICATION_ERROR(-20005, 'V19_3: ROLE_ADMIN chua du quyen MENU_FILE_MANAGER');
+    END IF;
+
+    SELECT COUNT(*) INTO V_OTHER
+      FROM SYS_ROLE_MENU_PERMISSIONS p
+      JOIN SYS_MENUS m ON m.ID = p.MENU_ID AND m.MENU_CODE = 'MENU_FILE_MANAGER'
+      JOIN SYS_ROLES r ON r.ID = p.ROLE_ID AND r.ROLE_CODE <> 'ROLE_ADMIN';
+    DBMS_OUTPUT.PUT_LINE('  Vai tro khac co quyen MENU_FILE_MANAGER: ' || V_OTHER || ' (mac dinh 0 - QD-F5)');
+    DBMS_OUTPUT.PUT_LINE('  MENU_FILE_MANAGER                       OK');
+END;
+/
+
+COMMIT;
+
+PROMPT ============ V19_3 DONE ============
+EXIT
