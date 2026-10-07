@@ -27,6 +27,9 @@ import java.time.LocalDate;
 @Builder
 public class FileFilterRequest {
 
+    /** Giá trị `status` để lấy mọi trạng thái. */
+    public static final String STATUS_ALL = "ALL";
+
     public static final String SORT_PATTERN = "createdAt|fileSize|originalName|deletedAt";
 
     @Pattern(regexp = "[A-Za-z][A-Za-z0-9_]{0,49}", message = "Mã module không hợp lệ")
@@ -47,7 +50,7 @@ public class FileFilterRequest {
     private String contentType;
 
     /** Mặc định ACTIVE. Thùng rác: DELETED. */
-    @Pattern(regexp = FileConstants.Status.PATTERN, message = "Trạng thái không hợp lệ")
+    @Pattern(regexp = FileConstants.Status.PATTERN + "|" + STATUS_ALL, message = "Trạng thái không hợp lệ")
     @Builder.Default
     private String status = FileConstants.Status.ACTIVE;
 
