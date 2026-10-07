@@ -258,7 +258,8 @@ public class GlobalExceptionHandler {
      * Mã lỗi nghiệp vụ biểu diễn "không tìm thấy" ({@code NOT_FOUND}, {@code STUDENT_NOT_FOUND}, {@code FEE_NOT_FOUND}...).
      */
     static boolean isNotFoundCode(String errorCode) {
-        return errorCode != null && ("NOT_FOUND".equals(errorCode) || errorCode.endsWith("_NOT_FOUND"));
+        return errorCode != null && ("NOT_FOUND".equals(errorCode) || errorCode.endsWith("_NOT_FOUND")
+                || "FILE_BLOB_MISSING".equals(errorCode));
     }
 
     private String describeFieldError(FieldError fieldError) {

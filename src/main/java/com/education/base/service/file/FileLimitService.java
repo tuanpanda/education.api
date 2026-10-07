@@ -53,6 +53,7 @@ public class FileLimitService {
     private final Clock clock;
     private final Map<String, Cached<?>> cache = new ConcurrentHashMap<>();
 
+    @org.springframework.beans.factory.annotation.Autowired
     public FileLimitService(FileStorageProperties properties, ObjectProvider<FileSettingsSource> settingsSource,
                             FileRepository fileRepository, BlobStore blobStore, FileModuleRegistry registry) {
         this(properties, settingsSource, fileRepository, blobStore, registry, Clock.systemDefaultZone());

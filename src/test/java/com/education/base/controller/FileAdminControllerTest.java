@@ -138,7 +138,7 @@ class FileAdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.startsWith("inline;")));
         when(fileAdminService.open(6L, false)).thenThrow(new OracleBusinessException("FILE_BLOB_MISSING", "x"));
-        mockMvc.perform(get("/api/v1/admin/files/6/view")).andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/v1/admin/files/6/view")).andExpect(status().isNotFound());
     }
 
     @Test

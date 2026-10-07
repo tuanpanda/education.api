@@ -46,6 +46,7 @@ import com.education.base.security.SecurityUtils;
 import com.education.base.service.AuditService;
 import com.education.base.service.FileAdminService;
 import com.education.base.service.file.DbFileSettingsSource;
+import com.education.base.service.file.FileLimitService;
 import com.education.base.service.file.FileLifecycleService;
 import com.education.base.storage.BlobStore;
 import com.education.base.storage.StorageUsage;
@@ -116,6 +117,20 @@ public class FileAdminServiceImpl implements FileAdminService {
     private final Map<String, FileModuleDescriptor> descriptors;
     private final long multipartMaxBytes;
     private final Clock clock;
+    private FileLimitService fileLimitService;
+
+    /** Huy cache gioi han cua Luong A sau khi luu cau hinh (A2). */
+    @Autowired(required = false)
+    void setFileLimitService(FileLimitService fileLimitService) {
+        this.fileLimitService = fileLimitService;
+    }
+
+    private void evictSettingCaches() {
+        settingsSource.evict();
+        if (fileLimitService != null) {
+            fileLimitService.evictCache();
+        }
+    }
 
     @Autowired
     public FileAdminServiceImpl(FileAdminRepository fileRepository,
@@ -573,7 +588,7 @@ public class FileAdminServiceImpl implements FileAdminService {
             }
         }
         if (!changes.isEmpty()) {
-            settingsSource.evict();
+            evictSettingCaches();
             auditService.record(AuditEvent.builder()
                     .action(AuditActions.FILE_SETTINGS_CHANGED)
                     .detail("changes", changes)
@@ -753,7 +768,7 @@ public class FileAdminServiceImpl implements FileAdminService {
             quotaRepository.saveAll(toSave);
         }
         if (!changes.isEmpty()) {
-            settingsSource.evict();
+            evictSettingCaches();
             auditService.record(AuditEvent.builder()
                     .action(AuditActions.FILE_QUOTA_CHANGED)
                     .detail("changes", changes)
