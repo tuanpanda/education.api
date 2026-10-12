@@ -25,6 +25,8 @@ public interface FileMapper {
 
     @Mapping(target = "viewUrl", ignore = true)
     @Mapping(target = "downloadUrl", ignore = true)
+    @Mapping(target = "uploadedBy", source = "createdBy")
+    @Mapping(target = "canDelete", ignore = true)
     FileResponseDto toDto(FileEntity entity);
 
     List<FileResponseDto> toDtoList(List<FileEntity> entities);

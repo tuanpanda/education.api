@@ -1,53 +1,74 @@
 package com.education.base.service.impl;
 
+import com.education.base.audit.AuditActions;
+import com.education.base.common.file.FileConstants;
+import com.education.base.common.file.FileErrorCodes;
+import com.education.base.common.file.FileModuleDescriptor;
 import com.education.base.common.file.SafeFileType;
-import com.education.base.config.FileStorageProperties;
 import com.education.base.entity.FileEntity;
 import com.education.base.exception.OracleBusinessException;
 import com.education.base.repository.FileRepository;
+import com.education.base.security.AuthUserPrincipal;
+import com.education.base.security.SecurityUtils;
+import com.education.base.service.AuditService;
 import com.education.base.service.FileStorageService;
-import lombok.RequiredArgsConstructor;
+import com.education.base.service.file.FileLimitService;
+import com.education.base.service.file.FileModuleRegistry;
+import com.education.base.storage.BlobInfo;
+import com.education.base.storage.BlobStore;
+import com.education.base.storage.StorageKeyStrategy;
+import com.education.base.storage.VirusScanner;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
-import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.MalformedURLException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.util.Arrays;
+import java.text.Normalizer;
+import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.UUID;
+import java.util.Map;
 
 /**
- * Triển khai {@link FileStorageService}.
+ * Triển khai {@link FileStorageService} trên {@link BlobStore} (Luồng A).
  * <p>
- * Chiến lược lưu trữ: {@code {baseDir}/{MODULE}/{YYYY}/{MM}/{UUID}_{tenfile}}.
- * Database chỉ lưu đường dẫn TƯƠNG ĐỐI so với {@code baseDir} để đảm bảo tính di động khi deploy.
- * <p>
- * Định dạng file được kiểm tra bằng allow-list {@link SafeFileType} (phần mở rộng + magic bytes);
- * {@code CONTENT_TYPE} lưu xuống là MIME do server nhận diện, không phải giá trị client gửi.
+ * Luồng lưu: module có descriptor (fail-closed) -> bản ghi tham chiếu dùng được -> file rỗng -> giới hạn dung lượng /
+ * đuôi của module -> đuôi + magic bytes ({@link SafeFileType}) -> số file / tổng / quota / đĩa trống -> ghi blob nguyên
+ * tử + SHA-256 -> quét virus -> metadata (người upload, học sinh sở hữu, checksum) -> audit. Blob được xoá nếu lưu
+ * metadata lỗi hoặc transaction bao ngoài rollback (sửa S7).
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class FileStorageServiceImpl implements FileStorageService {
 
-    private static final DateTimeFormatter YEAR_FORMATTER = DateTimeFormatter.ofPattern("yyyy");
-    private static final DateTimeFormatter MONTH_FORMATTER = DateTimeFormatter.ofPattern("MM");
-    private static final String DEFAULT_MODULE = "COMMON";
     private static final String DEFAULT_FILE_NAME = "unnamed";
+    private static final int MAX_NAME_LENGTH = 255;
 
     private final FileRepository fileRepository;
-    private final FileStorageProperties fileStorageProperties;
+    private final BlobStore blobStore;
+    private final StorageKeyStrategy keyStrategy;
+    private final FileModuleRegistry registry;
+    private final FileLimitService limitService;
+    private final VirusScanner virusScanner;
+    private final AuditService auditService;
+
+    public FileStorageServiceImpl(FileRepository fileRepository, BlobStore blobStore, StorageKeyStrategy keyStrategy, FileModuleRegistry registry,
+                                  FileLimitService limitService, VirusScanner virusScanner, AuditService auditService) {
+        this.fileRepository = fileRepository;
+        this.blobStore = blobStore;
+        this.keyStrategy = keyStrategy;
+        this.registry = registry;
+        this.limitService = limitService;
+        this.virusScanner = virusScanner;
+        this.auditService = auditService;
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -58,125 +79,207 @@ public class FileStorageServiceImpl implements FileStorageService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public FileEntity storeFile(MultipartFile file, String moduleName, Long referenceId, String subFolder) {
-        if (file == null || file.isEmpty()) {
-            throw new OracleBusinessException("FILE_EMPTY", "File tải lên không được để trống.");
-        }
-        SafeFileType type = SafeFileType.detect(file.getOriginalFilename(), readHeader(file));
-        PathTarget target = prepareTarget(file.getOriginalFilename(), moduleName, subFolder);
-        try {
-            Files.createDirectories(target.path().getParent());
-            file.transferTo(target.path());
-        } catch (IOException e) {
-            log.error("Lỗi khi lưu file vật lý vào '{}': {}", target.path(), e.getMessage(), e);
-            throw new OracleBusinessException("FILE_STORE_ERROR", "Không thể lưu file vào hệ thống.");
-        }
-        return saveMetadata(target, type.mimeType(), file.getSize(), moduleName, referenceId);
+        String original = file == null ? null : file.getOriginalFilename();
+        return store(new Upload() {
+            public long size() {
+                return file == null ? 0 : file.getSize();
+            }
+
+            public InputStream open() throws IOException {
+                return file.getInputStream();
+            }
+        }, original, moduleName, referenceId, subFolder);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public FileEntity storeBytes(byte[] content, String originalFilename, String contentType,
                                  String moduleName, Long referenceId, String subFolder) {
-        if (content == null || content.length == 0) {
-            throw new OracleBusinessException("FILE_EMPTY", "File tải lên không được để trống.");
-        }
-        SafeFileType type = SafeFileType.detect(originalFilename,
-                Arrays.copyOf(content, Math.min(content.length, SafeFileType.HEADER_BYTES)));
-        PathTarget target = prepareTarget(originalFilename, moduleName, subFolder);
-        try {
-            Files.createDirectories(target.path().getParent());
-            Files.write(target.path(), content);
-        } catch (IOException e) {
-            log.error("Lỗi khi lưu file vật lý vào '{}': {}", target.path(), e.getMessage(), e);
-            throw new OracleBusinessException("FILE_STORE_ERROR", "Không thể lưu file vào hệ thống.");
-        }
-        return saveMetadata(target, type.mimeType(), content.length, moduleName, referenceId);
+        return store(new Upload() {
+            public long size() {
+                return content == null ? 0 : content.length;
+            }
+
+            public InputStream open() {
+                return new ByteArrayInputStream(content);
+            }
+        }, originalFilename, moduleName, referenceId, subFolder);
     }
 
-    /** Đọc các byte đầu file để nhận diện định dạng bằng magic bytes. */
-    private byte[] readHeader(MultipartFile file) {
-        try (InputStream in = file.getInputStream()) {
-            return in.readNBytes(SafeFileType.HEADER_BYTES);
-        } catch (IOException e) {
-            log.error("Không đọc được nội dung file upload '{}': {}", file.getOriginalFilename(), e.getMessage(), e);
-            throw new OracleBusinessException("FILE_READ_ERROR", "Không đọc được nội dung file tải lên.");
-        }
+    private interface Upload {
+        long size();
+
+        InputStream open() throws IOException;
     }
 
-    private PathTarget prepareTarget(String originalFilename, String moduleName, String subFolder) {
-        String cleanName = cleanFileName(originalFilename);
-        String storedName = UUID.randomUUID().toString().replace("-", "") + "_" + cleanName;
+    private FileEntity store(Upload upload, String originalFilename, String moduleName, Long referenceId,
+                             String subFolder) {
         String module = normalizeModule(moduleName);
-        String extra = normalizeSubFolder(subFolder);
-        LocalDate today = LocalDate.now();
-        String relativeDir = extra == null
-                ? module + "/" + today.format(YEAR_FORMATTER) + "/" + today.format(MONTH_FORMATTER)
-                : module + "/" + extra + "/" + today.format(YEAR_FORMATTER) + "/" + today.format(MONTH_FORMATTER);
-        String relativePath = relativeDir + "/" + storedName;
-        Path baseDir = resolveBaseDir();
-        Path targetFile = assertInsideBaseDir(baseDir.resolve(relativePath), baseDir,
-                "INVALID_PATH", "Đường dẫn lưu file không hợp lệ.");
-        return new PathTarget(cleanName, storedName, relativePath, module, targetFile);
-    }
-
-    private FileEntity saveMetadata(PathTarget target, String contentType, long fileSize,
-                                    String moduleName, Long referenceId) {
+        String sub = normalizeSubFolder(subFolder);
+        String code = FileModuleRegistry.descriptorCode(module, sub);
+        String ext = SafeFileType.extensionOfName(originalFilename);
         try {
-            FileEntity saved = fileRepository.save(FileEntity.builder()
-                    .originalName(target.cleanName())
-                    .storedName(target.storedName())
-                    .filePath(target.relativePath())
-                    .contentType(contentType)
-                    .fileSize(fileSize)
-                    .moduleName(target.module())
-                    .referenceId(referenceId)
-                    .isDeleted(0)
-                    .build());
-            log.info("Đã lưu file '{}' (id={}) tại đường dẫn tương đối '{}'",
-                    saved.getOriginalName(), saved.getId(), saved.getFilePath());
-            return saved;
-        } catch (RuntimeException e) {
-            deleteQuietly(target.path());
+            FileModuleDescriptor descriptor = registry.require(code);
+            limitService.requireActive(code);
+            if (referenceId == null && descriptor.referenceRequired()) {
+                throw new OracleBusinessException(FileErrorCodes.FILE_REFERENCE_REQUIRED,
+                        "Vui lòng chọn bản ghi (referenceId) để đính kèm file cho module " + code + ".");
+            }
+            if (referenceId != null) {
+                descriptor.assertReferenceUsable(referenceId);
+            }
+            if (upload.size() <= 0) {
+                throw new OracleBusinessException(FileErrorCodes.FILE_EMPTY, "File tải lên không được để trống.");
+            }
+            limitService.checkSizeAndType(code, upload.size(), ext);
+            SafeFileType type = SafeFileType.detect(originalFilename, readHeader(upload));
+            Long owner = referenceId == null ? null : descriptor.ownerStudentId(referenceId).orElse(null);
+            limitService.checkCapacity(code, module, referenceId, upload.size(), owner);
+            return writeAndSave(upload, originalFilename, module, sub, referenceId, owner, type, ext);
+        } catch (OracleBusinessException e) {
+            if (!FileErrorCodes.FILE_INFECTED.equals(e.getErrorCode())) {
+                auditRejected(e, code, referenceId, upload.size(), ext);
+            }
             throw e;
         }
     }
 
-    private record PathTarget(String cleanName, String storedName, String relativePath, String module, Path path) {
+    private FileEntity writeAndSave(Upload upload, String originalFilename, String module, String sub,
+                                    Long referenceId, Long owner, SafeFileType type, String ext) {
+        String extension = ext == null ? null : ext.toLowerCase(Locale.ROOT);
+        StorageKeyStrategy.StorageKey key = keyStrategy.newKey(module, sub, extension);
+        BlobInfo blob;
+        try (InputStream in = upload.open()) {
+            blob = blobStore.put(key.key(), in, upload.size());
+        } catch (IOException | RuntimeException e) {
+            log.error("Lỗi khi ghi blob '{}': {}", key.key(), e.getMessage(), e);
+            throw new OracleBusinessException(FileErrorCodes.FILE_STORE_ERROR, "Không thể lưu file vào hệ thống.");
+        }
+        boolean registered = registerRollbackCleanup(key.key());
+        try {
+            VirusScanner.ScanResult scan = scan(key.key(), originalFilename);
+            if (FileConstants.ScanStatus.INFECTED.equals(scan.status())) {
+                quarantineQuietly(key.key());
+                auditService.denied(AuditActions.FILE_INFECTED, AuditActions.RESOURCE_FILE, null,
+                        details(module, referenceId, blob.size(), extension, Map.of("detail",
+                                scan.detail() == null ? "" : scan.detail())));
+                throw new OracleBusinessException(FileErrorCodes.FILE_INFECTED,
+                        "File có dấu hiệu chứa mã độc và đã bị từ chối.");
+            }
+            AuthUserPrincipal user = SecurityUtils.currentUser().orElse(null);
+            FileEntity saved = fileRepository.save(FileEntity.builder()
+                    .originalName(cleanOriginalName(originalFilename))
+                    .storedName(key.storedName())
+                    .filePath(key.key())
+                    .contentType(type.mimeType())
+                    .fileSize(blob.size())
+                    .moduleName(module)
+                    .referenceId(referenceId)
+                    .isDeleted(0)
+                    .status(FileConstants.Status.ACTIVE)
+                    .createdBy(user == null ? null : user.getUsername())
+                    .uploadedByUserId(user == null ? null : user.getId())
+                    .uploadedByType(uploaderType(user))
+                    .ownerStudentId(owner)
+                    .fileExt(extension)
+                    .checksumSha256(blob.checksumSha256())
+                    .storageBackend(blob.backend())
+                    .scanStatus(scan.status())
+                    .scanDetail(scan.detail())
+                    .scannedAt(FileConstants.ScanStatus.SKIPPED.equals(scan.status()) ? null : LocalDateTime.now())
+                    .build());
+            log.info("Đã lưu file id={} module={} key='{}' size={}", saved.getId(), module, key.key(), blob.size());
+            auditService.success(AuditActions.FILE_UPLOADED, AuditActions.RESOURCE_FILE, saved.getId(),
+                    details(module, referenceId, blob.size(), extension, Map.of()));
+            return saved;
+        } catch (RuntimeException e) {
+            if (!registered) {
+                deleteBlobQuietly(key.key());
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Đăng ký xoá blob khi transaction không commit. Trả {@code false} nếu không có transaction (caller tự dọn khi lỗi).
+     */
+    private boolean registerRollbackCleanup(String key) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            return false;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status != STATUS_COMMITTED) {
+                    log.warn("Transaction không commit - xoá blob '{}'.", key);
+                    deleteBlobQuietly(key);
+                }
+            }
+        });
+        return true;
+    }
+
+    private VirusScanner.ScanResult scan(String key, String displayName) {
+        try (InputStream in = blobStore.open(key)) {
+            VirusScanner.ScanResult r = virusScanner.scan(in, displayName);
+            return r == null ? VirusScanner.ScanResult.skipped() : r;
+        } catch (IOException e) {
+            log.error("Lỗi quét virus blob '{}': {}", key, e.getMessage());
+            return new VirusScanner.ScanResult(FileConstants.ScanStatus.ERROR, truncate(e.getMessage(), 255));
+        }
+    }
+
+    private byte[] readHeader(Upload upload) {
+        try (InputStream in = upload.open()) {
+            return in.readNBytes(SafeFileType.HEADER_BYTES);
+        } catch (IOException e) {
+            log.error("Không đọc được nội dung file upload: {}", e.getMessage(), e);
+            throw new OracleBusinessException(FileErrorCodes.FILE_READ_ERROR, "Không đọc được nội dung file tải lên.");
+        }
     }
 
     @Override
     public Resource loadFileAsResource(Long fileId) {
-        FileEntity entity = getFileEntity(fileId);
-        if (entity.getFilePath() == null || entity.getFilePath().isBlank()) {
-            throw new OracleBusinessException("FILE_PATH_ERROR", "Đường dẫn file không hợp lệ.");
+        return loadResource(getFileEntity(fileId));
+    }
+
+    @Override
+    public Resource loadResource(FileEntity entity) {
+        if (FileConstants.Status.PURGED.equals(entity.getStatus())) {
+            throw new OracleBusinessException(FileErrorCodes.FILE_NOT_FOUND, "File đã bị xoá vĩnh viễn.");
         }
-
-        Path baseDir = resolveBaseDir();
-        Path filePath = assertInsideBaseDir(baseDir.resolve(entity.getFilePath()), baseDir,
-                "PATH_TRAVERSAL_DETECTED", "Đường dẫn file không hợp lệ.");
-
-        if (!Files.isRegularFile(filePath) || !Files.isReadable(filePath)) {
-            throw new OracleBusinessException("FILE_NOT_FOUND", "Không tìm thấy file trên hệ thống lưu trữ.");
+        String key = entity.getFilePath();
+        if (key == null || key.isBlank()) {
+            throw new OracleBusinessException(FileErrorCodes.FILE_PATH_ERROR, "Đường dẫn file không hợp lệ.");
         }
-
         try {
-            Resource resource = new UrlResource(filePath.toUri());
-            if (!resource.exists() || !resource.isReadable()) {
-                throw new OracleBusinessException("FILE_NOT_FOUND", "Không tìm thấy file trên hệ thống lưu trữ.");
+            if (!blobStore.exists(key)) {
+                throw new OracleBusinessException(FileErrorCodes.FILE_BLOB_MISSING,
+                        "Không tìm thấy nội dung file trên hệ thống lưu trữ.");
             }
-            return resource;
-        } catch (MalformedURLException e) {
-            log.error("Đường dẫn file không hợp lệ cho id={}: {}", fileId, e.getMessage(), e);
-            throw new OracleBusinessException("FILE_PATH_ERROR", "Đường dẫn file không hợp lệ.");
+            return blobStore.resource(key);
+        } catch (IllegalArgumentException e) {
+            log.error("Đường dẫn file không hợp lệ cho id={}: {}", entity.getId(), e.getMessage());
+            throw new OracleBusinessException(FileErrorCodes.FILE_PATH_ERROR, "Đường dẫn file không hợp lệ.");
+        } catch (IOException e) {
+            throw new OracleBusinessException(FileErrorCodes.FILE_BLOB_MISSING,
+                    "Không tìm thấy nội dung file trên hệ thống lưu trữ.");
         }
     }
 
     @Override
     public FileEntity getFileEntity(Long fileId) {
         return fileRepository.findById(fileId)
-                .filter(f -> f.getIsDeleted() == null || f.getIsDeleted() == 0)
+                .filter(FileStorageServiceImpl::isActive)
                 .orElseThrow(() -> new OracleBusinessException(
-                        "FILE_NOT_FOUND", "Không tìm thấy thông tin file với ID: " + fileId));
+                        FileErrorCodes.FILE_NOT_FOUND, "Không tìm thấy thông tin file với ID: " + fileId));
+    }
+
+    static boolean isActive(FileEntity f) {
+        if (f.getIsDeleted() != null && f.getIsDeleted() != 0) {
+            return false;
+        }
+        return f.getStatus() == null || FileConstants.Status.ACTIVE.equals(f.getStatus());
     }
 
     @Override
@@ -184,41 +287,74 @@ public class FileStorageServiceImpl implements FileStorageService {
         return fileRepository.getFilesByRef(normalizeModule(moduleName), referenceId);
     }
 
-    private void deleteQuietly(Path file) {
+    // ---------------------------------------------------------------------------------------------
+
+    private void auditRejected(OracleBusinessException e, String module, Long referenceId, long size, String ext) {
+        auditService.failure(AuditActions.FILE_UPLOAD_REJECTED, AuditActions.RESOURCE_FILE, null,
+                details(module, referenceId, size, ext, Map.of("reason", rejectReason(e.getErrorCode()),
+                        "code", e.getErrorCode())));
+    }
+
+    static String rejectReason(String code) {
+        if (code == null) {
+            return "OTHER";
+        }
+        return switch (code) {
+            case FileErrorCodes.FILE_TYPE_NOT_ALLOWED, FileErrorCodes.FILE_CONTENT_MISMATCH,
+                 FileErrorCodes.FILE_TYPE_INVALID -> "TYPE";
+            case FileErrorCodes.FILE_TOO_LARGE, FileErrorCodes.FILE_EMPTY -> "SIZE";
+            case FileErrorCodes.FILE_LIMIT_COUNT -> "COUNT";
+            case FileErrorCodes.FILE_LIMIT_TOTAL -> "TOTAL";
+            case FileErrorCodes.FILE_QUOTA_EXCEEDED -> "QUOTA";
+            case FileErrorCodes.STORAGE_LOW_DISK -> "DISK";
+            case FileErrorCodes.FILE_INFECTED -> "VIRUS";
+            case FileErrorCodes.FILE_REFERENCE_REQUIRED, FileErrorCodes.FILE_REFERENCE_NOT_FOUND,
+                 FileErrorCodes.FILE_REFERENCE_INACTIVE -> "REFERENCE";
+            case FileErrorCodes.INVALID_MODULE, FileErrorCodes.FILE_MODULE_DISABLED -> "MODULE";
+            default -> "OTHER";
+        };
+    }
+
+    private static Map<String, Object> details(String module, Long referenceId, long size, String ext,
+                                               Map<String, ?> extra) {
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("module", module);
+        d.put("refId", referenceId);
+        d.put("size", size);
+        d.put("ext", ext);
+        d.putAll(extra);
+        return d;
+    }
+
+    private static String uploaderType(AuthUserPrincipal user) {
+        if (user == null) {
+            return FileConstants.UploaderType.SYSTEM;
+        }
+        return user.isStaff() ? FileConstants.UploaderType.STAFF : FileConstants.UploaderType.STUDENT;
+    }
+
+    private void deleteBlobQuietly(String key) {
         try {
-            Files.deleteIfExists(file);
-            log.warn("Đã xóa file vật lý '{}' vì không ghi được metadata vào Database.", file);
-        } catch (IOException e) {
-            log.error("Không thể xóa file vật lý '{}' sau khi lưu metadata thất bại: {}", file, e.getMessage(), e);
+            blobStore.delete(key);
+        } catch (IOException | RuntimeException e) {
+            log.error("Không thể xoá blob '{}' sau khi lưu metadata thất bại: {}", key, e.getMessage(), e);
         }
     }
 
-    private Path resolveBaseDir() {
-        return Paths.get(fileStorageProperties.getBaseDir()).toAbsolutePath().normalize();
-    }
-
-    /**
-     * Chuẩn hóa đường dẫn tuyệt đối rồi bắt buộc kết quả phải nằm trong {@code baseDir},
-     * chặn Directory Traversal ({@code ../}) và đường dẫn tuyệt đối xen vào {@code FILE_PATH}.
-     */
-    private Path assertInsideBaseDir(Path candidate, Path baseDir, String errorCode, String message) {
-        Path normalized = candidate.toAbsolutePath().normalize();
-        Path base = baseDir.toAbsolutePath().normalize();
-        if (!normalized.startsWith(base) || normalized.equals(base)) {
-            log.error("Phát hiện Path Traversal: candidate='{}', baseDir='{}'", normalized, base);
-            throw new OracleBusinessException(errorCode, message);
+    private void quarantineQuietly(String key) {
+        try {
+            blobStore.moveToQuarantine(key);
+        } catch (IOException | RuntimeException e) {
+            log.error("Không cách ly được blob nhiễm virus '{}', xoá luôn: {}", key, e.getMessage());
+            deleteBlobQuietly(key);
         }
-        return normalized;
     }
 
     private String normalizeModule(String moduleName) {
-        if (moduleName == null || moduleName.isBlank()) {
-            return DEFAULT_MODULE;
-        }
-        String module = moduleName.trim().toUpperCase(Locale.ROOT);
-        if (!module.matches("[A-Z0-9_-]+")) {
-            throw new OracleBusinessException("INVALID_MODULE",
-                    "Tên module chỉ được chứa chữ, số, gạch ngang và gạch dưới.");
+        String module = FileModuleRegistry.normalize(moduleName);
+        if (!module.matches("[A-Z0-9_]{1,50}")) {
+            throw new OracleBusinessException(FileErrorCodes.INVALID_MODULE,
+                    "Tên module chỉ được chứa chữ, số và gạch dưới.");
         }
         return module;
     }
@@ -228,23 +364,48 @@ public class FileStorageServiceImpl implements FileStorageService {
             return null;
         }
         String folder = subFolder.trim().toUpperCase(Locale.ROOT);
-        if (!folder.matches("[A-Z0-9_]+")) {
-            throw new OracleBusinessException("INVALID_MODULE",
+        if (!folder.matches("[A-Z0-9_]{1,50}")) {
+            throw new OracleBusinessException(FileErrorCodes.INVALID_MODULE,
                     "Thư mục con chỉ được chứa chữ, số và gạch dưới.");
         }
         return folder;
     }
 
     /**
-     * Loại bỏ thành phần thư mục và các ký tự không an toàn khỏi tên file người dùng gửi lên,
-     * chặn các trường hợp như {@code ../../evil.txt}.
+     * Tên gốc hiển thị (sửa S8): giữ Unicode (chuẩn hoá NFC), bỏ thành phần thư mục, ký tự điều khiển và {@code / \},
+     * cắt tối đa 255 ký tự (giữ đuôi).
      */
-    private String cleanFileName(String originalFilename) {
+    static String cleanOriginalName(String originalFilename) {
         if (originalFilename == null || originalFilename.isBlank()) {
             return DEFAULT_FILE_NAME;
         }
-        String name = Paths.get(originalFilename.replace("\\", "/")).getFileName().toString();
-        name = name.replaceAll("[^a-zA-Z0-9._-]", "_");
-        return name.isBlank() || name.replace(".", "").isBlank() ? DEFAULT_FILE_NAME : name;
+        String name = originalFilename.replace('\\', '/');
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0) {
+            name = name.substring(slash + 1);
+        }
+        name = Normalizer.normalize(name, Normalizer.Form.NFC);
+        StringBuilder sb = new StringBuilder(name.length());
+        name.codePoints()
+                .filter(cp -> !Character.isISOControl(cp) && Character.getType(cp) != Character.FORMAT
+                        && cp != '/' && cp != '\\' && cp != '"')
+                .forEach(sb::appendCodePoint);
+        name = sb.toString().strip();
+        if (name.isEmpty() || name.replace(".", "").isBlank()) {
+            return DEFAULT_FILE_NAME;
+        }
+        if (name.length() > MAX_NAME_LENGTH) {
+            int dot = name.lastIndexOf('.');
+            String ext = dot > 0 && name.length() - dot <= 11 ? name.substring(dot) : "";
+            name = name.substring(0, MAX_NAME_LENGTH - ext.length()) + ext;
+        }
+        return name;
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null) {
+            return null;
+        }
+        return s.length() > max ? s.substring(0, max) : s;
     }
 }

@@ -48,6 +48,14 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void handleOracleBusinessException_fileBlobMissing_returns404() {
+        ResponseEntity<ApiResponse<Void>> response = handler.handleOracleBusinessException(
+                new OracleBusinessException("FILE_BLOB_MISSING", "missing"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
     void handleOracleBusinessException_notFoundCode_returns404() {
         ResponseEntity<ApiResponse<Void>> response = handler.handleOracleBusinessException(
                 new OracleBusinessException("STUDENT_NOT_FOUND", "Không tìm thấy học sinh với ID: 99"));

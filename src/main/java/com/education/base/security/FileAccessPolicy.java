@@ -1,145 +1,172 @@
 package com.education.base.security;
 
-import com.education.base.common.DomainConstants;
+import com.education.base.audit.AuditActions;
+import com.education.base.common.file.FileConstants;
+import com.education.base.common.file.FileErrorCodes;
+import com.education.base.common.file.FileModuleDescriptor;
+import com.education.base.config.FileStorageProperties;
 import com.education.base.entity.FileEntity;
 import com.education.base.exception.ForbiddenException;
 import com.education.base.exception.OracleBusinessException;
+import com.education.base.service.AuditService;
+import com.education.base.service.file.FileLimitService;
+import com.education.base.service.file.FileModuleRegistry;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-import java.util.Locale;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
- * Phân quyền file đính kèm theo nghiệp vụ sở hữu ({@code MODULE_NAME}/{@code REFERENCE_ID}).
+ * Phân quyền file theo module + trạng thái (Luồng A, {@code docs/files-api.md} mục 4).
  * <p>
- * Quyền trên endpoint {@code /api/v1/files/**} chỉ là "cổng" thô; quyền thực sự phụ thuộc Module
- * lưu trong metadata của file (không lấy từ tham số client khi xem/tải):
- * <table>
- *     <tr><th>Module</th><th>Xem / tải / liệt kê</th><th>Upload</th></tr>
- *     <tr><td>STUDENT</td><td>{@link Permissions#STUDENT_VIEW}</td>
- *         <td>{@link Permissions#STUDENT_CREATE} / {@link Permissions#STUDENT_UPDATE}</td></tr>
- *     <tr><td>STUDENT/IMPORT (file Excel import)</td>
- *         <td>{@link Permissions#STUDENT_IMPORT} / {@link Permissions#STUDENT_CREATE}</td><td>(chỉ qua API import)</td></tr>
- *     <tr><td>CLASS</td><td>{@link Permissions#CLASS_VIEW}</td>
- *         <td>{@link Permissions#CLASS_CREATE} / {@link Permissions#CLASS_UPDATE}</td></tr>
- *     <tr><td>LEAD</td><td>{@link Permissions#LEAD_VIEW}</td>
- *         <td>{@link Permissions#LEAD_CREATE} / {@link Permissions#LEAD_UPDATE}</td></tr>
- *     <tr><td>TUITION</td><td>{@link Permissions#TUITION_FEE_VIEW}</td>
- *         <td>{@link Permissions#TUITION_FEE_CREATE} / {@link Permissions#TUITION_FEE_UPDATE}</td></tr>
- *     <tr><td>COMMON (Kho tài liệu) và module khác</td>
- *         <td>{@link Permissions#FILE_VIEW} (xem) / {@link Permissions#FILE_DOWNLOAD} (tải)</td>
- *         <td>{@link Permissions#FILE_UPLOAD} (chỉ COMMON)</td></tr>
- * </table>
- * {@link Permissions#ADMIN_ROLE} luôn được phép.
+ * {@code @RequirePermission} trên {@code /api/v1/files/**} chỉ là cổng thô. Quyết định thật:
+ * <ol>
+ *     <li>Admin ({@link Permissions#ADMIN_ROLE}) và {@code MENU_FILE_MANAGER:DOWNLOAD} (đọc) /
+ *     {@code MENU_FILE_MANAGER:DELETE} (xoá) luôn qua.</li>
+ *     <li>File không {@code ACTIVE} ({@code DELETED / PENDING / PURGED}) hoặc bản ghi tham chiếu đã xoá / không còn
+ *     (QĐ-F9): chỉ nhóm trên.</li>
+ *     <li>Module không có {@link FileModuleDescriptor} -> từ chối (fail-closed, sửa S1).</li>
+ *     <li>Luật nghiệp vụ của descriptor (kể cả phạm vi giáo viên - QĐ-F12).</li>
+ * </ol>
+ * File {@code INFECTED} không bao giờ phục vụ; {@code PENDING/ERROR} bị chặn khi bật quét fail-closed.
+ * Mọi lần từ chối ghi {@code FILE_ACCESS_DENIED}.
  */
 @Component
+@RequiredArgsConstructor
 public class FileAccessPolicy {
 
-    public static final String FORBIDDEN_CODE = "FILE_FORBIDDEN";
+    public static final String FORBIDDEN_CODE = FileErrorCodes.FILE_FORBIDDEN;
 
-    /** Tiền tố đường dẫn tương đối của file Excel import học sinh ({@code STUDENT/IMPORT/YYYY/MM/...}). */
-    static final String STUDENT_IMPORT_PATH_PREFIX = DomainConstants.Module.STUDENT + "/IMPORT/";
+    public enum Action { VIEW, DOWNLOAD, LIST, UPLOAD, DELETE }
 
-    public enum Action { VIEW, DOWNLOAD }
+    private final FileModuleRegistry registry;
+    private final FileLimitService limitService;
+    private final FileStorageProperties storageProperties;
+    private final AuditService auditService;
 
-    private record ModuleRule(List<String> read, List<String> upload, boolean referenceRequired) {
-    }
-
-    private static final Map<String, ModuleRule> RULES = Map.of(
-            DomainConstants.Module.STUDENT, new ModuleRule(
-                    List.of(Permissions.STUDENT_VIEW),
-                    List.of(Permissions.STUDENT_CREATE, Permissions.STUDENT_UPDATE), true),
-            DomainConstants.Module.CLASS, new ModuleRule(
-                    List.of(Permissions.CLASS_VIEW),
-                    List.of(Permissions.CLASS_CREATE, Permissions.CLASS_UPDATE), true),
-            DomainConstants.Module.LEAD, new ModuleRule(
-                    List.of(Permissions.LEAD_VIEW),
-                    List.of(Permissions.LEAD_CREATE, Permissions.LEAD_UPDATE), true),
-            DomainConstants.Module.TUITION, new ModuleRule(
-                    List.of(Permissions.TUITION_FEE_VIEW),
-                    List.of(Permissions.TUITION_FEE_CREATE, Permissions.TUITION_FEE_UPDATE), true),
-            DomainConstants.Module.COMMON, new ModuleRule(
-                    List.of(Permissions.FILE_VIEW),
-                    List.of(Permissions.FILE_UPLOAD), false));
-
-    private static final List<String> STUDENT_IMPORT_READ =
-            List.of(Permissions.STUDENT_IMPORT, Permissions.STUDENT_CREATE);
-
-    /** Kiểm tra quyền xem/tải một file đã lưu, dựa trên Module + đường dẫn trong metadata. */
+    /** Kiểm tra quyền xem/tải một file đã lưu (dựa trên metadata, không tin tham số client). */
     public void checkRead(FileEntity file, Action action) {
+        checkScan(file);
         AuthUserPrincipal user = SecurityUtils.requireCurrentUser();
-        if (user.isAdmin()) {
+        if (isManager(user, Permissions.FILE_MANAGER_DOWNLOAD)) {
             return;
         }
-        String module = normalize(file.getModuleName());
-        List<String> required;
-        if (DomainConstants.Module.STUDENT.equals(module) && isStudentImportFile(file)) {
-            required = STUDENT_IMPORT_READ;
-        } else {
-            required = readPermissions(module, action);
+        Optional<FileModuleDescriptor> d = registry.forFile(file);
+        boolean allowed = d.isPresent() && isActive(file) && referenceActive(d.get(), file.getReferenceId())
+                && (action == Action.DOWNLOAD ? d.get().canDownload(user, file) : d.get().canRead(user, file));
+        if (!allowed) {
+            deny(file, action, file.getModuleName(), file.getReferenceId());
         }
-        requireAny(user, required);
     }
 
-    /** Kiểm tra quyền liệt kê file theo {@code moduleName}/{@code referenceId}. */
+    /** @deprecated dùng {@link #checkList(String, Long)} để kiểm tra cả bản ghi tham chiếu. */
+    @Deprecated
     public void checkList(String moduleName) {
+        checkList(moduleName, null);
+    }
+
+    /** Kiểm tra quyền liệt kê file của một bản ghi ({@code by-ref}). */
+    public void checkList(String moduleName, Long referenceId) {
         AuthUserPrincipal user = SecurityUtils.requireCurrentUser();
-        if (user.isAdmin()) {
+        if (isManager(user, Permissions.FILE_MANAGER_VIEW)) {
             return;
         }
-        requireAny(user, readPermissions(normalize(moduleName), Action.VIEW));
+        String module = FileModuleRegistry.normalize(moduleName);
+        FileEntity probe = FileEntity.builder().moduleName(module).referenceId(referenceId).build();
+        Optional<FileModuleDescriptor> d = registry.find(module);
+        boolean allowed = d.isPresent() && referenceActive(d.get(), referenceId) && d.get().canRead(user, probe);
+        if (!allowed) {
+            deny(null, Action.LIST, module, referenceId);
+        }
     }
 
     /**
-     * Kiểm tra quyền upload qua {@code /api/v1/files/upload}: Module phải thuộc allow-list,
-     * Module nghiệp vụ bắt buộc có {@code referenceId}.
+     * Kiểm tra upload qua {@code /api/v1/files/upload} (thứ tự theo hợp đồng): module có descriptor và cho upload
+     * chung ({@code INVALID_MODULE}) -> module bật -> {@code referenceId} bắt buộc / tồn tại / còn hiệu lực -> quyền ghi.
      */
     public void checkUpload(String moduleName, Long referenceId) {
-        String module = normalize(moduleName);
-        ModuleRule rule = RULES.get(module);
-        if (rule == null) {
-            throw new OracleBusinessException("INVALID_MODULE",
-                    "Module '" + module + "' không hỗ trợ upload file.");
-        }
-        if (rule.referenceRequired() && referenceId == null) {
-            throw new OracleBusinessException("FILE_REFERENCE_REQUIRED",
+        String module = FileModuleRegistry.normalize(moduleName);
+        FileModuleDescriptor d = registry.find(module)
+                .filter(FileModuleDescriptor::allowGenericUpload)
+                .orElseThrow(() -> new OracleBusinessException(FileErrorCodes.INVALID_MODULE,
+                        "Module '" + module + "' không hỗ trợ upload file."));
+        limitService.requireActive(module);
+        if (d.referenceRequired() && referenceId == null) {
+            throw new OracleBusinessException(FileErrorCodes.FILE_REFERENCE_REQUIRED,
                     "Vui lòng chọn bản ghi (referenceId) để đính kèm file cho module " + module + ".");
+        }
+        if (referenceId != null) {
+            d.assertReferenceUsable(referenceId);
         }
         AuthUserPrincipal user = SecurityUtils.requireCurrentUser();
         if (user.isAdmin()) {
             return;
         }
-        requireAny(user, rule.upload());
-    }
-
-    private static List<String> readPermissions(String module, Action action) {
-        ModuleRule rule = RULES.get(module);
-        if (rule == null || DomainConstants.Module.COMMON.equals(module)) {
-            return action == Action.DOWNLOAD
-                    ? List.of(Permissions.FILE_DOWNLOAD)
-                    : List.of(Permissions.FILE_VIEW);
+        if (!d.canUpload(user, referenceId)) {
+            deny(null, Action.UPLOAD, module, referenceId);
         }
-        return rule.read();
     }
 
-    private static boolean isStudentImportFile(FileEntity file) {
-        String path = file.getFilePath();
-        return path != null && path.replace('\\', '/').toUpperCase(Locale.ROOT).startsWith(STUDENT_IMPORT_PATH_PREFIX);
-    }
-
-    private static void requireAny(AuthUserPrincipal user, List<String> permissions) {
-        for (String permission : permissions) {
-            if (user.hasPermission(permission)) {
-                return;
-            }
+    /** Kiểm tra xoá mềm qua {@code DELETE /api/v1/files/{id}}. */
+    public void checkDelete(FileEntity file) {
+        if (!canDelete(file)) {
+            deny(file, Action.DELETE, file.getModuleName(), file.getReferenceId());
         }
+    }
+
+    /** Người dùng hiện tại có được xoá mềm file này không (không ghi nhật ký) - cho {@code FileResponseDto.canDelete}. */
+    public boolean canDelete(FileEntity file) {
+        AuthUserPrincipal user = SecurityUtils.currentUser().orElse(null);
+        if (user == null) {
+            return false;
+        }
+        if (isManager(user, Permissions.FILE_MANAGER_DELETE)) {
+            return true;
+        }
+        Optional<FileModuleDescriptor> d = registry.forFile(file);
+        return d.isPresent() && isActive(file) && referenceActive(d.get(), file.getReferenceId())
+                && d.get().canDelete(user, file);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+
+    private void checkScan(FileEntity file) {
+        String scan = file.getScanStatus();
+        if (FileConstants.ScanStatus.INFECTED.equals(scan)) {
+            throw new OracleBusinessException(FileErrorCodes.FILE_INFECTED, "File có dấu hiệu chứa mã độc.");
+        }
+        boolean failClosed = !"none".equalsIgnoreCase(storageProperties.getScan().getMode())
+                && storageProperties.getScan().getClamav().isFailClosed();
+        if (failClosed && (FileConstants.ScanStatus.PENDING.equals(scan) || FileConstants.ScanStatus.ERROR.equals(scan))) {
+            throw new OracleBusinessException(FileErrorCodes.FILE_SCAN_PENDING,
+                    "File đang chờ quét virus, vui lòng thử lại sau.");
+        }
+    }
+
+    private static boolean isManager(AuthUserPrincipal user, String managerPermission) {
+        return user.isAdmin() || user.hasPermission(managerPermission);
+    }
+
+    private static boolean isActive(FileEntity f) {
+        if (f.getIsDeleted() != null && f.getIsDeleted() != 0) {
+            return false;
+        }
+        return f.getStatus() == null || FileConstants.Status.ACTIVE.equals(f.getStatus());
+    }
+
+    private static boolean referenceActive(FileModuleDescriptor d, Long referenceId) {
+        return referenceId == null || d.referenceActive(referenceId);
+    }
+
+    private void deny(FileEntity file, Action action, String module, Long referenceId) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("action", action.name());
+        details.put("module", module);
+        details.put("refId", referenceId);
+        auditService.denied(AuditActions.FILE_ACCESS_DENIED, AuditActions.RESOURCE_FILE,
+                file == null ? null : file.getId(), details);
         throw new ForbiddenException(FORBIDDEN_CODE, "Bạn không có quyền truy cập file của chức năng này.");
-    }
-
-    private static String normalize(String moduleName) {
-        return moduleName == null || moduleName.isBlank()
-                ? DomainConstants.Module.COMMON
-                : moduleName.trim().toUpperCase(Locale.ROOT);
     }
 }

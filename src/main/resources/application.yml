@@ -65,6 +65,36 @@ app:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:8088,http://localhost:3000}
   storage:
     base-dir: ${APP_STORAGE_DIR:./outputs}
+    # Nền tảng file V19 (docs/files-api.md). Giới hạn/quota trong DB (SYS_FILE_MODULE_SETTINGS / SYS_FILE_QUOTAS,
+    # màn "Quản lý file") được ưu tiên; các giá trị dưới đây chỉ là mặc định khi DB chưa có dòng.
+    backend: ${APP_STORAGE_BACKEND:local}            # local | s3 (chưa làm)
+    min-free-disk: ${APP_STORAGE_MIN_FREE_DISK:5GB}  # còn trống ít hơn -> từ chối upload (STORAGE_LOW_DISK)
+    defaults:
+      max-file-size: 20MB
+      max-files-per-ref: 30
+      max-total-per-ref: 200MB
+    quota:
+      global: ${APP_STORAGE_QUOTA_GLOBAL:50GB}
+      student-default: ${APP_STORAGE_QUOTA_STUDENT:500MB}
+      warn-percent: 80
+    retention:
+      trash-days: ${APP_FILES_TRASH_DAYS:30}         # thùng rác -> job xoá vĩnh viễn blob (giữ dòng PURGED)
+      pending-hours: 24                              # upload chưa gắn bản ghi
+      orphan-grace-hours: 24                         # đối soát bỏ qua blob mới hơn
+    scan:
+      mode: ${APP_FILES_SCAN_MODE:none}              # none | clamav (QĐ-F2: bật trước khi học sinh nộp bài qua Internet)
+      clamav:
+        host: ${APP_FILES_CLAMAV_HOST:clamav}
+        port: ${APP_FILES_CLAMAV_PORT:3310}
+        timeout: 15s
+        fail-closed: true
+    jobs:
+      enabled: ${APP_FILES_JOBS_ENABLED:true}
+      retention-cron: "0 30 2 * * *"                 # 02:30 hằng ngày (giờ server)
+  files:
+    audit:
+      views: ${APP_FILES_AUDIT_VIEWS:false}          # QĐ-F11: chỉ ghi tải về + quản trị + cổng học sinh
+    teacher-scope-enabled: ${APP_FILES_TEACHER_SCOPE:true}  # QĐ-F12: giáo viên chỉ xem file STUDENT/CLASS lớp mình dạy
   receipt:
     # Thông tin trung tâm in trên phiếu thu (PaymentServiceImpl / ReceiptHtmlRenderer). Tên rỗng = tên chủ tài khoản
     # ngân hàng đang dùng; địa chỉ / điện thoại rỗng = không in dòng đó.

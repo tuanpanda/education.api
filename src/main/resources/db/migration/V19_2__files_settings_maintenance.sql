@@ -1,0 +1,336 @@
+-- =============================================================================
+-- EDUCATION - MIGRATION V19_2: QUAN LY FILE - CAU HINH MODULE, QUOTA, DOI SOAT
+--
+-- Tinh nang "Quan ly file" (feat/files; xem docs/files-api.md). Can V19_1.
+--
+-- Script nay lam:
+--   V19_2.1 Kiem tra truoc: V19_1 da chay (SYS_ATTACHED_FILES.STATUS).
+--   V19_2.2 Sequence SEQ_SYS_FILE_QUOTAS, SEQ_SYS_FILE_SCAN_RUNS, SEQ_SYS_FILE_SCAN_ITEMS.
+--   V19_2.3 Bang SYS_FILE_MODULE_SETTINGS (PK MODULE_NAME): gioi han moi module (QD-F4, QD-F8).
+--   V19_2.4 Bang SYS_FILE_QUOTAS: GLOBAL / STUDENT_DEFAULT / STUDENT / USER; unique (SCOPE_TYPE, NVL(SCOPE_ID,0)).
+--   V19_2.5 Bang SYS_FILE_SCAN_RUNS (dot doi soat / tinh checksum; toi da 1 dot RUNNING tai mot thoi diem)
+--           va SYS_FILE_SCAN_ITEMS (muc phat hien, ON DELETE CASCADE theo dot).
+--   V19_2.6 Seed cau hinh module: STUDENT, STUDENT_IMPORT, CLASS, LEAD, TUITION, COMMON (dang dung) +
+--           ASSIGNMENT, SUBMISSION, FEEDBACK (IS_ACTIVE=0, GD2 bat). Module LIBRARY seed o V19_4.
+--           Chi THEM dong con thieu - khong ghi de cau hinh admin da sua.
+--   V19_2.7 Seed quota: GLOBAL 50 GB, STUDENT_DEFAULT 500 MB (chi them neu chua co).
+--   V19_2.8 Kiem tra sau.
+--
+-- QUY UOC:
+--   * WHENEVER SQLERROR EXIT ... ROLLBACK; ket thuc bang COMMIT + EXIT.
+--   * Chay lai an toan: kiem USER_TABLES / USER_SEQUENCES / USER_INDEXES; seed MERGE ... WHEN NOT MATCHED.
+--   * File thuan ASCII; ID tu SEQ_<TABLE>. DDL tu commit.
+--
+-- THU TU CHAY: sau V19_1. V19_1 -> V19_2 -> V19_3 -> V19_4.
+--
+--   (Windows PowerShell; nhap tai khoan/mat khau khi sqlplus hoi - KHONG ghi mat khau vao file)
+--   $env:NLS_LANG = "AMERICAN_AMERICA.AL32UTF8"
+--   F:\Database\bin\sqlplus.exe -L <schema_user>@//localhost:1521/ORCL @src/main/resources/db/migration/V19_2__files_settings_maintenance.sql
+--
+-- ROLLBACK (go bo hoan toan; MAT cau hinh quota/gioi han va lich su doi soat; app V19 se dung gia tri yml):
+--   DROP TABLE SYS_FILE_SCAN_ITEMS CASCADE CONSTRAINTS PURGE;
+--   DROP TABLE SYS_FILE_SCAN_RUNS CASCADE CONSTRAINTS PURGE;
+--   DROP TABLE SYS_FILE_QUOTAS CASCADE CONSTRAINTS PURGE;
+--   DROP TABLE SYS_FILE_MODULE_SETTINGS CASCADE CONSTRAINTS PURGE;
+--   DROP SEQUENCE SEQ_SYS_FILE_SCAN_ITEMS;
+--   DROP SEQUENCE SEQ_SYS_FILE_SCAN_RUNS;
+--   DROP SEQUENCE SEQ_SYS_FILE_QUOTAS;
+--   (Neu da chay V19_4: chay ROLLBACK cua V19_4 truoc.)
+-- =============================================================================
+
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+SET DEFINE OFF
+SET SERVEROUTPUT ON SIZE UNLIMITED
+
+PROMPT ============ V19_2.1 Kiem tra truoc ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT
+      FROM USER_TAB_COLUMNS
+     WHERE TABLE_NAME = 'SYS_ATTACHED_FILES' AND COLUMN_NAME = 'STATUS';
+    IF V_COUNT <> 1 THEN
+        RAISE_APPLICATION_ERROR(-20001, 'V19_2: chua co SYS_ATTACHED_FILES.STATUS - chay V19_1 truoc');
+    END IF;
+    DBMS_OUTPUT.PUT_LINE('  V19_1 (SYS_ATTACHED_FILES.STATUS)       OK');
+END;
+/
+
+PROMPT ============ V19_2.2 Sequence ============
+
+DECLARE
+    PROCEDURE ENSURE_SEQUENCE(P_NAME VARCHAR2) IS
+        V_COUNT NUMBER;
+    BEGIN
+        SELECT COUNT(*) INTO V_COUNT FROM USER_SEQUENCES WHERE SEQUENCE_NAME = P_NAME;
+        IF V_COUNT = 0 THEN
+            EXECUTE IMMEDIATE 'CREATE SEQUENCE ' || P_NAME || ' START WITH 1 INCREMENT BY 1 NOCYCLE';
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'created');
+        ELSE
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'already exists');
+        END IF;
+    END;
+BEGIN
+    ENSURE_SEQUENCE('SEQ_SYS_FILE_QUOTAS');
+    ENSURE_SEQUENCE('SEQ_SYS_FILE_SCAN_RUNS');
+    ENSURE_SEQUENCE('SEQ_SYS_FILE_SCAN_ITEMS');
+END;
+/
+
+PROMPT ============ V19_2.3 Bang SYS_FILE_MODULE_SETTINGS ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'SYS_FILE_MODULE_SETTINGS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE SYS_FILE_MODULE_SETTINGS (
+                MODULE_NAME             VARCHAR2(50)                        NOT NULL,
+                MAX_FILE_SIZE_BYTES     NUMBER(19)                          NOT NULL,
+                MAX_FILES_PER_REF       NUMBER(10),
+                MAX_TOTAL_BYTES_PER_REF NUMBER(19),
+                ALLOWED_EXTENSIONS      VARCHAR2(200),
+                TRASH_RETENTION_DAYS    NUMBER(5)      DEFAULT 30           NOT NULL,
+                COUNT_TO_STUDENT_QUOTA  NUMBER(1)      DEFAULT 0            NOT NULL,
+                IS_ACTIVE               NUMBER(1)      DEFAULT 1            NOT NULL,
+                CREATED_AT              TIMESTAMP(6)   DEFAULT SYSTIMESTAMP NOT NULL,
+                UPDATED_AT              TIMESTAMP(6),
+                CREATED_BY              VARCHAR2(50),
+                UPDATED_BY              VARCHAR2(50),
+                CONSTRAINT PK_SYS_FILE_MODULE_SETTINGS PRIMARY KEY (MODULE_NAME),
+                CONSTRAINT CK_FMS_MAX_SIZE   CHECK (MAX_FILE_SIZE_BYTES > 0),
+                CONSTRAINT CK_FMS_MAX_FILES  CHECK (MAX_FILES_PER_REF IS NULL OR MAX_FILES_PER_REF > 0),
+                CONSTRAINT CK_FMS_MAX_TOTAL  CHECK (MAX_TOTAL_BYTES_PER_REF IS NULL OR MAX_TOTAL_BYTES_PER_REF > 0),
+                CONSTRAINT CK_FMS_RETENTION  CHECK (TRASH_RETENTION_DAYS BETWEEN 1 AND 3650),
+                CONSTRAINT CK_FMS_QUOTA_FLAG CHECK (COUNT_TO_STUDENT_QUOTA IN (0, 1)),
+                CONSTRAINT CK_FMS_ACTIVE     CHECK (IS_ACTIVE IN (0, 1)),
+                CONSTRAINT CK_FMS_MODULE     CHECK (MODULE_NAME = UPPER(MODULE_NAME))
+            )]';
+        DBMS_OUTPUT.PUT_LINE('  SYS_FILE_MODULE_SETTINGS                created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  SYS_FILE_MODULE_SETTINGS                already exists');
+    END IF;
+END;
+/
+
+COMMENT ON TABLE SYS_FILE_MODULE_SETTINGS IS 'Gioi han upload theo module file (uu tien hon app.storage.defaults trong yml; cache 60s)';
+COMMENT ON COLUMN SYS_FILE_MODULE_SETTINGS.ALLOWED_EXTENSIONS IS 'CSV duoi file chu thuong; NULL = theo SafeFileType';
+COMMENT ON COLUMN SYS_FILE_MODULE_SETTINGS.MAX_FILES_PER_REF IS 'So file ACTIVE/PENDING toi da tren 1 ban ghi; NULL = khong gioi han';
+
+PROMPT ============ V19_2.4 Bang SYS_FILE_QUOTAS ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'SYS_FILE_QUOTAS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE SYS_FILE_QUOTAS (
+                ID           NUMBER(19)                          NOT NULL,
+                SCOPE_TYPE   VARCHAR2(20)                        NOT NULL,
+                SCOPE_ID     NUMBER(19),
+                MAX_BYTES    NUMBER(19)                          NOT NULL,
+                WARN_PERCENT NUMBER(3)      DEFAULT 80           NOT NULL,
+                NOTE         VARCHAR2(500 CHAR),
+                CREATED_AT   TIMESTAMP(6)   DEFAULT SYSTIMESTAMP NOT NULL,
+                UPDATED_AT   TIMESTAMP(6),
+                CREATED_BY   VARCHAR2(50),
+                UPDATED_BY   VARCHAR2(50),
+                CONSTRAINT PK_SYS_FILE_QUOTAS PRIMARY KEY (ID),
+                CONSTRAINT CK_FQ_SCOPE     CHECK (SCOPE_TYPE IN ('GLOBAL', 'STUDENT_DEFAULT', 'STUDENT', 'USER')),
+                CONSTRAINT CK_FQ_SCOPE_ID  CHECK (
+                    (SCOPE_TYPE IN ('GLOBAL', 'STUDENT_DEFAULT') AND SCOPE_ID IS NULL)
+                    OR (SCOPE_TYPE IN ('STUDENT', 'USER') AND SCOPE_ID IS NOT NULL)
+                ),
+                CONSTRAINT CK_FQ_MAX_BYTES CHECK (MAX_BYTES > 0),
+                CONSTRAINT CK_FQ_WARN      CHECK (WARN_PERCENT BETWEEN 1 AND 100)
+            )]';
+        DBMS_OUTPUT.PUT_LINE('  SYS_FILE_QUOTAS                         created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  SYS_FILE_QUOTAS                         already exists');
+    END IF;
+END;
+/
+
+COMMENT ON TABLE SYS_FILE_QUOTAS IS 'Quota dung luong file: GLOBAL, STUDENT_DEFAULT, rieng tung STUDENT / USER';
+COMMENT ON COLUMN SYS_FILE_QUOTAS.SCOPE_ID IS 'EDU_STUDENTS.ID (STUDENT) / SYS_USERS.ID (USER); NULL voi GLOBAL, STUDENT_DEFAULT';
+
+PROMPT ============ V19_2.5 Bang SYS_FILE_SCAN_RUNS / SYS_FILE_SCAN_ITEMS ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'SYS_FILE_SCAN_RUNS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE SYS_FILE_SCAN_RUNS (
+                ID                 NUMBER(19)                          NOT NULL,
+                RUN_TYPE           VARCHAR2(20)                        NOT NULL,
+                STATUS             VARCHAR2(20)   DEFAULT 'RUNNING'    NOT NULL,
+                STARTED_AT         TIMESTAMP(6)   DEFAULT SYSTIMESTAMP NOT NULL,
+                FINISHED_AT        TIMESTAMP(6),
+                STARTED_BY         VARCHAR2(50),
+                DB_ROWS_CHECKED    NUMBER(19)     DEFAULT 0            NOT NULL,
+                BLOBS_CHECKED      NUMBER(19)     DEFAULT 0            NOT NULL,
+                MISSING_BLOB_COUNT NUMBER(19)     DEFAULT 0            NOT NULL,
+                ORPHAN_BLOB_COUNT  NUMBER(19)     DEFAULT 0            NOT NULL,
+                MISMATCH_COUNT     NUMBER(19)     DEFAULT 0            NOT NULL,
+                DETAIL             VARCHAR2(4000),
+                CONSTRAINT PK_SYS_FILE_SCAN_RUNS PRIMARY KEY (ID),
+                CONSTRAINT CK_FSR_TYPE   CHECK (RUN_TYPE IN ('ORPHAN', 'CHECKSUM')),
+                CONSTRAINT CK_FSR_STATUS CHECK (STATUS IN ('RUNNING', 'DONE', 'FAILED'))
+            )]';
+        DBMS_OUTPUT.PUT_LINE('  SYS_FILE_SCAN_RUNS                      created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  SYS_FILE_SCAN_RUNS                      already exists');
+    END IF;
+
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'SYS_FILE_SCAN_ITEMS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE SYS_FILE_SCAN_ITEMS (
+                ID          NUMBER(19)     NOT NULL,
+                RUN_ID      NUMBER(19)     NOT NULL,
+                ITEM_TYPE   VARCHAR2(30)   NOT NULL,
+                FILE_ID     NUMBER(19),
+                STORAGE_KEY VARCHAR2(500),
+                DB_SIZE     NUMBER(19),
+                BLOB_SIZE   NUMBER(19),
+                BLOB_MTIME  TIMESTAMP(6),
+                RESOLUTION  VARCHAR2(30),
+                RESOLVED_AT TIMESTAMP(6),
+                RESOLVED_BY VARCHAR2(50),
+                NOTE        VARCHAR2(500 CHAR),
+                CONSTRAINT PK_SYS_FILE_SCAN_ITEMS PRIMARY KEY (ID),
+                CONSTRAINT FK_FSI_RUN  FOREIGN KEY (RUN_ID) REFERENCES SYS_FILE_SCAN_RUNS (ID) ON DELETE CASCADE,
+                CONSTRAINT FK_FSI_FILE FOREIGN KEY (FILE_ID) REFERENCES SYS_ATTACHED_FILES (ID),
+                CONSTRAINT CK_FSI_TYPE CHECK (ITEM_TYPE IN ('MISSING_BLOB', 'ORPHAN_BLOB', 'SIZE_MISMATCH',
+                                                            'CHECKSUM_MISMATCH', 'REF_DELETED', 'REF_NOT_FOUND')),
+                CONSTRAINT CK_FSI_RESOLUTION CHECK (RESOLUTION IS NULL OR RESOLUTION IN
+                                                    ('MARKED_MISSING', 'QUARANTINED', 'BLOB_DELETED', 'IGNORED'))
+            )]';
+        DBMS_OUTPUT.PUT_LINE('  SYS_FILE_SCAN_ITEMS                     created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  SYS_FILE_SCAN_ITEMS                     already exists');
+    END IF;
+END;
+/
+
+COMMENT ON TABLE SYS_FILE_SCAN_RUNS IS 'Dot doi soat DB <-> kho file (ORPHAN) / tinh checksum (CHECKSUM). Chi bao cao, khong tu xoa';
+COMMENT ON TABLE SYS_FILE_SCAN_ITEMS IS 'Muc phat hien trong dot doi soat; RESOLUTION NULL = chua xu ly';
+
+DECLARE
+    PROCEDURE ENSURE_INDEX(P_NAME VARCHAR2, P_DDL VARCHAR2) IS
+        V_COUNT NUMBER;
+    BEGIN
+        SELECT COUNT(*) INTO V_COUNT FROM USER_INDEXES WHERE INDEX_NAME = P_NAME;
+        IF V_COUNT = 0 THEN
+            EXECUTE IMMEDIATE P_DDL;
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'created');
+        ELSE
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'already exists');
+        END IF;
+    END;
+BEGIN
+    ENSURE_INDEX('UQ_FILE_QUOTAS_SCOPE',
+        'CREATE UNIQUE INDEX UQ_FILE_QUOTAS_SCOPE ON SYS_FILE_QUOTAS (SCOPE_TYPE, NVL(SCOPE_ID, 0))');
+    -- Khoa "1 dot dang chay": moi dong RUNNING co cung khoa 'RUNNING'; dong khac co khoa NULL (khong vao index).
+    ENSURE_INDEX('UQ_FILE_SCAN_RUNS_RUNNING',
+        q'[CREATE UNIQUE INDEX UQ_FILE_SCAN_RUNS_RUNNING ON SYS_FILE_SCAN_RUNS
+               (CASE WHEN STATUS = 'RUNNING' THEN 'RUNNING' END)]');
+    ENSURE_INDEX('IX_FILE_SCAN_RUNS_STARTED',
+        'CREATE INDEX IX_FILE_SCAN_RUNS_STARTED ON SYS_FILE_SCAN_RUNS (STARTED_AT)');
+    ENSURE_INDEX('IX_FILE_SCAN_ITEMS_RUN',
+        'CREATE INDEX IX_FILE_SCAN_ITEMS_RUN ON SYS_FILE_SCAN_ITEMS (RUN_ID, ITEM_TYPE)');
+    ENSURE_INDEX('IX_FILE_SCAN_ITEMS_FILE',
+        'CREATE INDEX IX_FILE_SCAN_ITEMS_FILE ON SYS_FILE_SCAN_ITEMS (FILE_ID)');
+END;
+/
+
+PROMPT ============ V19_2.6 Seed cau hinh module ============
+
+-- 1 MB = 1048576 byte. Chi THEM module con thieu (WHEN NOT MATCHED) - khong ghi de cau hinh tren man Quan ly file.
+MERGE INTO SYS_FILE_MODULE_SETTINGS t
+USING (
+    SELECT 'STUDENT' MODULE_NAME, 20971520 MAX_FILE_SIZE_BYTES, 30 MAX_FILES_PER_REF,
+           CAST(NULL AS NUMBER) MAX_TOTAL_BYTES_PER_REF, CAST(NULL AS VARCHAR2(200)) ALLOWED_EXTENSIONS,
+           1 COUNT_TO_STUDENT_QUOTA, 1 IS_ACTIVE FROM DUAL UNION ALL
+    SELECT 'STUDENT_IMPORT', 5242880, NULL, NULL, 'xlsx', 0, 1 FROM DUAL UNION ALL
+    SELECT 'CLASS', 20971520, 30, 209715200, NULL, 0, 1 FROM DUAL UNION ALL
+    SELECT 'LEAD', 20971520, 30, 209715200, NULL, 0, 1 FROM DUAL UNION ALL
+    SELECT 'TUITION', 20971520, 30, 209715200, NULL, 0, 1 FROM DUAL UNION ALL
+    SELECT 'COMMON', 20971520, NULL, NULL, NULL, 0, 1 FROM DUAL UNION ALL
+    SELECT 'ASSIGNMENT', 20971520, 10, 104857600, NULL, 0, 0 FROM DUAL UNION ALL
+    SELECT 'SUBMISSION', 10485760, 5, 26214400, 'jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,txt', 1, 0 FROM DUAL UNION ALL
+    SELECT 'FEEDBACK', 10485760, 5, 26214400, 'jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,txt', 0, 0 FROM DUAL
+) s ON (t.MODULE_NAME = s.MODULE_NAME)
+WHEN NOT MATCHED THEN INSERT (MODULE_NAME, MAX_FILE_SIZE_BYTES, MAX_FILES_PER_REF, MAX_TOTAL_BYTES_PER_REF,
+                              ALLOWED_EXTENSIONS, TRASH_RETENTION_DAYS, COUNT_TO_STUDENT_QUOTA, IS_ACTIVE, CREATED_BY)
+                      VALUES (s.MODULE_NAME, s.MAX_FILE_SIZE_BYTES, s.MAX_FILES_PER_REF, s.MAX_TOTAL_BYTES_PER_REF,
+                              s.ALLOWED_EXTENSIONS, 30, s.COUNT_TO_STUDENT_QUOTA, s.IS_ACTIVE, 'V19_2_MIGRATION');
+
+PROMPT ============ V19_2.7 Seed quota ============
+
+MERGE INTO SYS_FILE_QUOTAS t
+USING (
+    SELECT 'GLOBAL' SCOPE_TYPE, 53687091200 MAX_BYTES, UNISTR('Quota to\00E0n h\1EC7 th\1ED1ng (Q\0110-F4)') NOTE FROM DUAL UNION ALL
+    SELECT 'STUDENT_DEFAULT', 524288000, UNISTR('Quota m\1EB7c \0111\1ECBnh m\1ED7i h\1ECDc sinh (Q\0110-F4)') FROM DUAL
+) s ON (t.SCOPE_TYPE = s.SCOPE_TYPE AND t.SCOPE_ID IS NULL)
+WHEN NOT MATCHED THEN INSERT (ID, SCOPE_TYPE, SCOPE_ID, MAX_BYTES, WARN_PERCENT, NOTE, CREATED_BY)
+                      VALUES (SEQ_SYS_FILE_QUOTAS.NEXTVAL, s.SCOPE_TYPE, NULL, s.MAX_BYTES, 80, s.NOTE,
+                              'V19_2_MIGRATION');
+
+PROMPT ============ V19_2.8 Kiem tra sau ============
+
+DECLARE
+    V_MISSING VARCHAR2(4000);
+    V_COUNT   NUMBER;
+BEGIN
+    FOR r IN (SELECT n.OBJECT_NAME, n.OBJECT_TYPE, NVL(o.STATUS, 'MISSING') STATUS
+                FROM (SELECT 'SYS_FILE_MODULE_SETTINGS' OBJECT_NAME, 'TABLE' OBJECT_TYPE FROM DUAL UNION ALL
+                      SELECT 'SYS_FILE_QUOTAS', 'TABLE' FROM DUAL UNION ALL
+                      SELECT 'SYS_FILE_SCAN_RUNS', 'TABLE' FROM DUAL UNION ALL
+                      SELECT 'SYS_FILE_SCAN_ITEMS', 'TABLE' FROM DUAL UNION ALL
+                      SELECT 'SEQ_SYS_FILE_QUOTAS', 'SEQUENCE' FROM DUAL UNION ALL
+                      SELECT 'SEQ_SYS_FILE_SCAN_RUNS', 'SEQUENCE' FROM DUAL UNION ALL
+                      SELECT 'SEQ_SYS_FILE_SCAN_ITEMS', 'SEQUENCE' FROM DUAL UNION ALL
+                      SELECT 'UQ_FILE_QUOTAS_SCOPE', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'UQ_FILE_SCAN_RUNS_RUNNING', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_FILE_SCAN_RUNS_STARTED', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_FILE_SCAN_ITEMS_RUN', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_FILE_SCAN_ITEMS_FILE', 'INDEX' FROM DUAL) n
+                LEFT JOIN USER_OBJECTS o ON o.OBJECT_NAME = n.OBJECT_NAME AND o.OBJECT_TYPE = n.OBJECT_TYPE) LOOP
+        DBMS_OUTPUT.PUT_LINE('  ' || RPAD(r.OBJECT_NAME, 40) || r.STATUS);
+        IF r.STATUS <> 'VALID' THEN
+            V_MISSING := V_MISSING || ' ' || r.OBJECT_NAME;
+        END IF;
+    END LOOP;
+
+    SELECT COUNT(*) INTO V_COUNT
+      FROM SYS_FILE_MODULE_SETTINGS
+     WHERE MODULE_NAME IN ('STUDENT', 'STUDENT_IMPORT', 'CLASS', 'LEAD', 'TUITION', 'COMMON',
+                           'ASSIGNMENT', 'SUBMISSION', 'FEEDBACK');
+    IF V_COUNT <> 9 THEN
+        V_MISSING := V_MISSING || ' MODULE_SETTINGS(' || V_COUNT || '/9)';
+    END IF;
+
+    SELECT COUNT(*) INTO V_COUNT
+      FROM SYS_FILE_QUOTAS
+     WHERE SCOPE_TYPE IN ('GLOBAL', 'STUDENT_DEFAULT') AND SCOPE_ID IS NULL;
+    IF V_COUNT <> 2 THEN
+        V_MISSING := V_MISSING || ' QUOTAS(' || V_COUNT || '/2)';
+    END IF;
+
+    IF V_MISSING IS NOT NULL THEN
+        RAISE_APPLICATION_ERROR(-20002, 'V19_2: thieu / khong hop le:' || V_MISSING);
+    END IF;
+    DBMS_OUTPUT.PUT_LINE('  V19_2                                   OK');
+END;
+/
+
+COMMIT;
+
+PROMPT ============ V19_2 DONE ============
+EXIT
