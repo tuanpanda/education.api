@@ -268,9 +268,9 @@ public class GlobalExceptionHandler {
     /**
      * Mã lỗi nghiệp vụ biểu diễn "không tìm thấy" ({@code NOT_FOUND}, {@code STUDENT_NOT_FOUND}, {@code FEE_NOT_FOUND}...).
      */
-    /** GĐ2: mã kết thúc {@code _CONFLICT} -> 409. */
+    /** GĐ2: chỉ GRADE_CONFLICT -> 409; các mã *_CONFLICT cũ (ROOM/TEACHER/CLASS_ASSIGNMENT) giữ 400 để không đổi hành vi FE. */
     static boolean isConflictCode(String errorCode) {
-        return errorCode != null && errorCode.endsWith("_CONFLICT");
+        return com.education.base.common.homework.HomeworkErrorCodes.GRADE_CONFLICT.equals(errorCode);
     }
 
     static boolean isNotFoundCode(String errorCode) {

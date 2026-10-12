@@ -76,4 +76,7 @@ public interface FileStorageService {
      * @return danh sách file đính kèm.
      */
     List<FileEntity> getFilesByRef(String moduleName, Long referenceId);
+
+    /** GĐ2: số file ACTIVE theo từng referenceId (1 truy vấn). Ref không có file thì không có trong map. */
+    java.util.Map<Long, Long> countActiveFilesByRefs(String moduleName, java.util.Collection<Long> referenceIds);
 }

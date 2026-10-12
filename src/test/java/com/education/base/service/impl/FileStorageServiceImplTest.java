@@ -316,6 +316,16 @@ class FileStorageServiceImplTest {
     }
 
     @Test
+    void countActiveFilesByRefs_batchesIntoOneQueryAndMapsCounts() {
+        when(fileRepository.countActiveByRefs("SUBMISSION", java.util.List.of(1L, 2L)))
+                .thenReturn(java.util.List.<Object[]>of(new Object[]{1L, 3L}));
+        assertThat(service.countActiveFilesByRefs(" submission ", java.util.List.of(1L, 2L)))
+                .containsExactly(java.util.Map.entry(1L, 3L));
+        assertThat(service.countActiveFilesByRefs("SUBMISSION", java.util.List.of())).isEmpty();
+        verify(fileRepository).countActiveByRefs("SUBMISSION", java.util.List.of(1L, 2L));
+    }
+
+    @Test
     void getFilesByRef_normalizesModuleAndDelegatesToProcedure() {
         when(fileRepository.getFilesByRef("CLASS", 3L)).thenReturn(List.of());
         assertThat(service.getFilesByRef(" class ", 3L)).isEmpty();

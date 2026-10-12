@@ -460,6 +460,8 @@ public class HomeworkServiceImpl implements HomeworkService {
         Map<Long, StudentEntity> students = studentIds.isEmpty() ? Map.of()
                 : studentRepository.findAllById(studentIds).stream()
                 .collect(Collectors.toMap(StudentEntity::getId, Function.identity(), (x, y) -> x));
+        Map<Long, Long> fileCounts = fileStorageService.countActiveFilesByRefs(FileConstants.Module.SUBMISSION,
+                subs.stream().map(SubmissionEntity::getId).toList());
         List<SubmissionRowDto> rows = new ArrayList<>();
         int[] counts = new int[6];
         for (Long sid : studentIds) {
@@ -479,8 +481,7 @@ public class HomeworkServiceImpl implements HomeworkService {
                     .late(s != null && HomeworkRules.flag(s.getIsLate()))
                     .score(s != null && SubmissionStatus.GRADED.equals(s.getStatus()) ? s.getScore() : null)
                     .gradedAt(s == null ? null : s.getGradedAt())
-                    .fileCount(s == null ? 0 : fileStorageService.getFilesByRef(FileConstants.Module.SUBMISSION,
-                            s.getId()).size())
+                    .fileCount(s == null ? 0 : fileCounts.getOrDefault(s.getId(), 0L).intValue())
                     .build());
         }
         Collator collator = Collator.getInstance(Locale.forLanguageTag("vi-VN"));

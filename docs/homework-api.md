@@ -181,3 +181,11 @@ Ghi theo mẫu, thêm dòng mới ở cuối, không xoá dòng cũ:
 | 2 | 12/10/2026 | Bot 1 (BE) | Làm rõ §1 Tab: bài nộp `RETURNED` nhưng bài đã `CLOSED` (không nộp lại được) xếp vào tab `overdue` để mỗi bài thuộc đúng 1 tab. | Không đổi DTO | chờ duyệt |
 | 3 | 12/10/2026 | Bot 1 (BE) | Theo §0, mọi mã kết thúc `_CONFLICT` trả 409. Mã cũ `ROOM_TIME_CONFLICT`, `TEACHER_TIME_CONFLICT` (TKB), `CLASS_ASSIGNMENT_CONFLICT` (học sinh) đổi từ 400 sang 409. | FE nào kiểm tra đúng status 400 cho các mã này cần xem lại (FE đọc `code` thì không ảnh hưởng) | chờ duyệt |
 | 4 | 12/10/2026 | Bot 1 (BE) | Ngoài danh sách §8: thêm truy vấn vào `GradeRepository` (theo `ASSIGNMENT_ID`) và helper mới `service/file/HomeworkFileRefs` dùng chung cho 3 descriptor. Nhập điểm tay loại ASSIGNMENT giờ chỉ cập nhật dòng `ASSIGNMENT_ID IS NULL`; nếu chỉ có dòng đồng bộ -> 400 `GRADE_SYNCED_READONLY`. | Không đổi endpoint | chờ duyệt |
+
+## Quyết định ghép (tích hợp GĐ2, 12/10/2026)
+
+- §9 #1 `GradeResponseDto.assignmentId`: **chấp nhận** (FE `GradeRecord.assignmentId`).
+- §9 #2 bài RETURNED mà assignment đã CLOSED -> tab `overdue`: **chấp nhận** (todo/overdue tách rời, huy hiệu = todoCount + overdueCount).
+- §9 #3 409 cho mọi `*_CONFLICT`: **không chấp nhận**. Chỉ `GRADE_CONFLICT` (và optimistic lock) trả 409; ROOM_TIME_CONFLICT, TEACHER_TIME_CONFLICT, CLASS_ASSIGNMENT_CONFLICT giữ 400 như cũ để không đổi hành vi API đang chạy.
+- §9 #4 file ngoài §8 (`GradeRepository` thêm query, `HomeworkFileRefs`): **chấp nhận** (chỉ đọc).
+- Hiệu năng: ma trận chấm đếm file bằng 1 truy vấn gộp `FileRepository.countActiveByRefs` (chia lô 900 id) thay vì gọi PRC_GET_FILES_BY_REF từng dòng.
