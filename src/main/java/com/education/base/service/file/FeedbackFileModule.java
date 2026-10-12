@@ -3,19 +3,24 @@ package com.education.base.service.file;
 import com.education.base.common.file.FileConstants;
 import com.education.base.common.file.FileReferenceInfo;
 import com.education.base.entity.FileEntity;
+import com.education.base.entity.SubmissionEntity;
 import com.education.base.security.AuthUserPrincipal;
+import com.education.base.security.Permissions;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 /**
- * Module file {@code FEEDBACK}: file nhận xét của giáo viên (REFERENCE_ID = LMS_SUBMISSIONS.ID).
- * <p>
- * <b>STUB hợp đồng Luồng 0 GĐ2</b> - CHƯA là bean ({@code @Component}) nên registry vẫn fail-closed với FEEDBACK.
- * Bot 1 (feat/homework-api) viết luật thật rồi thêm {@code @Component} + test (cập nhật
- * {@code FileModuleRegistryTest.unknownModules_areRejected} / {@code FileAccessPolicyTest} /
- * {@code FileStorageServiceImplTest} đang giả định FEEDBACK chưa đăng ký).
- * <p>
- * Luật dự kiến (docs/homework-api.md mục "Luật file"): Đọc: MENU_HOMEWORK:VIEW + phạm vi lớp. Upload/xoá: MENU_HOMEWORK:GRADE + phạm vi lớp, chỉ qua API chấm bài (allowGenericUpload=false).
+ * GĐ2 - file nhận xét của giáo viên ({@code LMS_SUBMISSIONS.ID}). Đọc = HOMEWORK_VIEW + phạm vi; upload / xoá chỉ qua
+ * API chấm bài ({@code /api/v1/lms/assignments/submissions/{sid}/feedback-files}, quyền GRADE).
  */
+@Component
+@RequiredArgsConstructor
 public class FeedbackFileModule extends AbstractFileModule {
+
+    private final HomeworkFileRefs refs;
+    private final TeacherFileScope teacherFileScope;
 
     @Override
     public String code() {
@@ -24,7 +29,8 @@ public class FeedbackFileModule extends AbstractFileModule {
 
     @Override
     public boolean canRead(AuthUserPrincipal user, FileEntity file) {
-        return false;
+        return any(user, List.of(Permissions.HOMEWORK_VIEW))
+                && teacherFileScope.classAllowed(refs.classOfSubmission(ref(file)));
     }
 
     @Override
@@ -44,11 +50,24 @@ public class FeedbackFileModule extends AbstractFileModule {
 
     @Override
     public void assertReferenceUsable(Long referenceId) {
-        throw referenceNotFound(code(), referenceId);
+        SubmissionEntity s = refs.submission(referenceId).orElseThrow(() -> referenceNotFound(code(), referenceId));
+        if (HomeworkFileRefs.deleted(s.getIsDeleted())) {
+            throw referenceInactive(code(), referenceId);
+        }
     }
 
     @Override
     public FileReferenceInfo describeReference(Long referenceId) {
-        return referenceId == null ? FileReferenceInfo.none(code()) : FileReferenceInfo.notFound(code(), referenceId);
+        if (referenceId == null) {
+            return FileReferenceInfo.none(code());
+        }
+        return refs.submission(referenceId)
+                .map(s -> new FileReferenceInfo(code(), referenceId,
+                        "Nhận xét bài nộp: " + refs.assignment(s.getAssignmentId()).map(a -> a.getTitle()).orElse("?")
+                                + " (HS " + s.getStudentId() + ")",
+                        "/academic/homework?id=" + s.getAssignmentId() + "&submission=" + referenceId,
+                        HomeworkFileRefs.deleted(s.getIsDeleted())
+                                ? FileConstants.RefState.DELETED : FileConstants.RefState.ACTIVE))
+                .orElseGet(() -> FileReferenceInfo.notFound(code(), referenceId));
     }
 }

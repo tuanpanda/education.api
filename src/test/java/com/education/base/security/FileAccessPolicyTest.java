@@ -129,13 +129,13 @@ class FileAccessPolicyTest {
     void admin_readsEverything_includingDeletedReference() {
         login("admin", List.of("ROLE_ADMIN"));
         assertOk(() -> policy.checkRead(file("STUDENT", STUDENT_DELETED), FileAccessPolicy.Action.DOWNLOAD));
-        assertOk(() -> policy.checkRead(file("SUBMISSION", 1L), FileAccessPolicy.Action.VIEW));
+        assertOk(() -> policy.checkRead(file("PAYROLL", 1L), FileAccessPolicy.Action.VIEW));
     }
 
     @Test
     void unregisteredModule_isDeniedEvenWithFileExplorerPermissions_andAudited() {
         login("gv", List.of("ROLE_TEACHER"), Permissions.FILE_VIEW, Permissions.FILE_DOWNLOAD, Permissions.FILE_UPLOAD);
-        assertForbidden(() -> policy.checkRead(file("SUBMISSION", 1L), FileAccessPolicy.Action.VIEW));
+        assertForbidden(() -> policy.checkRead(file("PAYROLL", 1L), FileAccessPolicy.Action.VIEW));
         verify(auditService).denied(eq(AuditActions.FILE_ACCESS_DENIED), eq(AuditActions.RESOURCE_FILE), eq(100L),
                 anyMap());
     }
@@ -143,7 +143,7 @@ class FileAccessPolicyTest {
     @Test
     void fileManagerDownload_bypassesModuleRules() {
         login("qlfile", List.of("ROLE_X"), Permissions.FILE_MANAGER_DOWNLOAD);
-        assertOk(() -> policy.checkRead(file("SUBMISSION", 1L), FileAccessPolicy.Action.DOWNLOAD));
+        assertOk(() -> policy.checkRead(file("PAYROLL", 1L), FileAccessPolicy.Action.DOWNLOAD));
         assertOk(() -> policy.checkRead(file("STUDENT", STUDENT_DELETED), FileAccessPolicy.Action.VIEW));
     }
 
@@ -281,7 +281,7 @@ class FileAccessPolicyTest {
         login("gv", List.of("ROLE_GIAOVU"), Permissions.STUDENT_UPDATE);
         assertOk(() -> policy.checkDelete(file("STUDENT", STUDENT_IN_TAUGHT)));
         login("qlfile", List.of("ROLE_X"), Permissions.FILE_MANAGER_DELETE);
-        assertOk(() -> policy.checkDelete(file("SUBMISSION", 1L)));
+        assertOk(() -> policy.checkDelete(file("PAYROLL", 1L)));
     }
 
     @Test

@@ -3,19 +3,25 @@ package com.education.base.service.file;
 import com.education.base.common.file.FileConstants;
 import com.education.base.common.file.FileReferenceInfo;
 import com.education.base.entity.FileEntity;
+import com.education.base.entity.SubmissionEntity;
 import com.education.base.security.AuthUserPrincipal;
+import com.education.base.security.Permissions;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Optional;
 
 /**
- * Module file {@code SUBMISSION}: bài làm của học sinh (REFERENCE_ID = LMS_SUBMISSIONS.ID).
- * <p>
- * <b>STUB hợp đồng Luồng 0 GĐ2</b> - CHƯA là bean ({@code @Component}) nên registry vẫn fail-closed với SUBMISSION.
- * Bot 1 (feat/homework-api) viết luật thật rồi thêm {@code @Component} + test (cập nhật
- * {@code FileModuleRegistryTest.unknownModules_areRejected} / {@code FileAccessPolicyTest} /
- * {@code FileStorageServiceImplTest} đang giả định SUBMISSION chưa đăng ký).
- * <p>
- * Luật dự kiến (docs/homework-api.md mục "Luật file"): Đọc: MENU_HOMEWORK:VIEW + phạm vi lớp của bài. Upload: chỉ qua API cổng (allowGenericUpload=false). Xoá qua /api/v1/files: KHÔNG (false) - học sinh xoá qua API cổng. ownerStudentId = LMS_SUBMISSIONS.STUDENT_ID (tính quota).
+ * GĐ2 - file bài làm của học sinh ({@code LMS_SUBMISSIONS.ID}). Nhân viên chỉ đọc (HOMEWORK_VIEW + phạm vi lớp của bài);
+ * không upload / xoá qua API file chung. Học sinh dùng {@code /api/v1/portal/me/**}. Tính quota theo {@code STUDENT_ID}.
  */
+@Component
+@RequiredArgsConstructor
 public class SubmissionFileModule extends AbstractFileModule {
+
+    private final HomeworkFileRefs refs;
+    private final TeacherFileScope teacherFileScope;
 
     @Override
     public String code() {
@@ -24,7 +30,8 @@ public class SubmissionFileModule extends AbstractFileModule {
 
     @Override
     public boolean canRead(AuthUserPrincipal user, FileEntity file) {
-        return false;
+        return any(user, List.of(Permissions.HOMEWORK_VIEW))
+                && teacherFileScope.classAllowed(refs.classOfSubmission(ref(file)));
     }
 
     @Override
@@ -44,11 +51,29 @@ public class SubmissionFileModule extends AbstractFileModule {
 
     @Override
     public void assertReferenceUsable(Long referenceId) {
-        throw referenceNotFound(code(), referenceId);
+        SubmissionEntity s = refs.submission(referenceId).orElseThrow(() -> referenceNotFound(code(), referenceId));
+        if (HomeworkFileRefs.deleted(s.getIsDeleted())) {
+            throw referenceInactive(code(), referenceId);
+        }
     }
 
     @Override
     public FileReferenceInfo describeReference(Long referenceId) {
-        return referenceId == null ? FileReferenceInfo.none(code()) : FileReferenceInfo.notFound(code(), referenceId);
+        if (referenceId == null) {
+            return FileReferenceInfo.none(code());
+        }
+        return refs.submission(referenceId)
+                .map(s -> new FileReferenceInfo(code(), referenceId,
+                        "Bài nộp: " + refs.assignment(s.getAssignmentId()).map(a -> a.getTitle()).orElse("?")
+                                + " (HS " + s.getStudentId() + ")",
+                        "/academic/homework?id=" + s.getAssignmentId() + "&submission=" + referenceId,
+                        HomeworkFileRefs.deleted(s.getIsDeleted())
+                                ? FileConstants.RefState.DELETED : FileConstants.RefState.ACTIVE))
+                .orElseGet(() -> FileReferenceInfo.notFound(code(), referenceId));
+    }
+
+    @Override
+    public Optional<Long> ownerStudentId(Long referenceId) {
+        return refs.submission(referenceId).map(SubmissionEntity::getStudentId);
     }
 }

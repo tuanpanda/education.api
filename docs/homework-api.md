@@ -177,3 +177,7 @@ Ghi theo mẫu, thêm dòng mới ở cuối, không xoá dòng cũ:
 | # | Ngày | Bên yêu cầu | Nội dung | Ảnh hưởng | Trạng thái |
 |---|---|---|---|---|---|
 | 0 | 12/10/2026 | Luồng 0 | Bản hợp đồng đầu tiên | – | chốt |
+| 1 | 12/10/2026 | Bot 1 (BE) | `GradeResponseDto` thêm trường `assignmentId` (Long, null = điểm nhập tay; khác null = điểm đồng bộ từ bài tập, chỉ đọc). Chỉ thêm, không đổi/bỏ. | FE màn Điểm có thể khoá ô khi `assignmentId != null`; không bắt buộc | chờ duyệt |
+| 2 | 12/10/2026 | Bot 1 (BE) | Làm rõ §1 Tab: bài nộp `RETURNED` nhưng bài đã `CLOSED` (không nộp lại được) xếp vào tab `overdue` để mỗi bài thuộc đúng 1 tab. | Không đổi DTO | chờ duyệt |
+| 3 | 12/10/2026 | Bot 1 (BE) | Theo §0, mọi mã kết thúc `_CONFLICT` trả 409. Mã cũ `ROOM_TIME_CONFLICT`, `TEACHER_TIME_CONFLICT` (TKB), `CLASS_ASSIGNMENT_CONFLICT` (học sinh) đổi từ 400 sang 409. | FE nào kiểm tra đúng status 400 cho các mã này cần xem lại (FE đọc `code` thì không ảnh hưởng) | chờ duyệt |
+| 4 | 12/10/2026 | Bot 1 (BE) | Ngoài danh sách §8: thêm truy vấn vào `GradeRepository` (theo `ASSIGNMENT_ID`) và helper mới `service/file/HomeworkFileRefs` dùng chung cho 3 descriptor. Nhập điểm tay loại ASSIGNMENT giờ chỉ cập nhật dòng `ASSIGNMENT_ID IS NULL`; nếu chỉ có dòng đồng bộ -> 400 `GRADE_SYNCED_READONLY`. | Không đổi endpoint | chờ duyệt |

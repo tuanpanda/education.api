@@ -163,7 +163,7 @@ class FileStorageServiceImplTest {
 
     @Test
     void storeFile_unregisteredModule_isRejectedFailClosed() {
-        assertCode(() -> service.storeFile(pdf(), "SUBMISSION", 1L), "INVALID_MODULE");
+        assertCode(() -> service.storeFile(pdf(), "PAYROLL", 1L), "INVALID_MODULE");
         verify(fileRepository, never()).save(any());
     }
 
