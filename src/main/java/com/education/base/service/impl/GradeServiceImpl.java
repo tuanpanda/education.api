@@ -52,8 +52,7 @@ public class GradeServiceImpl implements GradeService {
             StudentEntity student = requireStudent(item.getStudentId());
             requireEnrolled(item.getClassId(), item.getStudentId());
 
-            GradeEntity entity = gradeRepository
-                    .findByClassIdAndStudentIdAndGradeType(item.getClassId(), item.getStudentId(), item.getGradeType())
+            GradeEntity entity = findManualGrade(item.getClassId(), item.getStudentId(), item.getGradeType())
                     .orElseGet(() -> GradeEntity.builder()
                             .classId(item.getClassId())
                             .studentId(item.getStudentId())
@@ -140,6 +139,32 @@ public class GradeServiceImpl implements GradeService {
                 .presentSessions(present)
                 .totalSessions(sessions.size())
                 .build();
+    }
+
+    /**
+     * GĐ2: dòng điểm nhập tay theo (lớp, học sinh, loại). Dòng có {@code ASSIGNMENT_ID} (đồng bộ từ bài tập) chỉ đọc:
+     * nếu chỉ có dòng đồng bộ cho loại này -> 400 {@code GRADE_SYNCED_READONLY}.
+     */
+    private java.util.Optional<GradeEntity> findManualGrade(Long classId, Long studentId, String gradeType) {
+        if (!com.education.base.common.homework.HomeworkConstants.GRADEBOOK_GRADE_TYPE.equals(gradeType)) {
+            java.util.Optional<GradeEntity> row = gradeRepository.findByClassIdAndStudentIdAndGradeType(classId, studentId, gradeType);
+            row.filter(g -> g.getAssignmentId() != null).ifPresent(g -> {
+                throw syncedReadonly();
+            });
+            return row;
+        }
+        List<GradeEntity> rows = gradeRepository.findByClassIdAndStudentIdAndGradeTypeOrderByIdAsc(classId, studentId, gradeType);
+        java.util.Optional<GradeEntity> manual = rows.stream().filter(g -> g.getAssignmentId() == null).findFirst();
+        if (manual.isEmpty() && rows.stream().anyMatch(g -> g.getAssignmentId() != null
+                && (g.getIsDeleted() == null || g.getIsDeleted() == PersistenceFlags.NOT_DELETED))) {
+            throw syncedReadonly();
+        }
+        return manual;
+    }
+
+    private static OracleBusinessException syncedReadonly() {
+        return new OracleBusinessException(com.education.base.common.homework.HomeworkErrorCodes.GRADE_SYNCED_READONLY,
+                "Điểm này lấy từ bài tập, hãy sửa ở màn Bài tập.");
     }
 
     private ClassEntity requireClass(Long classId) {

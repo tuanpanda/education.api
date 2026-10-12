@@ -40,7 +40,7 @@ class FileModuleRegistryTest {
 
     @Test
     void unknownModules_areRejected() {
-        for (String m : List.of("SUBMISSION", "ASSIGNMENT", "FEEDBACK", "LIBRARY", "PAYROLL")) {
+        for (String m : List.of("LIBRARY", "PAYROLL", "HOMEWORK")) {
             assertThat(registry.find(m)).isEmpty();
             assertThatThrownBy(() -> registry.require(m)).isInstanceOf(OracleBusinessException.class)
                     .extracting(e -> ((OracleBusinessException) e).getErrorCode()).isEqualTo("INVALID_MODULE");

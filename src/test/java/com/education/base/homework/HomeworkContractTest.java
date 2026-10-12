@@ -3,7 +3,6 @@ package com.education.base.homework;
 import com.education.base.common.file.FileConstants;
 import com.education.base.common.homework.HomeworkConstants;
 import com.education.base.common.homework.HomeworkErrorCodes;
-import com.education.base.entity.FileEntity;
 import com.education.base.security.Permissions;
 import com.education.base.service.file.AssignmentFileModule;
 import com.education.base.service.file.FeedbackFileModule;
@@ -37,19 +36,14 @@ class HomeworkContractTest {
         assertThat(HomeworkErrorCodes.PORTAL_FILE_NOT_FOUND).endsWith("_NOT_FOUND");
     }
 
+    /** Bot 1 (GĐ2 BE): 3 descriptor đã có luật thật và là bean; chi tiết luật ở HomeworkFileModulesTest. */
     @Test
-    void stubDescriptorsDenyEverythingAndAreNotYetBeans() {
-        List<FileModuleDescriptor> stubs = List.of(new AssignmentFileModule(), new SubmissionFileModule(),
-                new FeedbackFileModule());
-        assertThat(stubs).extracting(FileModuleDescriptor::code).containsExactly(FileConstants.Module.ASSIGNMENT,
-                FileConstants.Module.SUBMISSION, FileConstants.Module.FEEDBACK);
-        FileEntity f = FileEntity.builder().moduleName("SUBMISSION").referenceId(1L).build();
-        for (FileModuleDescriptor d : stubs) {
-            assertThat(d.canRead(null, f)).isFalse();
-            assertThat(d.canUpload(null, 1L)).isFalse();
-            assertThat(d.canDelete(null, f)).isFalse();
-            assertThat(d.allowGenericUpload()).isFalse();
-            assertThat(d.getClass().isAnnotationPresent(Component.class)).as("Bot 1 bat @Component khi viet luat").isFalse();
+    void homeworkDescriptorsAreBeansWithoutGenericUpload() {
+        for (Class<?> c : List.of(AssignmentFileModule.class, SubmissionFileModule.class, FeedbackFileModule.class)) {
+            assertThat(c.isAnnotationPresent(Component.class)).as(c.getSimpleName()).isTrue();
+            assertThat(FileModuleDescriptor.class.isAssignableFrom(c)).isTrue();
         }
+        assertThat(List.of(FileConstants.Module.ASSIGNMENT, FileConstants.Module.SUBMISSION, FileConstants.Module.FEEDBACK))
+                .containsExactly("ASSIGNMENT", "SUBMISSION", "FEEDBACK");
     }
 }

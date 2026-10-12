@@ -1,21 +1,29 @@
 package com.education.base.service.file;
 
+import com.education.base.common.PersistenceFlags;
 import com.education.base.common.file.FileConstants;
 import com.education.base.common.file.FileReferenceInfo;
+import com.education.base.entity.AssignmentEntity;
 import com.education.base.entity.FileEntity;
+import com.education.base.repository.ClassRepository;
 import com.education.base.security.AuthUserPrincipal;
+import com.education.base.security.Permissions;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 /**
- * Module file {@code ASSIGNMENT}: đề bài (REFERENCE_ID = LMS_ASSIGNMENTS.ID).
- * <p>
- * <b>STUB hợp đồng Luồng 0 GĐ2</b> - CHƯA là bean ({@code @Component}) nên registry vẫn fail-closed với ASSIGNMENT.
- * Bot 1 (feat/homework-api) viết luật thật rồi thêm {@code @Component} + test (cập nhật
- * {@code FileModuleRegistryTest.unknownModules_areRejected} / {@code FileAccessPolicyTest} /
- * {@code FileStorageServiceImplTest} đang giả định ASSIGNMENT chưa đăng ký).
- * <p>
- * Luật dự kiến (docs/homework-api.md mục "Luật file"): Đọc: nhân viên có MENU_HOMEWORK:VIEW + phạm vi lớp (TeacherFileScope). Upload/xoá: MENU_HOMEWORK:CREATE|UPDATE + phạm vi lớp. Học sinh đọc qua /api/v1/portal/me/files (không qua descriptor).
+ * GĐ2 - file đề bài ({@code LMS_ASSIGNMENTS.ID}). Đọc = HOMEWORK_VIEW + phạm vi lớp; upload/xoá = HOMEWORK_UPDATE|CREATE
+ * + phạm vi. Không upload qua API file chung (chỉ {@code /api/v1/lms/assignments/{id}/attachments}).
  */
+@Component
+@RequiredArgsConstructor
 public class AssignmentFileModule extends AbstractFileModule {
+
+    private final HomeworkFileRefs refs;
+    private final ClassRepository classRepository;
+    private final TeacherFileScope teacherFileScope;
 
     @Override
     public String code() {
@@ -24,17 +32,20 @@ public class AssignmentFileModule extends AbstractFileModule {
 
     @Override
     public boolean canRead(AuthUserPrincipal user, FileEntity file) {
-        return false;
+        return any(user, List.of(Permissions.HOMEWORK_VIEW))
+                && teacherFileScope.classAllowed(refs.classOfAssignment(ref(file)));
     }
 
     @Override
     public boolean canUpload(AuthUserPrincipal user, Long referenceId) {
-        return false;
+        return any(user, List.of(Permissions.HOMEWORK_UPDATE, Permissions.HOMEWORK_CREATE))
+                && teacherFileScope.classAllowed(refs.classOfAssignment(referenceId));
     }
 
     @Override
     public boolean canDelete(AuthUserPrincipal user, FileEntity file) {
-        return false;
+        return any(user, List.of(Permissions.HOMEWORK_UPDATE, Permissions.HOMEWORK_CREATE))
+                && teacherFileScope.classAllowed(refs.classOfAssignment(ref(file)));
     }
 
     @Override
@@ -44,11 +55,31 @@ public class AssignmentFileModule extends AbstractFileModule {
 
     @Override
     public void assertReferenceUsable(Long referenceId) {
-        throw referenceNotFound(code(), referenceId);
+        AssignmentEntity a = refs.assignment(referenceId).orElseThrow(() -> referenceNotFound(code(), referenceId));
+        if (HomeworkFileRefs.deleted(a.getIsDeleted())) {
+            throw referenceInactive(code(), referenceId);
+        }
     }
 
     @Override
     public FileReferenceInfo describeReference(Long referenceId) {
-        return referenceId == null ? FileReferenceInfo.none(code()) : FileReferenceInfo.notFound(code(), referenceId);
+        if (referenceId == null) {
+            return FileReferenceInfo.none(code());
+        }
+        return refs.assignment(referenceId)
+                .map(a -> new FileReferenceInfo(code(), referenceId,
+                        "Bài tập: " + a.getTitle() + " (" + classCode(a.getClassId()) + ")",
+                        "/academic/homework?id=" + referenceId,
+                        HomeworkFileRefs.deleted(a.getIsDeleted())
+                                ? FileConstants.RefState.DELETED : FileConstants.RefState.ACTIVE))
+                .orElseGet(() -> FileReferenceInfo.notFound(code(), referenceId));
+    }
+
+    private String classCode(Long classId) {
+        if (classId == null) {
+            return "?";
+        }
+        return classRepository.findByIdAndIsDeleted(classId, PersistenceFlags.NOT_DELETED)
+                .map(c -> c.getClassCode()).orElse("lớp " + classId);
     }
 }

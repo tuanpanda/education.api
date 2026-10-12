@@ -4,6 +4,8 @@ import com.education.base.entity.AssignmentEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -13,4 +15,7 @@ import java.util.Optional;
 public interface AssignmentRepository extends JpaRepository<AssignmentEntity, Long>, JpaSpecificationExecutor<AssignmentEntity> {
 
     Optional<AssignmentEntity> findByIdAndIsDeleted(Long id, Integer isDeleted);
+
+    List<AssignmentEntity> findByClassIdInAndIsDeletedAndStatusIn(Collection<Long> classIds, Integer isDeleted,
+                                                                Collection<String> statuses);
 }
