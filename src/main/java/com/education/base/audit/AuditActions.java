@@ -86,6 +86,22 @@ public class AuditActions {
     /** Detail: đích cũ -> mới (targetType:targetId, visibleToStudents). */
     public static final String DOC_SHARES_CHANGED = "DOC_SHARES_CHANGED";
 
+    // ---- GĐ2 Bài tập về nhà (hợp đồng Luồng 0; chỉ Bot 1 thêm dòng mới vào khối này) ----------------
+    public static final String HOMEWORK_ASSIGNMENT_CREATED = "HOMEWORK_ASSIGNMENT_CREATED";
+    public static final String HOMEWORK_ASSIGNMENT_UPDATED = "HOMEWORK_ASSIGNMENT_UPDATED";
+    public static final String HOMEWORK_ASSIGNMENT_PUBLISHED = "HOMEWORK_ASSIGNMENT_PUBLISHED";
+    public static final String HOMEWORK_ASSIGNMENT_CLOSED = "HOMEWORK_ASSIGNMENT_CLOSED";
+    public static final String HOMEWORK_ASSIGNMENT_REOPENED = "HOMEWORK_ASSIGNMENT_REOPENED";
+    public static final String HOMEWORK_ASSIGNMENT_DELETED = "HOMEWORK_ASSIGNMENT_DELETED";
+    /** Học sinh bấm Nộp. Detail: assignmentId, attemptNo, late, fileCount. */
+    public static final String HOMEWORK_SUBMITTED = "HOMEWORK_SUBMITTED";
+    /** Detail: assignmentId, studentId, oldScore, newScore, version. */
+    public static final String HOMEWORK_GRADED = "HOMEWORK_GRADED";
+    public static final String HOMEWORK_RETURNED = "HOMEWORK_RETURNED";
+    public static final String HOMEWORK_EXPORTED = "HOMEWORK_EXPORTED";
+    /** Đồng bộ sổ điểm lỗi (không chặn chấm). */
+    public static final String HOMEWORK_GRADEBOOK_SYNC_FAILED = "HOMEWORK_GRADEBOOK_SYNC_FAILED";
+
     // ---- Loại đối tượng (RESOURCE_TYPE) ----------------------------------------------------------
     public static final String RESOURCE_USER = "USER";
     public static final String RESOURCE_ROLE = "ROLE";
@@ -98,4 +114,7 @@ public class AuditActions {
     public static final String RESOURCE_DOC_ITEM = "DOC_ITEM";
     // Đợt đối soát - Chỉ Luồng B sửa dòng này.
     public static final String RESOURCE_FILE_SCAN_RUN = "FILE_SCAN_RUN";
+    // GĐ2 Bài tập về nhà.
+    public static final String RESOURCE_ASSIGNMENT = "ASSIGNMENT";
+    public static final String RESOURCE_SUBMISSION = "SUBMISSION";
 }
