@@ -1,5 +1,6 @@
 package com.education.base.service.homework.impl;
 
+import com.education.base.service.lesson.impl.LessonFileAccess;
 import com.education.base.audit.AuditActions;
 import com.education.base.entity.FileEntity;
 import com.education.base.exception.OracleBusinessException;
@@ -37,8 +38,9 @@ class PortalFileServiceImplTest {
     PortalStudentContext ctx = mock(PortalStudentContext.class);
     StudentScopeGuard scopeGuard = mock(StudentScopeGuard.class);
     AuditService auditService = mock(AuditService.class);
+    LessonFileAccess lessonFileAccess = mock(LessonFileAccess.class);
     PortalFileServiceImpl service = new PortalFileServiceImpl(fileStorageService, assignmentRepository,
-            submissionRepository, ctx, scopeGuard, auditService);
+            submissionRepository, ctx, scopeGuard, auditService, lessonFileAccess);
 
     @BeforeEach
     void setUp() {
@@ -102,5 +104,22 @@ class PortalFileServiceImplTest {
                 .isEqualTo("FILE_INFECTED");
         assertThatThrownBy(() -> service.serve(31L, false)).extracting(e -> ((OracleBusinessException) e).getErrorCode())
                 .isEqualTo("FILE_SCAN_PENDING");
+    }
+
+    @Test
+    void lessonFile_sharedBetweenTwoLessons_allowedOnlyWhenStudentSeesALesson() {
+        FileEntity shared = file(40, "LESSON", 10);
+        FileEntity hidden = file(41, "LESSON", 11);
+        shared.setOriginalName("slide.pptx");
+        shared.setContentType("application/vnd.openxmlformats-officedocument.presentationml.presentation");
+        given(shared);
+        given(hidden);
+        when(lessonFileAccess.studentCanRead(42L, 40L)).thenReturn(true);
+        when(lessonFileAccess.studentCanRead(42L, 41L)).thenReturn(false);
+        var r = service.serve(40L, false);
+        // pptx không inline
+        assertThat(r.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION)).startsWith("attachment");
+        verify(auditService).success(eq(AuditActions.FILE_DOWNLOADED), eq(AuditActions.RESOURCE_FILE), eq(40L), anyMap());
+        assertNotFound(() -> service.serve(41L, false));
     }
 }

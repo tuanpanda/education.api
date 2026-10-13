@@ -17,6 +17,7 @@ import com.education.base.service.AuditService;
 import com.education.base.service.FileStorageService;
 import com.education.base.service.homework.PortalFileService;
 import com.education.base.service.impl.StudentScopeGuard;
+import com.education.base.service.lesson.impl.LessonFileAccess;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -50,6 +51,7 @@ public class PortalFileServiceImpl implements PortalFileService {
     private final PortalStudentContext portalStudentContext;
     private final StudentScopeGuard studentScopeGuard;
     private final AuditService auditService;
+    private final LessonFileAccess lessonFileAccess;
 
     @Override
     @Transactional(readOnly = true)
@@ -108,6 +110,10 @@ public class PortalFileServiceImpl implements PortalFileService {
         }
         if (FileConstants.Module.ASSIGNMENT.equals(module)) {
             return visible(ref);
+        }
+        if (FileConstants.Module.LESSON.equals(module)) {
+            // GĐ3: có tài nguyên FILE chưa xoá dùng fileId này, thuộc bài học sinh đang thấy (kể cả bài chép dùng chung).
+            return lessonFileAccess.studentCanRead(studentId, file.getId());
         }
         return false;
     }

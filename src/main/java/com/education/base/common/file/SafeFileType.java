@@ -26,6 +26,8 @@ public enum SafeFileType {
     DOCX("application/vnd.openxmlformats-officedocument.wordprocessingml.document", false, "docx"),
     XLS("application/vnd.ms-excel", false, "xls"),
     XLSX("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", false, "xlsx"),
+    /** PowerPoint OOXML (GĐ3 học liệu) - magic ZIP như docx, không inline. Không nhận .ppt cũ. */
+    PPTX("application/vnd.openxmlformats-officedocument.presentationml.presentation", false, "pptx"),
     CSV("text/csv", false, "csv"),
     TXT("text/plain", false, "txt"),
     ZIP("application/zip", false, "zip");
@@ -161,7 +163,7 @@ public enum SafeFileType {
             case WEBP -> startsWith(head, SIG_RIFF, 0) && startsWith(head, SIG_WEBP, 8);
             case PDF -> startsWith(head, SIG_PDF, 0);
             case DOC, XLS -> startsWith(head, SIG_OLE, 0);
-            case DOCX, XLSX -> startsWith(head, SIG_ZIP, 0);
+            case DOCX, XLSX, PPTX -> startsWith(head, SIG_ZIP, 0);
             case ZIP -> startsWith(head, SIG_ZIP, 0) || startsWith(head, SIG_ZIP_EMPTY, 0);
             case CSV, TXT -> isPlainText(head);
         };
@@ -203,7 +205,7 @@ public enum SafeFileType {
     private static OracleBusinessException notAllowed() {
         return new OracleBusinessException("FILE_TYPE_NOT_ALLOWED",
                 "Định dạng file không được hỗ trợ. Chỉ chấp nhận ảnh (jpg, png, gif, webp), pdf, "
-                        + "doc/docx, xls/xlsx, csv, txt, zip.");
+                        + "doc/docx, xls/xlsx, pptx, csv, txt, zip.");
     }
 
     /** Mọi đuôi của allow-list (chữ thường, không dấu chấm), theo thứ tự khai báo. */
