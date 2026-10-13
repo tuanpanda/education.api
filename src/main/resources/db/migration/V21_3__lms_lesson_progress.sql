@@ -1,0 +1,140 @@
+-- =============================================================================
+-- EDUCATION - MIGRATION V21_3: GIAI DOAN 3 - TIEN DO HOC (LMS_LESSON_PROGRESS)
+--
+-- Giai doan 3 (feat/portal-p3). Hop dong: docs/portal-p3-api.md.
+--
+-- Script nay lam:
+--   V21_3.1 Kiem tra truoc: LMS_LESSONS (V21_2), EDU_STUDENTS.
+--   V21_3.2 Sequence SEQ_LMS_LESSON_PROGRESS
+--   V21_3.3 Bang LMS_LESSON_PROGRESS (1 dong / HS / bai): STATUS IN_PROGRESS/COMPLETED (NOT_STARTED = khong co dong),
+--           FIRST_VIEWED_AT, LAST_VIEWED_AT, COMPLETED_AT, VIEW_COUNT; UNIQUE (LESSON_ID, STUDENT_ID).
+--           Ke hoach goc de PK (LESSON_ID, STUDENT_ID); doi sang ID + SEQ_ + UNIQUE theo quy uoc chung.
+--   V21_3.4 Index (STUDENT_ID, STATUS)
+--   V21_3.5 Kiem tra sau
+--
+-- THU TU CHAY: sau V21_2.
+--   set NLS_LANG=AMERICAN_AMERICA.AL32UTF8
+--   F:\Database\bin\sqlplus.exe EDUCATION@//localhost:1521/ORCL @V21_3__lms_lesson_progress.sql
+--
+-- ROLLBACK (MAT tien do hoc):
+--   DROP TABLE LMS_LESSON_PROGRESS CASCADE CONSTRAINTS PURGE;
+--   DROP SEQUENCE SEQ_LMS_LESSON_PROGRESS;
+--   COMMIT;
+-- =============================================================================
+
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+SET DEFINE OFF
+SET SERVEROUTPUT ON SIZE UNLIMITED
+
+PROMPT ============ V21_3.1 Kiem tra truoc ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME IN ('LMS_LESSONS', 'EDU_STUDENTS');
+    IF V_COUNT <> 2 THEN
+        RAISE_APPLICATION_ERROR(-20001, 'V21_3: chua chay V21_2 (LMS_LESSONS) / thieu EDU_STUDENTS');
+    END IF;
+    DBMS_OUTPUT.PUT_LINE('  LMS_LESSONS, EDU_STUDENTS               OK');
+END;
+/
+
+PROMPT ============ V21_3.2 Sequence ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_SEQUENCES WHERE SEQUENCE_NAME = 'SEQ_LMS_LESSON_PROGRESS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE 'CREATE SEQUENCE SEQ_LMS_LESSON_PROGRESS START WITH 1 INCREMENT BY 1 NOCYCLE';
+        DBMS_OUTPUT.PUT_LINE('  SEQ_LMS_LESSON_PROGRESS                 created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  SEQ_LMS_LESSON_PROGRESS                 already exists');
+    END IF;
+END;
+/
+
+PROMPT ============ V21_3.3 Bang LMS_LESSON_PROGRESS ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'LMS_LESSON_PROGRESS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE LMS_LESSON_PROGRESS (
+                ID                 NUMBER                              NOT NULL,
+                LESSON_ID          NUMBER                              NOT NULL,
+                STUDENT_ID         NUMBER                              NOT NULL,
+                STATUS             VARCHAR2(20)   DEFAULT 'IN_PROGRESS' NOT NULL,
+                FIRST_VIEWED_AT    TIMESTAMP                           NOT NULL,
+                LAST_VIEWED_AT     TIMESTAMP                           NOT NULL,
+                COMPLETED_AT       TIMESTAMP,
+                VIEW_COUNT         NUMBER(10)     DEFAULT 1            NOT NULL,
+                CREATED_AT         TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
+                UPDATED_AT         TIMESTAMP,
+                CONSTRAINT PK_LMS_LESSON_PROGRESS PRIMARY KEY (ID),
+                CONSTRAINT FK_LPRG_LESSON  FOREIGN KEY (LESSON_ID)  REFERENCES LMS_LESSONS (ID),
+                CONSTRAINT FK_LPRG_STUDENT FOREIGN KEY (STUDENT_ID) REFERENCES EDU_STUDENTS (ID),
+                CONSTRAINT UQ_LPRG_LESSON_STUDENT UNIQUE (LESSON_ID, STUDENT_ID),
+                CONSTRAINT CK_LPRG_STATUS  CHECK (STATUS IN ('IN_PROGRESS', 'COMPLETED')),
+                CONSTRAINT CK_LPRG_DONE    CHECK ((STATUS = 'COMPLETED' AND COMPLETED_AT IS NOT NULL)
+                                                  OR (STATUS = 'IN_PROGRESS' AND COMPLETED_AT IS NULL)),
+                CONSTRAINT CK_LPRG_VIEWS   CHECK (VIEW_COUNT >= 0)
+            )]';
+        DBMS_OUTPUT.PUT_LINE('  LMS_LESSON_PROGRESS                     created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  LMS_LESSON_PROGRESS                     already exists');
+    END IF;
+END;
+/
+
+COMMENT ON TABLE LMS_LESSON_PROGRESS IS 'Tien do hoc tung bai (GD3); khong co dong = NOT_STARTED';
+
+PROMPT ============ V21_3.4 Index ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_INDEXES WHERE INDEX_NAME = 'IX_LPRG_STUDENT_STATUS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE 'CREATE INDEX IX_LPRG_STUDENT_STATUS ON LMS_LESSON_PROGRESS (STUDENT_ID, STATUS)';
+        DBMS_OUTPUT.PUT_LINE('  IX_LPRG_STUDENT_STATUS                  created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  IX_LPRG_STUDENT_STATUS                  already exists');
+    END IF;
+END;
+/
+
+PROMPT ============ V21_3.5 Kiem tra sau ============
+
+DECLARE
+    V_MISSING VARCHAR2(4000);
+    V_COUNT   NUMBER;
+BEGIN
+    FOR r IN (SELECT n.OBJECT_NAME, n.OBJECT_TYPE, NVL(o.STATUS, 'MISSING') STATUS
+                FROM (SELECT 'LMS_LESSON_PROGRESS' OBJECT_NAME, 'TABLE' OBJECT_TYPE FROM DUAL UNION ALL
+                      SELECT 'SEQ_LMS_LESSON_PROGRESS', 'SEQUENCE' FROM DUAL UNION ALL
+                      SELECT 'IX_LPRG_STUDENT_STATUS', 'INDEX' FROM DUAL) n
+                LEFT JOIN USER_OBJECTS o ON o.OBJECT_NAME = n.OBJECT_NAME AND o.OBJECT_TYPE = n.OBJECT_TYPE) LOOP
+        DBMS_OUTPUT.PUT_LINE('  ' || RPAD(r.OBJECT_NAME, 40) || r.STATUS);
+        IF r.STATUS <> 'VALID' THEN
+            V_MISSING := V_MISSING || ' ' || r.OBJECT_NAME;
+        END IF;
+    END LOOP;
+    SELECT COUNT(*) INTO V_COUNT FROM USER_CONSTRAINTS
+     WHERE TABLE_NAME = 'LMS_LESSON_PROGRESS' AND STATUS = 'ENABLED'
+       AND CONSTRAINT_NAME IN ('UQ_LPRG_LESSON_STUDENT', 'CK_LPRG_STATUS', 'CK_LPRG_DONE', 'FK_LPRG_LESSON', 'FK_LPRG_STUDENT');
+    IF V_COUNT <> 5 THEN
+        V_MISSING := V_MISSING || ' CONSTRAINTS(' || V_COUNT || '/5)';
+    END IF;
+    IF V_MISSING IS NOT NULL THEN
+        RAISE_APPLICATION_ERROR(-20009, 'V21_3: thieu/khong hop le:' || V_MISSING);
+    END IF;
+END;
+/
+
+COMMIT;
+
+PROMPT ============ V21_3 DONE ============
+EXIT

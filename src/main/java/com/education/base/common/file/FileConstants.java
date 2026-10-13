@@ -76,6 +76,8 @@ public class FileConstants {
         public static final String ASSIGNMENT = "ASSIGNMENT";
         public static final String SUBMISSION = "SUBMISSION";
         public static final String FEEDBACK = "FEEDBACK";
+        /** GĐ3 (học liệu, V21_4 bật): {@code REFERENCE_ID = LMS_LESSONS.ID}. Descriptor LessonFileModule (Bot 1 GĐ3). */
+        public static final String LESSON = "LESSON";
     }
 
     /** Trạng thái bản ghi nghiệp vụ được tham chiếu ("nơi sử dụng"). */

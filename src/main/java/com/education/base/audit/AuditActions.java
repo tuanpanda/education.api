@@ -102,6 +102,29 @@ public class AuditActions {
     /** Đồng bộ sổ điểm lỗi (không chặn chấm). */
     public static final String HOMEWORK_GRADEBOOK_SYNC_FAILED = "HOMEWORK_GRADEBOOK_SYNC_FAILED";
 
+    // ---- GĐ3 Học liệu (hợp đồng Luồng 0; chỉ Bot 1 GĐ3 thêm dòng mới vào khối này) -------------------
+    public static final String LESSON_COURSE_CREATED = "LESSON_COURSE_CREATED";
+    public static final String LESSON_COURSE_UPDATED = "LESSON_COURSE_UPDATED";
+    public static final String LESSON_COURSE_DELETED = "LESSON_COURSE_DELETED";
+    /** Detail: courseId, classId. */
+    public static final String LESSON_COURSE_LINKED = "LESSON_COURSE_LINKED";
+    public static final String LESSON_COURSE_UNLINKED = "LESSON_COURSE_UNLINKED";
+    /** Detail: courseId, classId, sectionCount, lessonCount, resourceCount. */
+    public static final String LESSON_COURSE_COPIED = "LESSON_COURSE_COPIED";
+    public static final String LESSON_SECTION_CHANGED = "LESSON_SECTION_CHANGED";
+    public static final String LESSON_CREATED = "LESSON_CREATED";
+    public static final String LESSON_UPDATED = "LESSON_UPDATED";
+    public static final String LESSON_PUBLISHED = "LESSON_PUBLISHED";
+    public static final String LESSON_UNPUBLISHED = "LESSON_UNPUBLISHED";
+    public static final String LESSON_DELETED = "LESSON_DELETED";
+    /** Detail: ownerType, ownerId. */
+    public static final String LESSON_REORDERED = "LESSON_REORDERED";
+    /** Detail: lessonId, resourceType, fileId|provider|assignmentId. */
+    public static final String LESSON_RESOURCE_ADDED = "LESSON_RESOURCE_ADDED";
+    public static final String LESSON_RESOURCE_REMOVED = "LESSON_RESOURCE_REMOVED";
+    /** Học sinh hoàn thành bài lần đầu. Detail: lessonId, classId. (Tải file bài học ghi FILE_DOWNLOADED.) */
+    public static final String LESSON_COMPLETED = "LESSON_COMPLETED";
+
     // ---- Loại đối tượng (RESOURCE_TYPE) ----------------------------------------------------------
     public static final String RESOURCE_USER = "USER";
     public static final String RESOURCE_ROLE = "ROLE";
@@ -117,4 +140,9 @@ public class AuditActions {
     // GĐ2 Bài tập về nhà.
     public static final String RESOURCE_ASSIGNMENT = "ASSIGNMENT";
     public static final String RESOURCE_SUBMISSION = "SUBMISSION";
+    // GĐ3 Học liệu.
+    public static final String RESOURCE_COURSE = "COURSE";
+    public static final String RESOURCE_LESSON_SECTION = "LESSON_SECTION";
+    public static final String RESOURCE_LESSON = "LESSON";
+    public static final String RESOURCE_LESSON_RESOURCE = "LESSON_RESOURCE";
 }
