@@ -47,7 +47,8 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(OracleBusinessException.class)
     public ResponseEntity<ApiResponse<Void>> handleOracleBusinessException(OracleBusinessException ex) {
-        HttpStatus status = isNotFoundCode(ex.getErrorCode()) ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
+        HttpStatus status = isNotFoundCode(ex.getErrorCode()) ? HttpStatus.NOT_FOUND
+                : isConflictCode(ex.getErrorCode()) ? HttpStatus.CONFLICT : HttpStatus.BAD_REQUEST;
         String rawMessage = ex.getMessage();
         if (OracleErrorMessages.isRawDatabaseError(rawMessage)) {
             log.error("[OracleBusinessException] errorCode={}, message={}", ex.getErrorCode(), rawMessage, ex);
@@ -177,6 +178,16 @@ public class GlobalExceptionHandler {
     /**
      * Xử lý lỗi truy cập dữ liệu (JDBC/JPA) chưa được bọc thành {@link OracleBusinessException}.
      */
+    /** GĐ2: xung đột @Version (hai người cùng chấm / cập nhật) -> 409 GRADE_CONFLICT. */
+    @ExceptionHandler(org.springframework.orm.ObjectOptimisticLockingFailureException.class)
+    public ResponseEntity<ApiResponse<Void>> handleOptimisticLock(
+            org.springframework.orm.ObjectOptimisticLockingFailureException ex) {
+        log.warn("[OptimisticLock] {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error(com.education.base.common.homework.HomeworkErrorCodes.GRADE_CONFLICT,
+                        "Bài vừa được người khác chấm/cập nhật. Tải lại để xem."));
+    }
+
     @ExceptionHandler(DataAccessException.class)
     public ResponseEntity<ApiResponse<Void>> handleDataAccessException(DataAccessException ex) {
         log.error("[DataAccessException] {}", ex.getMessage(), ex);
@@ -257,6 +268,11 @@ public class GlobalExceptionHandler {
     /**
      * Mã lỗi nghiệp vụ biểu diễn "không tìm thấy" ({@code NOT_FOUND}, {@code STUDENT_NOT_FOUND}, {@code FEE_NOT_FOUND}...).
      */
+    /** GĐ2: chỉ GRADE_CONFLICT -> 409; các mã *_CONFLICT cũ (ROOM/TEACHER/CLASS_ASSIGNMENT) giữ 400 để không đổi hành vi FE. */
+    static boolean isConflictCode(String errorCode) {
+        return com.education.base.common.homework.HomeworkErrorCodes.GRADE_CONFLICT.equals(errorCode);
+    }
+
     static boolean isNotFoundCode(String errorCode) {
         return errorCode != null && ("NOT_FOUND".equals(errorCode) || errorCode.endsWith("_NOT_FOUND")
                 || "FILE_BLOB_MISSING".equals(errorCode));

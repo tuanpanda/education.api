@@ -180,6 +180,15 @@ public class Permissions {
     public static final String ANNOUNCEMENT_PUBLISH = "MENU_ANNOUNCEMENT:PUBLISH";
 
 
+    // ---- GĐ2 Bài tập về nhà (V20_3). Menu MENU_HOMEWORK (/academic/homework, dưới DIR_ACADEMIC).
+    // ROLE_ADMIN toàn quyền; ROLE_TEACHER mọi chức năng trừ DELETE. Hợp đồng Luồng 0 (feat/homework).
+    public static final String HOMEWORK_VIEW = "MENU_HOMEWORK:VIEW";
+    public static final String HOMEWORK_CREATE = "MENU_HOMEWORK:CREATE";
+    public static final String HOMEWORK_UPDATE = "MENU_HOMEWORK:UPDATE";
+    public static final String HOMEWORK_DELETE = "MENU_HOMEWORK:DELETE";
+    public static final String HOMEWORK_GRADE = "MENU_HOMEWORK:GRADE";
+    public static final String HOMEWORK_EXPORT = "MENU_HOMEWORK:EXPORT";
+
     /** Ghép mã quyền phẳng từ mã menu và mã chức năng. */
     public static String of(String menuCode, String functionCode) {
         return menuCode + SEPARATOR + functionCode;

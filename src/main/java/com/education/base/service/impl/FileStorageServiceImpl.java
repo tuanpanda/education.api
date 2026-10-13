@@ -283,6 +283,22 @@ public class FileStorageServiceImpl implements FileStorageService {
     }
 
     @Override
+    public java.util.Map<Long, Long> countActiveFilesByRefs(String moduleName, java.util.Collection<Long> referenceIds) {
+        java.util.Map<Long, Long> out = new java.util.HashMap<>();
+        if (referenceIds == null || referenceIds.isEmpty()) {
+            return out;
+        }
+        List<Long> ids = new java.util.ArrayList<>(referenceIds);
+        for (int i = 0; i < ids.size(); i += 900) { // Oracle IN toi da 1000 phan tu
+            for (Object[] row : fileRepository.countActiveByRefs(normalizeModule(moduleName),
+                    ids.subList(i, Math.min(i + 900, ids.size())))) {
+                out.put(((Number) row[0]).longValue(), ((Number) row[1]).longValue());
+            }
+        }
+        return out;
+    }
+
+    @Override
     public List<FileEntity> getFilesByRef(String moduleName, Long referenceId) {
         return fileRepository.getFilesByRef(normalizeModule(moduleName), referenceId);
     }

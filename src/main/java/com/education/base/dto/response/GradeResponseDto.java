@@ -35,6 +35,8 @@ public class GradeResponseDto {
     private BigDecimal weight;
     private LocalDate examDate;
     private String note;
+    /** GĐ2 (§9 #1): khác null = điểm đồng bộ từ bài tập, chỉ đọc. */
+    private Long assignmentId;
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

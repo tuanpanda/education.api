@@ -69,6 +69,10 @@ public class GradeEntity {
     @Column(name = "NOTE", length = 255)
     private String note;
 
+    /** GĐ2 (V20_4): điểm đẩy từ bài tập LMS_ASSIGNMENTS; NULL = nhập tay. Dòng có giá trị chỉ đọc qua API điểm. */
+    @Column(name = "ASSIGNMENT_ID")
+    private Long assignmentId;
+
     @Column(name = "IS_DELETED", nullable = false)
     private Integer isDeleted;
 

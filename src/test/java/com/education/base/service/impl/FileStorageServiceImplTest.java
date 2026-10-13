@@ -163,7 +163,7 @@ class FileStorageServiceImplTest {
 
     @Test
     void storeFile_unregisteredModule_isRejectedFailClosed() {
-        assertCode(() -> service.storeFile(pdf(), "SUBMISSION", 1L), "INVALID_MODULE");
+        assertCode(() -> service.storeFile(pdf(), "PAYROLL", 1L), "INVALID_MODULE");
         verify(fileRepository, never()).save(any());
     }
 
@@ -313,6 +313,16 @@ class FileStorageServiceImplTest {
     void cleanOriginalName_truncatesTo255KeepingExtension() {
         String name = FileStorageServiceImpl.cleanOriginalName("ả".repeat(300) + ".pdf");
         assertThat(name).hasSize(255).endsWith(".pdf");
+    }
+
+    @Test
+    void countActiveFilesByRefs_batchesIntoOneQueryAndMapsCounts() {
+        when(fileRepository.countActiveByRefs("SUBMISSION", java.util.List.of(1L, 2L)))
+                .thenReturn(java.util.List.<Object[]>of(new Object[]{1L, 3L}));
+        assertThat(service.countActiveFilesByRefs(" submission ", java.util.List.of(1L, 2L)))
+                .containsExactly(java.util.Map.entry(1L, 3L));
+        assertThat(service.countActiveFilesByRefs("SUBMISSION", java.util.List.of())).isEmpty();
+        verify(fileRepository).countActiveByRefs("SUBMISSION", java.util.List.of(1L, 2L));
     }
 
     @Test
