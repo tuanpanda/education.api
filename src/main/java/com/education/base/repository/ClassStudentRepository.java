@@ -1,5 +1,6 @@
 package com.education.base.repository;
 
+import java.util.Collection;
 import com.education.base.entity.ClassStudentEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -44,4 +45,16 @@ public interface ClassStudentRepository extends JpaRepository<ClassStudentEntity
             """)
     List<ClassStudentEntity> findActiveEnrollmentsWithClass(
             @Param("studentId") Long studentId);
+
+    // ---- GĐ3 Bot 1 ----
+    List<ClassStudentEntity> findByClassIdAndStatusAndIsDeleted(Long classId, String status, Integer isDeleted);
+
+    @Query("""
+            SELECT cs.classId, COUNT(cs) FROM ClassStudentEntity cs
+             WHERE cs.classId IN :classIds
+               AND cs.status = 'ENROLLED'
+               AND cs.isDeleted = 0
+             GROUP BY cs.classId
+            """)
+    List<Object[]> countEnrolledByClassIds(@Param("classIds") Collection<Long> classIds);
 }

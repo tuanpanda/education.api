@@ -68,15 +68,19 @@ class LessonContractTest {
         assertThat(AuditActions.LESSON_COMPLETED).isEqualTo("LESSON_COMPLETED");
     }
 
-    /** Bot 1 (GĐ3 BE) đổi test này khi LessonFileModule có luật thật và là bean. */
+    /** GĐ3 BE (Bot 1): LessonFileModule đã có luật thật và là bean (registry hết fail-closed với LESSON). */
     @Test
-    void lessonDescriptorIsStubNotBean() {
-        assertThat(LessonFileModule.class.isAnnotationPresent(Component.class)).isFalse();
+    void lessonDescriptorIsBeanWithRules() {
+        assertThat(LessonFileModule.class.isAnnotationPresent(Component.class)).isTrue();
         assertThat(FileModuleDescriptor.class.isAssignableFrom(LessonFileModule.class)).isTrue();
-        LessonFileModule stub = new LessonFileModule();
-        assertThat(stub.code()).isEqualTo(FileConstants.Module.LESSON);
-        assertThat(stub.allowGenericUpload()).isFalse();
-        assertThat(stub.canRead(null, null)).isFalse();
+        LessonFileModule module = new LessonFileModule(org.mockito.Mockito.mock(com.education.base.repository.LessonRepository.class),
+                org.mockito.Mockito.mock(com.education.base.service.lesson.impl.LessonFileAccess.class),
+                org.mockito.Mockito.mock(com.education.base.service.file.TeacherFileScope.class));
+        assertThat(module.code()).isEqualTo(FileConstants.Module.LESSON);
+        assertThat(module.allowGenericUpload()).isFalse();
+        assertThat(module.canRead(null, null)).isFalse();
+        assertThat(module.canUpload(null, 1L)).isFalse();
+        assertThat(module.canDelete(null, null)).isFalse();
     }
 
     @Test

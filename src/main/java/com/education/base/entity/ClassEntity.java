@@ -70,6 +70,10 @@ public class ClassEntity {
     @Column(name = "TEACHER_ID")
     private Long teacherId;
 
+    /** Khoá học mẫu đang gắn (V21_1, {@code EDU_CLASSES.COURSE_ID}) - liên kết sống GĐ3; NULL = không gắn khoá. */
+    @Column(name = "COURSE_ID")
+    private Long courseId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "TEACHER_ID", insertable = false, updatable = false)
     private UserEntity teacher;
