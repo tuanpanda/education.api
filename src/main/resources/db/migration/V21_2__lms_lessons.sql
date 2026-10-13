@@ -1,0 +1,283 @@
+-- =============================================================================
+-- EDUCATION - MIGRATION V21_2: GIAI DOAN 3 - CHUONG / BAI HOC / TAI NGUYEN BAI HOC
+--
+-- Giai doan 3 (feat/portal-p3). Hop dong: docs/portal-p3-api.md.
+--
+-- Script nay lam:
+--   V21_2.1 Kiem tra truoc: LMS_COURSES (V21_1), EDU_CLASS_SESSIONS, SYS_ATTACHED_FILES, LMS_ASSIGNMENTS.
+--   V21_2.2 Sequence SEQ_LMS_LESSON_SECTIONS, SEQ_LMS_LESSONS, SEQ_LMS_LESSON_RESOURCES
+--   V21_2.3 LMS_LESSON_SECTIONS (chuong): thuoc DUNG MOT trong hai - COURSE_ID (khoa mau) hoac CLASS_ID (lop).
+--   V21_2.4 LMS_LESSONS (bai hoc): SECTION_ID + COURSE_ID/CLASS_ID chep tu chuong (de loc nhanh), SESSION_ID chi khi
+--           bai thuoc lop, CONTENT CLOB (HTML sanitize), STATUS DRAFT/PUBLISHED, AVAILABLE_FROM (gio server VN),
+--           ESTIMATED_MINUTES, SOURCE_LESSON_ID (bai goc khi chep tu khoa mau), VERSION, IS_DELETED, audit.
+--   V21_2.5 LMS_LESSON_RESOURCES: RESOURCE_TYPE FILE/VIDEO/LINK/ASSIGNMENT; FILE_ID (SYS_ATTACHED_FILES, module LESSON),
+--           URL + EMBED_URL + PROVIDER (VIDEO/LINK), ASSIGNMENT_ID (bai tap GD2, chi bai hoc cua lop).
+--   V21_2.6 Index
+--   V21_2.7 Kiem tra sau
+--
+-- QUY UOC: giong V21_1 (guard, chay lai an toan, ASCII, COMMIT + EXIT).
+--
+-- THU TU CHAY: sau V21_1.
+--   set NLS_LANG=AMERICAN_AMERICA.AL32UTF8
+--   F:\Database\bin\sqlplus.exe EDUCATION@//localhost:1521/ORCL @V21_2__lms_lessons.sql
+--
+-- ROLLBACK (MAT du lieu bai hoc; chay rollback V21_4, V21_3 truoc):
+--   DROP TABLE LMS_LESSON_RESOURCES CASCADE CONSTRAINTS PURGE;
+--   DROP TABLE LMS_LESSONS CASCADE CONSTRAINTS PURGE;
+--   DROP TABLE LMS_LESSON_SECTIONS CASCADE CONSTRAINTS PURGE;
+--   DROP SEQUENCE SEQ_LMS_LESSON_RESOURCES;
+--   DROP SEQUENCE SEQ_LMS_LESSONS;
+--   DROP SEQUENCE SEQ_LMS_LESSON_SECTIONS;
+--   COMMIT;
+-- =============================================================================
+
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+SET DEFINE OFF
+SET SERVEROUTPUT ON SIZE UNLIMITED
+
+PROMPT ============ V21_2.1 Kiem tra truoc ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES
+     WHERE TABLE_NAME IN ('LMS_COURSES', 'EDU_CLASSES', 'EDU_CLASS_SESSIONS', 'SYS_ATTACHED_FILES', 'LMS_ASSIGNMENTS');
+    IF V_COUNT <> 5 THEN
+        RAISE_APPLICATION_ERROR(-20001, 'V21_2: thieu bang nen (chua chay V21_1 / V20_1?)');
+    END IF;
+    DBMS_OUTPUT.PUT_LINE('  LMS_COURSES, sessions, files, assignments OK');
+END;
+/
+
+PROMPT ============ V21_2.2 Sequence ============
+
+DECLARE
+    PROCEDURE ENSURE_SEQ(P_NAME VARCHAR2) IS
+        V_COUNT NUMBER;
+    BEGIN
+        SELECT COUNT(*) INTO V_COUNT FROM USER_SEQUENCES WHERE SEQUENCE_NAME = P_NAME;
+        IF V_COUNT = 0 THEN
+            EXECUTE IMMEDIATE 'CREATE SEQUENCE ' || P_NAME || ' START WITH 1 INCREMENT BY 1 NOCYCLE';
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'created');
+        ELSE
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'already exists');
+        END IF;
+    END;
+BEGIN
+    ENSURE_SEQ('SEQ_LMS_LESSON_SECTIONS');
+    ENSURE_SEQ('SEQ_LMS_LESSONS');
+    ENSURE_SEQ('SEQ_LMS_LESSON_RESOURCES');
+END;
+/
+
+PROMPT ============ V21_2.3 Bang LMS_LESSON_SECTIONS ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'LMS_LESSON_SECTIONS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE LMS_LESSON_SECTIONS (
+                ID                 NUMBER                              NOT NULL,
+                COURSE_ID          NUMBER,
+                CLASS_ID           NUMBER,
+                TITLE              VARCHAR2(200 CHAR)                  NOT NULL,
+                SORT_ORDER         NUMBER(5)      DEFAULT 0            NOT NULL,
+                SOURCE_SECTION_ID  NUMBER,
+                VERSION            NUMBER(10)     DEFAULT 0            NOT NULL,
+                IS_DELETED         NUMBER(1)      DEFAULT 0            NOT NULL,
+                CREATED_AT         TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
+                UPDATED_AT         TIMESTAMP,
+                CREATED_BY         VARCHAR2(50),
+                UPDATED_BY         VARCHAR2(50),
+                CONSTRAINT PK_LMS_LESSON_SECTIONS PRIMARY KEY (ID),
+                CONSTRAINT FK_LSEC_COURSE FOREIGN KEY (COURSE_ID) REFERENCES LMS_COURSES (ID),
+                CONSTRAINT FK_LSEC_CLASS  FOREIGN KEY (CLASS_ID)  REFERENCES EDU_CLASSES (ID),
+                CONSTRAINT CK_LSEC_OWNER  CHECK ((COURSE_ID IS NOT NULL AND CLASS_ID IS NULL)
+                                                 OR (COURSE_ID IS NULL AND CLASS_ID IS NOT NULL)),
+                CONSTRAINT CK_LSEC_DELETED CHECK (IS_DELETED IN (0, 1))
+            )]';
+        DBMS_OUTPUT.PUT_LINE('  LMS_LESSON_SECTIONS                     created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  LMS_LESSON_SECTIONS                     already exists');
+    END IF;
+END;
+/
+
+COMMENT ON TABLE LMS_LESSON_SECTIONS IS 'Chuong (GD3): thuoc khoa mau (COURSE_ID) hoac lop (CLASS_ID), dung mot';
+COMMENT ON COLUMN LMS_LESSON_SECTIONS.SOURCE_SECTION_ID IS 'Chuong goc khi chep tu khoa mau sang lop (copy-to-class)';
+
+PROMPT ============ V21_2.4 Bang LMS_LESSONS ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'LMS_LESSONS';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE LMS_LESSONS (
+                ID                 NUMBER                              NOT NULL,
+                SECTION_ID         NUMBER                              NOT NULL,
+                COURSE_ID          NUMBER,
+                CLASS_ID           NUMBER,
+                SESSION_ID         NUMBER,
+                TITLE              VARCHAR2(200 CHAR)                  NOT NULL,
+                CONTENT            CLOB,
+                SORT_ORDER         NUMBER(5)      DEFAULT 0            NOT NULL,
+                STATUS             VARCHAR2(20)   DEFAULT 'DRAFT'      NOT NULL,
+                AVAILABLE_FROM     TIMESTAMP,
+                ESTIMATED_MINUTES  NUMBER(4),
+                PUBLISHED_AT       TIMESTAMP,
+                SOURCE_LESSON_ID   NUMBER,
+                VERSION            NUMBER(10)     DEFAULT 0            NOT NULL,
+                IS_DELETED         NUMBER(1)      DEFAULT 0            NOT NULL,
+                CREATED_AT         TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
+                UPDATED_AT         TIMESTAMP,
+                CREATED_BY         VARCHAR2(50),
+                UPDATED_BY         VARCHAR2(50),
+                CONSTRAINT PK_LMS_LESSONS PRIMARY KEY (ID),
+                CONSTRAINT FK_LES_SECTION FOREIGN KEY (SECTION_ID) REFERENCES LMS_LESSON_SECTIONS (ID),
+                CONSTRAINT FK_LES_COURSE  FOREIGN KEY (COURSE_ID)  REFERENCES LMS_COURSES (ID),
+                CONSTRAINT FK_LES_CLASS   FOREIGN KEY (CLASS_ID)   REFERENCES EDU_CLASSES (ID),
+                CONSTRAINT FK_LES_SESSION FOREIGN KEY (SESSION_ID) REFERENCES EDU_CLASS_SESSIONS (ID),
+                CONSTRAINT CK_LES_OWNER   CHECK ((COURSE_ID IS NOT NULL AND CLASS_ID IS NULL)
+                                                 OR (COURSE_ID IS NULL AND CLASS_ID IS NOT NULL)),
+                CONSTRAINT CK_LES_SESSION CHECK (SESSION_ID IS NULL OR CLASS_ID IS NOT NULL),
+                CONSTRAINT CK_LES_STATUS  CHECK (STATUS IN ('DRAFT', 'PUBLISHED')),
+                CONSTRAINT CK_LES_MINUTES CHECK (ESTIMATED_MINUTES IS NULL OR ESTIMATED_MINUTES BETWEEN 1 AND 1440),
+                CONSTRAINT CK_LES_DELETED CHECK (IS_DELETED IN (0, 1))
+            )]';
+        DBMS_OUTPUT.PUT_LINE('  LMS_LESSONS                             created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  LMS_LESSONS                             already exists');
+    END IF;
+END;
+/
+
+COMMENT ON TABLE LMS_LESSONS IS 'Bai hoc (GD3)';
+COMMENT ON COLUMN LMS_LESSONS.CONTENT IS 'HTML CKEditor da sanitize o backend';
+COMMENT ON COLUMN LMS_LESSONS.AVAILABLE_FROM IS 'Gio mo bai, gio server Asia/Ho_Chi_Minh; NULL = theo buoi hoc (neu co) hoac mo ngay';
+COMMENT ON COLUMN LMS_LESSONS.COURSE_ID IS 'Chep tu LMS_LESSON_SECTIONS.COURSE_ID (dung mot trong COURSE_ID / CLASS_ID)';
+COMMENT ON COLUMN LMS_LESSONS.SOURCE_LESSON_ID IS 'Bai goc khi chep tu khoa mau sang lop';
+
+PROMPT ============ V21_2.5 Bang LMS_LESSON_RESOURCES ============
+
+DECLARE
+    V_COUNT NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO V_COUNT FROM USER_TABLES WHERE TABLE_NAME = 'LMS_LESSON_RESOURCES';
+    IF V_COUNT = 0 THEN
+        EXECUTE IMMEDIATE q'[
+            CREATE TABLE LMS_LESSON_RESOURCES (
+                ID                 NUMBER                              NOT NULL,
+                LESSON_ID          NUMBER                              NOT NULL,
+                RESOURCE_TYPE      VARCHAR2(20)                        NOT NULL,
+                TITLE              VARCHAR2(200 CHAR)                  NOT NULL,
+                FILE_ID            NUMBER,
+                URL                VARCHAR2(1000),
+                EMBED_URL          VARCHAR2(1000),
+                PROVIDER           VARCHAR2(20),
+                ASSIGNMENT_ID      NUMBER,
+                SORT_ORDER         NUMBER(5)      DEFAULT 0            NOT NULL,
+                IS_DELETED         NUMBER(1)      DEFAULT 0            NOT NULL,
+                CREATED_AT         TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
+                UPDATED_AT         TIMESTAMP,
+                CREATED_BY         VARCHAR2(50),
+                UPDATED_BY         VARCHAR2(50),
+                CONSTRAINT PK_LMS_LESSON_RESOURCES PRIMARY KEY (ID),
+                CONSTRAINT FK_LRES_LESSON     FOREIGN KEY (LESSON_ID)     REFERENCES LMS_LESSONS (ID),
+                CONSTRAINT FK_LRES_FILE       FOREIGN KEY (FILE_ID)       REFERENCES SYS_ATTACHED_FILES (ID),
+                CONSTRAINT FK_LRES_ASSIGNMENT FOREIGN KEY (ASSIGNMENT_ID) REFERENCES LMS_ASSIGNMENTS (ID),
+                CONSTRAINT CK_LRES_TYPE       CHECK (RESOURCE_TYPE IN ('FILE', 'VIDEO', 'LINK', 'ASSIGNMENT')),
+                CONSTRAINT CK_LRES_PROVIDER   CHECK (PROVIDER IS NULL OR PROVIDER IN ('YOUTUBE', 'DRIVE', 'VIMEO', 'OTHER')),
+                CONSTRAINT CK_LRES_SHAPE      CHECK (
+                       (RESOURCE_TYPE = 'FILE'       AND FILE_ID IS NOT NULL AND URL IS NULL AND ASSIGNMENT_ID IS NULL)
+                    OR (RESOURCE_TYPE = 'VIDEO'      AND FILE_ID IS NULL AND URL IS NOT NULL AND EMBED_URL IS NOT NULL
+                                                     AND PROVIDER IN ('YOUTUBE', 'DRIVE', 'VIMEO') AND ASSIGNMENT_ID IS NULL)
+                    OR (RESOURCE_TYPE = 'LINK'       AND FILE_ID IS NULL AND URL IS NOT NULL AND ASSIGNMENT_ID IS NULL)
+                    OR (RESOURCE_TYPE = 'ASSIGNMENT' AND FILE_ID IS NULL AND URL IS NULL AND ASSIGNMENT_ID IS NOT NULL)),
+                CONSTRAINT CK_LRES_DELETED    CHECK (IS_DELETED IN (0, 1))
+            )]';
+        DBMS_OUTPUT.PUT_LINE('  LMS_LESSON_RESOURCES                    created');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  LMS_LESSON_RESOURCES                    already exists');
+    END IF;
+END;
+/
+
+COMMENT ON TABLE LMS_LESSON_RESOURCES IS 'Tai nguyen bai hoc (GD3): file module LESSON, video nhung, link ngoai, bai tap GD2';
+COMMENT ON COLUMN LMS_LESSON_RESOURCES.EMBED_URL IS 'URL nhung do server sinh tu URL (allow-list domain), UI chi dung truong nay cho iframe';
+
+PROMPT ============ V21_2.6 Index ============
+
+DECLARE
+    PROCEDURE ENSURE_INDEX(P_NAME VARCHAR2, P_DDL VARCHAR2) IS
+        V_COUNT NUMBER;
+    BEGIN
+        SELECT COUNT(*) INTO V_COUNT FROM USER_INDEXES WHERE INDEX_NAME = P_NAME;
+        IF V_COUNT = 0 THEN
+            EXECUTE IMMEDIATE P_DDL;
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'created');
+        ELSE
+            DBMS_OUTPUT.PUT_LINE('  ' || RPAD(P_NAME, 40) || 'already exists');
+        END IF;
+    END;
+BEGIN
+    ENSURE_INDEX('IX_LSEC_COURSE', 'CREATE INDEX IX_LSEC_COURSE ON LMS_LESSON_SECTIONS (COURSE_ID, SORT_ORDER)');
+    ENSURE_INDEX('IX_LSEC_CLASS',  'CREATE INDEX IX_LSEC_CLASS ON LMS_LESSON_SECTIONS (CLASS_ID, SORT_ORDER)');
+    ENSURE_INDEX('IX_LES_SECTION', 'CREATE INDEX IX_LES_SECTION ON LMS_LESSONS (SECTION_ID, SORT_ORDER)');
+    ENSURE_INDEX('IX_LES_COURSE_STATUS', 'CREATE INDEX IX_LES_COURSE_STATUS ON LMS_LESSONS (COURSE_ID, STATUS)');
+    ENSURE_INDEX('IX_LES_CLASS_STATUS',  'CREATE INDEX IX_LES_CLASS_STATUS ON LMS_LESSONS (CLASS_ID, STATUS)');
+    ENSURE_INDEX('IX_LES_SESSION', 'CREATE INDEX IX_LES_SESSION ON LMS_LESSONS (SESSION_ID)');
+    ENSURE_INDEX('IX_LRES_LESSON', 'CREATE INDEX IX_LRES_LESSON ON LMS_LESSON_RESOURCES (LESSON_ID, SORT_ORDER)');
+    ENSURE_INDEX('IX_LRES_FILE',   'CREATE INDEX IX_LRES_FILE ON LMS_LESSON_RESOURCES (FILE_ID)');
+    ENSURE_INDEX('IX_LRES_ASSIGNMENT', 'CREATE INDEX IX_LRES_ASSIGNMENT ON LMS_LESSON_RESOURCES (ASSIGNMENT_ID)');
+END;
+/
+
+PROMPT ============ V21_2.7 Kiem tra sau ============
+
+DECLARE
+    V_MISSING VARCHAR2(4000);
+    V_COUNT   NUMBER;
+BEGIN
+    FOR r IN (SELECT n.OBJECT_NAME, n.OBJECT_TYPE, NVL(o.STATUS, 'MISSING') STATUS
+                FROM (SELECT 'LMS_LESSON_SECTIONS' OBJECT_NAME, 'TABLE' OBJECT_TYPE FROM DUAL UNION ALL
+                      SELECT 'LMS_LESSONS', 'TABLE' FROM DUAL UNION ALL
+                      SELECT 'LMS_LESSON_RESOURCES', 'TABLE' FROM DUAL UNION ALL
+                      SELECT 'SEQ_LMS_LESSON_SECTIONS', 'SEQUENCE' FROM DUAL UNION ALL
+                      SELECT 'SEQ_LMS_LESSONS', 'SEQUENCE' FROM DUAL UNION ALL
+                      SELECT 'SEQ_LMS_LESSON_RESOURCES', 'SEQUENCE' FROM DUAL UNION ALL
+                      SELECT 'IX_LSEC_COURSE', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_LSEC_CLASS', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_LES_SECTION', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_LES_COURSE_STATUS', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_LES_CLASS_STATUS', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_LES_SESSION', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_LRES_LESSON', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_LRES_FILE', 'INDEX' FROM DUAL UNION ALL
+                      SELECT 'IX_LRES_ASSIGNMENT', 'INDEX' FROM DUAL) n
+                LEFT JOIN USER_OBJECTS o ON o.OBJECT_NAME = n.OBJECT_NAME AND o.OBJECT_TYPE = n.OBJECT_TYPE) LOOP
+        DBMS_OUTPUT.PUT_LINE('  ' || RPAD(r.OBJECT_NAME, 40) || r.STATUS);
+        IF r.STATUS <> 'VALID' THEN
+            V_MISSING := V_MISSING || ' ' || r.OBJECT_NAME;
+        END IF;
+    END LOOP;
+    SELECT COUNT(*) INTO V_COUNT FROM USER_CONSTRAINTS
+     WHERE STATUS = 'ENABLED'
+       AND CONSTRAINT_NAME IN ('CK_LSEC_OWNER', 'CK_LES_OWNER', 'CK_LES_SESSION', 'CK_LES_STATUS',
+                               'CK_LRES_TYPE', 'CK_LRES_SHAPE', 'FK_LRES_FILE', 'FK_LRES_ASSIGNMENT', 'FK_LES_SECTION');
+    IF V_COUNT <> 9 THEN
+        V_MISSING := V_MISSING || ' CONSTRAINTS(' || V_COUNT || '/9)';
+    END IF;
+    IF V_MISSING IS NOT NULL THEN
+        RAISE_APPLICATION_ERROR(-20009, 'V21_2: thieu/khong hop le:' || V_MISSING);
+    END IF;
+END;
+/
+
+COMMIT;
+
+PROMPT ============ V21_2 DONE ============
+EXIT

@@ -189,6 +189,18 @@ public class Permissions {
     public static final String HOMEWORK_GRADE = "MENU_HOMEWORK:GRADE";
     public static final String HOMEWORK_EXPORT = "MENU_HOMEWORK:EXPORT";
 
+    // ---- GĐ3 Học liệu (V21_4). MENU_COURSE (/academic/courses) + MENU_LESSON (/academic/lessons), dưới DIR_ACADEMIC.
+    // ROLE_TEACHER: MENU_COURSE chỉ VIEW; MENU_LESSON VIEW/CREATE/UPDATE (không DELETE). Chỉ Bot 1 GĐ3 thêm vào khối này.
+    public static final String COURSE_VIEW = "MENU_COURSE:VIEW";
+    public static final String COURSE_CREATE = "MENU_COURSE:CREATE";
+    public static final String COURSE_UPDATE = "MENU_COURSE:UPDATE";
+    public static final String COURSE_DELETE = "MENU_COURSE:DELETE";
+
+    public static final String LESSON_VIEW = "MENU_LESSON:VIEW";
+    public static final String LESSON_CREATE = "MENU_LESSON:CREATE";
+    public static final String LESSON_UPDATE = "MENU_LESSON:UPDATE";
+    public static final String LESSON_DELETE = "MENU_LESSON:DELETE";
+
     /** Ghép mã quyền phẳng từ mã menu và mã chức năng. */
     public static String of(String menuCode, String functionCode) {
         return menuCode + SEPARATOR + functionCode;

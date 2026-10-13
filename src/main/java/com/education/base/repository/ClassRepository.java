@@ -71,4 +71,17 @@ public interface ClassRepository extends JpaRepository<ClassEntity, Long>, Class
     List<ClassEntity> findByIdInAndIsDeletedOrderByClassCode(
             @Param("ids") Collection<Long> ids,
             @Param("deleted") Integer deleted);
+
+    // ---- GĐ3 Bot 1: liên kết khoá học (EDU_CLASSES.COURSE_ID, V21_1) ----
+    List<ClassEntity> findByCourseIdAndIsDeletedOrderByClassCode(Long courseId, Integer isDeleted);
+
+    long countByCourseIdAndIsDeleted(Long courseId, Integer isDeleted);
+
+    @Query("""
+            SELECT c.courseId, COUNT(c) FROM ClassEntity c
+             WHERE c.courseId IN :courseIds
+               AND c.isDeleted = 0
+             GROUP BY c.courseId
+            """)
+    List<Object[]> countByCourseIds(@Param("courseIds") Collection<Long> courseIds);
 }
