@@ -9,6 +9,7 @@ import com.education.base.dto.request.StudentUpdateRequest;
 import com.education.base.dto.response.FileResponseDto;
 import com.education.base.dto.response.PageResponse;
 import com.education.base.dto.response.StudentAttendanceSessionDto;
+import com.education.base.dto.response.StudentClassHistoryDto;
 import com.education.base.dto.response.StudentDetailResponse;
 import com.education.base.dto.response.StudentReportDto;
 import com.education.base.entity.AttendanceEntity;
@@ -250,7 +251,67 @@ public class StudentServiceImpl implements StudentService {
                 .flatMap(classId -> classRepository.findByIdAndIsDeleted(classId, NOT_DELETED))
                 .ifPresent(clazz -> applyClass(detail, clazz));
         applyAttendance(detail, entity.getId());
+        detail.setClassHistory(buildClassHistory(entity.getId()));
         return detail;
+    }
+
+    /** Trang thai ghi danh tong hop khi ban ghi da bi xoa mem (rut khoi lop). */
+    static final String HISTORY_REMOVED = "REMOVED";
+
+    private static final List<String> FINISHED_CLASS_STATUSES = List.of("CLOSED", "CANCELLED");
+
+    /**
+     * Lich su lop / khoa hoc cua hoc sinh - 1 truy van, dang hoc truoc, sau do moi nhat truoc.
+     */
+    List<StudentClassHistoryDto> buildClassHistory(Long studentId) {
+        if (studentId == null) {
+            return List.of();
+        }
+        List<Object[]> rows = classStudentRepository.findClassHistoryRows(studentId);
+        if (rows == null || rows.isEmpty()) {
+            return List.of();
+        }
+        List<StudentClassHistoryDto> history = new ArrayList<>(rows.size());
+        for (Object[] r : rows) {
+            String enrollStatus = (String) r[1];
+            boolean deleted = r[2] != null && ((Number) r[2]).intValue() != NOT_DELETED;
+            String classStatus = (String) r[9];
+            String effective = deleted ? HISTORY_REMOVED : enrollStatus;
+            boolean current = !deleted && ENROLLMENT_STATUS.equals(enrollStatus)
+                    && !FINISHED_CLASS_STATUSES.contains(classStatus);
+            LocalDateTime enrolledAt = (LocalDateTime) r[3];
+            LocalDateTime updatedAt = (LocalDateTime) r[4];
+            history.add(StudentClassHistoryDto.builder()
+                    .enrollmentId(r[0] == null ? null : ((Number) r[0]).longValue())
+                    .enrollmentStatus(effective)
+                    .enrolledAt(enrolledAt)
+                    .statusChangedAt(ENROLLMENT_STATUS.equals(effective) ? null : updatedAt)
+                    .classId(r[5] == null ? null : ((Number) r[5]).longValue())
+                    .classCode((String) r[6])
+                    .className((String) r[7])
+                    .subjectName((String) r[8])
+                    .classStatus(classStatus)
+                    .classStartDate((java.time.LocalDate) r[10])
+                    .classEndDate((java.time.LocalDate) r[11])
+                    .courseId(r[12] == null ? null : ((Number) r[12]).longValue())
+                    .courseCode((String) r[13])
+                    .courseName((String) r[14])
+                    .current(current)
+                    .build());
+        }
+        history.sort(Comparator
+                .comparing(StudentClassHistoryDto::isCurrent).reversed()
+                .thenComparing(StudentServiceImpl::historySortDate, Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(h -> h.getEnrollmentId() == null ? 0L : h.getEnrollmentId(), Comparator.reverseOrder()));
+        return history;
+    }
+
+    private static LocalDateTime historySortDate(StudentClassHistoryDto h) {
+        LocalDateTime best = h.getEnrolledAt();
+        if (h.getStatusChangedAt() != null && (best == null || h.getStatusChangedAt().isAfter(best))) {
+            best = h.getStatusChangedAt();
+        }
+        return best;
     }
 
     private void applyAttendance(StudentDetailResponse detail, Long studentId) {
