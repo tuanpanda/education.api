@@ -57,4 +57,21 @@ public interface ClassStudentRepository extends JpaRepository<ClassStudentEntity
              GROUP BY cs.classId
             """)
     List<Object[]> countEnrolledByClassIds(@Param("classIds") Collection<Long> classIds);
+
+    /**
+     * Lop dang hoc cua nhieu hoc sinh trong 1 truy van (danh sach hoc sinh, tranh N+1):
+     * ghi danh ENROLLED chua xoa, lop chua xoa va khong CLOSED/CANCELLED.
+     * Moi dong: [studentId, classId, classCode, className].
+     */
+    @Query("""
+            SELECT cs.studentId, c.id, c.classCode, c.className
+              FROM ClassStudentEntity cs JOIN cs.clazz c
+             WHERE cs.studentId IN :studentIds
+               AND cs.status = 'ENROLLED'
+               AND cs.isDeleted = 0
+               AND c.isDeleted = 0
+               AND c.status NOT IN ('CLOSED', 'CANCELLED')
+             ORDER BY cs.studentId, c.classCode
+            """)
+    List<Object[]> findActiveClassesByStudentIds(@Param("studentIds") Collection<Long> studentIds);
 }
