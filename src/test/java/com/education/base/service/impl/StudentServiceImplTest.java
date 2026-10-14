@@ -730,4 +730,33 @@ class StudentServiceImplTest {
         assertThat(previous.getIsDeleted()).isEqualTo(1);
         assertThat(result.getClassId()).isEqualTo(5L);
     }
+@Test
+    void search_attachesActiveClassesInOneBatchQuery() {
+        StudentFilterRequest filter = StudentFilterRequest.builder().pageNo(1).pageSize(10).build();
+        StudentReportDto a = StudentReportDto.builder().id(1L).studentCode("HS1").build();
+        StudentReportDto b = StudentReportDto.builder().id(2L).studentCode("HS2").build();
+        when(studentRepository.searchWithPaging(filter))
+                .thenReturn(PageResponse.of(new java.util.ArrayList<>(List.of(a, b)), 1, 10, 2));
+        when(classStudentRepository.findActiveClassesByStudentIds(List.of(1L, 2L))).thenReturn(List.of(
+                new Object[]{1L, 10L, "L10", "Toan 10"},
+                new Object[]{1L, 11L, "L11", "Ly 10"}));
+
+        PageResponse<StudentReportDto> page = service.search(filter);
+
+        assertThat(page.getContent().get(0).getEnrolled()).isTrue();
+        assertThat(page.getContent().get(0).getClasses()).extracting("classCode").containsExactly("L10", "L11");
+        assertThat(page.getContent().get(1).getEnrolled()).isFalse();
+        assertThat(page.getContent().get(1).getClasses()).isEmpty();
+        verify(classStudentRepository, org.mockito.Mockito.times(1)).findActiveClassesByStudentIds(any());
+    }
+
+    @Test
+    void search_emptyPage_skipsClassQuery() {
+        StudentFilterRequest filter = StudentFilterRequest.builder().build();
+        when(studentRepository.searchWithPaging(filter)).thenReturn(PageResponse.of(List.of(), 1, 20, 0));
+
+        service.search(filter);
+
+        verify(classStudentRepository, never()).findActiveClassesByStudentIds(any());
+    }
 }

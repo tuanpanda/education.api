@@ -84,7 +84,37 @@ public class StudentServiceImpl implements StudentService {
     @Override
     @Transactional(readOnly = true)
     public PageResponse<StudentReportDto> search(StudentFilterRequest filter) {
-        return studentRepository.searchWithPaging(filter);
+        PageResponse<StudentReportDto> page = studentRepository.searchWithPaging(filter);
+        attachActiveClasses(page == null ? null : page.getContent());
+        return page;
+    }
+
+    /**
+     * Gan lop dang hoc cho trang hoc sinh bang 1 truy van batch (khong N+1).
+     * "Da vao lop" = co ghi danh ENROLLED chua xoa trong lop chua xoa, khong CLOSED/CANCELLED.
+     */
+    private void attachActiveClasses(List<StudentReportDto> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        List<Long> ids = rows.stream().map(StudentReportDto::getId).filter(java.util.Objects::nonNull).distinct().toList();
+        Map<Long, List<com.education.base.dto.response.StudentClassChipDto>> byStudent = new HashMap<>();
+        if (!ids.isEmpty()) {
+            for (Object[] r : classStudentRepository.findActiveClassesByStudentIds(ids)) {
+                Long studentId = ((Number) r[0]).longValue();
+                byStudent.computeIfAbsent(studentId, k -> new ArrayList<>())
+                        .add(com.education.base.dto.response.StudentClassChipDto.builder()
+                                .classId(r[1] == null ? null : ((Number) r[1]).longValue())
+                                .classCode((String) r[2])
+                                .className((String) r[3])
+                                .build());
+            }
+        }
+        for (StudentReportDto row : rows) {
+            List<com.education.base.dto.response.StudentClassChipDto> classes = byStudent.getOrDefault(row.getId(), List.of());
+            row.setClasses(classes);
+            row.setEnrolled(!classes.isEmpty());
+        }
     }
 
     @Override
