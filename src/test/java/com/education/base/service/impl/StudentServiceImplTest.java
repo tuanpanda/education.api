@@ -259,6 +259,45 @@ class StudentServiceImplTest {
     }
 
     @Test
+    void getDetail_classHistory_currentFirstThenMostRecent_singleQuery() {
+        when(studentRepository.findByIdAndIsDeleted(1L, 0)).thenReturn(Optional.of(activeStudent(1L, "SV001")));
+        when(fileStorageService.getFilesByRef("STUDENT", 1L)).thenReturn(List.of());
+        java.time.LocalDateTime t = java.time.LocalDateTime.of(2026, 1, 1, 8, 0);
+        when(classStudentRepository.findClassHistoryRows(1L)).thenReturn(List.of(
+                // Lop da dong: ghi danh van ENROLLED nhung khong con dang hoc
+                new Object[] {10L, "ENROLLED", 0, t.plusMonths(6), null, 3L, "C3", "Lop 3", "Toan", "CLOSED",
+                        LocalDate.of(2026, 7, 1), LocalDate.of(2026, 9, 1), null, null, null},
+                // Da hoan thanh, cu nhat
+                new Object[] {11L, "COMPLETED", 0, t, t.plusMonths(2), 4L, "C4", "Lop 4", null, "CLOSED",
+                        null, null, 7L, "KH7", "Khoa 7"},
+                // Dang hoc
+                new Object[] {12L, "ENROLLED", 0, t.plusMonths(1), null, 5L, "C5", "Lop 5", null, "ONGOING",
+                        null, null, null, null, null},
+                // Da rut khoi lop (xoa mem)
+                new Object[] {13L, "ENROLLED", 1, t.plusMonths(3), t.plusMonths(4), 6L, "C6", "Lop 6", null, "OPEN",
+                        null, null, null, null, null}));
+
+        StudentDetailResponse detail = service.getDetail(1L);
+
+        assertThat(detail.getClassHistory()).extracting("classCode").containsExactly("C5", "C3", "C6", "C4");
+        assertThat(detail.getClassHistory().get(0).isCurrent()).isTrue();
+        assertThat(detail.getClassHistory().get(1).isCurrent()).isFalse();
+        assertThat(detail.getClassHistory().get(2).getEnrollmentStatus()).isEqualTo("REMOVED");
+        assertThat(detail.getClassHistory().get(2).getStatusChangedAt()).isEqualTo(t.plusMonths(4));
+        assertThat(detail.getClassHistory().get(3).getCourseName()).isEqualTo("Khoa 7");
+        assertThat(detail.getClassHistory().get(3).getStatusChangedAt()).isEqualTo(t.plusMonths(2));
+        verify(classStudentRepository).findClassHistoryRows(1L);
+    }
+
+    @Test
+    void getDetail_classHistory_emptyWhenNeverEnrolled() {
+        when(studentRepository.findByIdAndIsDeleted(1L, 0)).thenReturn(Optional.of(activeStudent(1L, "SV001")));
+        when(fileStorageService.getFilesByRef("STUDENT", 1L)).thenReturn(List.of());
+
+        assertThat(service.getDetail(1L).getClassHistory()).isEmpty();
+    }
+
+    @Test
     void getDetail_hidesNonActiveStudent() {
         when(studentRepository.findByIdAndIsDeleted(1L, 0)).thenReturn(Optional.of(
                 StudentEntity.builder().id(1L).studentCode("SV001").status("INACTIVE").isDeleted(0).build()));

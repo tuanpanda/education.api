@@ -46,6 +46,24 @@ public interface ClassStudentRepository extends JpaRepository<ClassStudentEntity
     List<ClassStudentEntity> findActiveEnrollmentsWithClass(
             @Param("studentId") Long studentId);
 
+    /**
+     * Lich su lop cua mot hoc sinh trong 1 truy van: moi ghi danh (ke ca da xoa mem / COMPLETED / DROPPED),
+     * lop chua xoa, kem khoa hoc mau (LMS_COURSES) neu lop co COURSE_ID.
+     * Moi dong: [cs.id, cs.status, cs.isDeleted, cs.enrolledAt, cs.updatedAt, c.id, c.classCode, c.className,
+     * c.subjectName, c.status, c.startDate, c.endDate, co.id, co.courseCode, co.courseName].
+     */
+    @Query("""
+            SELECT cs.id, cs.status, cs.isDeleted, cs.enrolledAt, cs.updatedAt,
+                   c.id, c.classCode, c.className, c.subjectName, c.status, c.startDate, c.endDate,
+                   co.id, co.courseCode, co.courseName
+              FROM ClassStudentEntity cs
+              JOIN cs.clazz c
+              LEFT JOIN CourseEntity co ON co.id = c.courseId
+             WHERE cs.studentId = :studentId
+               AND c.isDeleted = 0
+            """)
+    List<Object[]> findClassHistoryRows(@Param("studentId") Long studentId);
+
     // ---- GĐ3 Bot 1 ----
     List<ClassStudentEntity> findByClassIdAndStatusAndIsDeleted(Long classId, String status, Integer isDeleted);
 

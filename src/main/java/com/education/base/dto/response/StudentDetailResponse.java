@@ -72,6 +72,12 @@ public class StudentDetailResponse {
     private List<StudentAttendanceSessionDto> attendanceSessions = new ArrayList<>();
 
     /**
+     * Lich su lop / khoa hoc: moi ghi danh cua hoc sinh (ke ca da ket thuc), dang hoc truoc roi moi nhat truoc.
+     */
+    @Builder.Default
+    private List<StudentClassHistoryDto> classHistory = new ArrayList<>();
+
+    /**
      * Tài liệu đính kèm của học sinh (module {@code STUDENT}), rỗng nếu chưa có file nào.
      */
     @Builder.Default
