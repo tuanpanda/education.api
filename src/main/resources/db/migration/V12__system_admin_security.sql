@@ -3,8 +3,8 @@
 --
 --   * SYS_USERS: MUST_CHANGE_PASSWORD, TOKEN_VERSION (thu hoi JWT), LAST_LOGIN_AT, PASSWORD_CHANGED_AT.
 --   * Mat khau chuyen sang BCrypt:
---       - admin / Admin@123            (bat buoc doi mat khau o lan dang nhap dau)
---       - tai khoan demo con mat khau SHA-256 'Education@123' -> BCrypt 'Education@123' (bat buoc doi)
+--       - admin / <mat khau ban dau, giao rieng> (bat buoc doi mat khau o lan dang nhap dau)
+--       - tai khoan demo con mat khau SHA-256 mac dinh cu -> BCrypt cung mat khau (bat buoc doi)
 --     Chi ghi de khi PASSWORD_HASH chua phai BCrypt ('$2...') hoac con la hash "mau" cua schema_init.sql cu
 --     ('$2a$10$7EqJ...Kq2G' - dung dinh dang BCrypt nhung KHONG khop mat khau nao), chay lai nhieu lan an toan.
 --   * Menu 'Quan tri he thong': Nguoi dung (/admin/users), Vai tro & phan quyen (/admin/roles), Menu (/admin/menus).
@@ -106,8 +106,8 @@ USING (
 ) s ON (t.USER_ID = s.USER_ID AND t.ROLE_ID = s.ROLE_ID)
 WHEN NOT MATCHED THEN INSERT (USER_ID, ROLE_ID, ASSIGNED_BY) VALUES (s.USER_ID, s.ROLE_ID, 'V12_MIGRATION');
 
--- Tai khoan demo (V1) con mat khau SHA-256 cua 'Education@123' (hoac hash "mau" khong dung duoc cua
--- schema_init.sql cu) -> BCrypt 'Education@123', buoc doi.
+-- Tai khoan demo (V1) con mat khau SHA-256 mac dinh cu (hoac hash "mau" khong dung duoc cua
+-- schema_init.sql cu) -> BCrypt cung mat khau, buoc doi.
 UPDATE SYS_USERS
    SET PASSWORD_HASH = '$2a$10$NDLPXq0uJZykYoFJWdOZIuYlv64aHu.YXRqP9n8yWAd7./30VwigW',
        MUST_CHANGE_PASSWORD = 1,
