@@ -262,9 +262,12 @@ public class PortalLessonServiceImpl implements PortalLessonService {
                 .orElseThrow(PortalLessonServiceImpl::notFound);
         List<ClassEntity> candidates;
         if (classId != null) {
+            // isEnrolled không ném: tránh lỗi ném qua proxy @Transactional lồng nhau đánh dấu tx ngoài rollback-only.
+            if (!studentScopeGuard.isEnrolled(classId)) {
+                throw notFound();
+            }
             try {
-                studentScopeGuard.requireEnrolled(classId);
-                candidates = List.of(access.requireClass(classId));
+                candidates = List.of(access.requireClass(classId)); // LessonAccess không @Transactional
             } catch (OracleBusinessException e) {
                 throw notFound();
             }
