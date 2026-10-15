@@ -38,6 +38,9 @@ public class GradeResponseDto {
     /** GĐ2 (§9 #1): khác null = điểm đồng bộ từ bài tập, chỉ đọc. */
     private Long assignmentId;
 
+    /** GĐ4: điểm đồng bộ từ đề kiểm tra (chỉ đọc). */
+    private Long quizId;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

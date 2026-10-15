@@ -91,6 +91,11 @@ app:
     jobs:
       enabled: ${APP_FILES_JOBS_ENABLED:true}
       retention-cron: "0 30 2 * * *"                 # 02:30 hằng ngày (giờ server)
+  quiz:
+    grace-sec: ${APP_QUIZ_GRACE_SEC:30}              # GĐ4 BR-24/Q14: ân hạn mạng (giây)
+    jobs:
+      enabled: ${APP_QUIZ_JOBS_ENABLED:true}         # GĐ4 BR-27: job tự nộp bài quá hạn mỗi phút
+      auto-submit-delay-ms: 60000
   files:
     audit:
       views: ${APP_FILES_AUDIT_VIEWS:false}          # QĐ-F11: chỉ ghi tải về + quản trị + cổng học sinh

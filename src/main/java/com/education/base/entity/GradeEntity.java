@@ -73,6 +73,10 @@ public class GradeEntity {
     @Column(name = "ASSIGNMENT_ID")
     private Long assignmentId;
 
+    /** GĐ4 (V22_4): điểm đẩy từ đề kiểm tra LMS_QUIZZES (GRADE_TYPE=QUIZ); NULL = không phải điểm đề. Chỉ đọc qua API điểm. */
+    @Column(name = "QUIZ_ID")
+    private Long quizId;
+
     @Column(name = "IS_DELETED", nullable = false)
     private Integer isDeleted;
 

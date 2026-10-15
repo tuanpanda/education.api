@@ -60,6 +60,27 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ex.getErrorCode(), OracleErrorMessages.toClientMessage(rawMessage)));
     }
 
+    /** GĐ4: lỗi nghiệp vụ kèm {@code data} (ví dụ {@code QUESTION_IMPORT_INVALID} + {@code data.errors}). */
+    @ExceptionHandler(BusinessDataException.class)
+    public ResponseEntity<ApiResponse<Object>> handleBusinessDataException(BusinessDataException ex) {
+        HttpStatus status = isNotFoundCode(ex.getErrorCode()) ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
+        log.warn("[BusinessException] errorCode={}, status={}, message={}", ex.getErrorCode(), status.value(),
+                ex.getMessage());
+        return ResponseEntity.status(status)
+                .body(ApiResponse.error(ex.getErrorCode(), OracleErrorMessages.toClientMessage(ex.getMessage()),
+                        ex.getData()));
+    }
+
+    /** GĐ4: 429 {@code RATE_LIMITED} + header {@code Retry-After} (giây), {@code data.retryAfterSeconds}. */
+    @ExceptionHandler(RateLimitedException.class)
+    public ResponseEntity<ApiResponse<java.util.Map<String, Long>>> handleRateLimitedException(RateLimitedException ex) {
+        log.warn("[RateLimited] errorCode={}, retryAfter={}s", ex.getErrorCode(), ex.getRetryAfterSeconds());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(org.springframework.http.HttpHeaders.RETRY_AFTER, String.valueOf(ex.getRetryAfterSeconds()))
+                .body(ApiResponse.error(ex.getErrorCode(), ex.getMessage(),
+                        java.util.Map.of("retryAfterSeconds", ex.getRetryAfterSeconds())));
+    }
+
     /**
      * Xử lý lỗi validate dữ liệu đầu vào ({@code @Valid} trên request body).
      */

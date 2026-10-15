@@ -146,20 +146,28 @@ public class GradeServiceImpl implements GradeService {
      * nếu chỉ có dòng đồng bộ cho loại này -> 400 {@code GRADE_SYNCED_READONLY}.
      */
     private java.util.Optional<GradeEntity> findManualGrade(Long classId, Long studentId, String gradeType) {
-        if (!com.education.base.common.homework.HomeworkConstants.GRADEBOOK_GRADE_TYPE.equals(gradeType)) {
+        boolean multiRowType = com.education.base.common.homework.HomeworkConstants.GRADEBOOK_GRADE_TYPE.equals(gradeType)
+                || com.education.base.common.quiz.QuizConstants.GRADEBOOK_GRADE_TYPE.equals(gradeType);
+        if (!multiRowType) {
             java.util.Optional<GradeEntity> row = gradeRepository.findByClassIdAndStudentIdAndGradeType(classId, studentId, gradeType);
-            row.filter(g -> g.getAssignmentId() != null).ifPresent(g -> {
+            row.filter(GradeServiceImpl::isSynced).ifPresent(g -> {
                 throw syncedReadonly();
             });
             return row;
         }
+        // ASSIGNMENT (GĐ2) / QUIZ (GĐ4): nhiều dòng đồng bộ (mỗi bài/đề 1 dòng) + tối đa 1 dòng nhập tay.
         List<GradeEntity> rows = gradeRepository.findByClassIdAndStudentIdAndGradeTypeOrderByIdAsc(classId, studentId, gradeType);
-        java.util.Optional<GradeEntity> manual = rows.stream().filter(g -> g.getAssignmentId() == null).findFirst();
-        if (manual.isEmpty() && rows.stream().anyMatch(g -> g.getAssignmentId() != null
+        java.util.Optional<GradeEntity> manual = rows.stream().filter(g -> !isSynced(g)).findFirst();
+        if (manual.isEmpty() && rows.stream().anyMatch(g -> isSynced(g)
                 && (g.getIsDeleted() == null || g.getIsDeleted() == PersistenceFlags.NOT_DELETED))) {
             throw syncedReadonly();
         }
         return manual;
+    }
+
+    /** Dòng đồng bộ (bài tập GĐ2 hoặc đề kiểm tra GĐ4) - chỉ đọc qua API điểm. */
+    private static boolean isSynced(GradeEntity g) {
+        return g.getAssignmentId() != null || g.getQuizId() != null;
     }
 
     private static OracleBusinessException syncedReadonly() {

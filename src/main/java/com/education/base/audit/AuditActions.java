@@ -125,6 +125,28 @@ public class AuditActions {
     /** Học sinh hoàn thành bài lần đầu. Detail: lessonId, classId. (Tải file bài học ghi FILE_DOWNLOADED.) */
     public static final String LESSON_COMPLETED = "LESSON_COMPLETED";
 
+    // ---- GĐ4 Trắc nghiệm ------------------------------------------------------------------------
+    public static final String QUIZ_QUESTION_CREATED = "QUIZ_QUESTION_CREATED";
+    public static final String QUIZ_QUESTION_UPDATED = "QUIZ_QUESTION_UPDATED";
+    public static final String QUIZ_QUESTION_DELETED = "QUIZ_QUESTION_DELETED";
+    /** Detail: totalRows, imported. */
+    public static final String QUIZ_QUESTIONS_IMPORTED = "QUIZ_QUESTIONS_IMPORTED";
+    public static final String QUIZ_CREATED = "QUIZ_CREATED";
+    public static final String QUIZ_UPDATED = "QUIZ_UPDATED";
+    public static final String QUIZ_DELETED = "QUIZ_DELETED";
+    /** Detail: sourceQuizId, targetClassId. */
+    public static final String QUIZ_COPIED = "QUIZ_COPIED";
+    public static final String QUIZ_PUBLISHED = "QUIZ_PUBLISHED";
+    public static final String QUIZ_UNPUBLISHED = "QUIZ_UNPUBLISHED";
+    /** Detail: closeAt, inProgress. */
+    public static final String QUIZ_CLOSED_EARLY = "QUIZ_CLOSED_EARLY";
+    public static final String QUIZ_RESULTS_RELEASED = "QUIZ_RESULTS_RELEASED";
+    public static final String QUIZ_ANSWER_GRADED = "QUIZ_ANSWER_GRADED";
+    /** Ghi đè điểm câu chấm tự động. Detail: oldPoints, newPoints, reason. */
+    public static final String QUIZ_ANSWER_OVERRIDDEN = "QUIZ_ANSWER_OVERRIDDEN";
+    public static final String QUIZ_EXPORTED = "QUIZ_EXPORTED";
+    public static final String QUIZ_GRADEBOOK_SYNC_FAILED = "QUIZ_GRADEBOOK_SYNC_FAILED";
+
     // ---- Loại đối tượng (RESOURCE_TYPE) ----------------------------------------------------------
     public static final String RESOURCE_USER = "USER";
     public static final String RESOURCE_ROLE = "ROLE";
@@ -145,4 +167,8 @@ public class AuditActions {
     public static final String RESOURCE_LESSON_SECTION = "LESSON_SECTION";
     public static final String RESOURCE_LESSON = "LESSON";
     public static final String RESOURCE_LESSON_RESOURCE = "LESSON_RESOURCE";
+    // GĐ4 Trắc nghiệm.
+    public static final String RESOURCE_QUESTION = "QUESTION";
+    public static final String RESOURCE_QUIZ = "QUIZ";
+    public static final String RESOURCE_QUIZ_ATTEMPT = "QUIZ_ATTEMPT";
 }
