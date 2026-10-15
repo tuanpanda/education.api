@@ -422,9 +422,8 @@ public class PortalHomeworkServiceImpl implements PortalHomeworkService {
         if (a == null) {
             throw notFound();
         }
-        try {
-            studentScopeGuard.requireEnrolled(a.getClassId());
-        } catch (OracleBusinessException e) {
+        // isEnrolled không ném: tránh lỗi ném qua proxy @Transactional lồng nhau đánh dấu tx ngoài rollback-only.
+        if (!studentScopeGuard.isEnrolled(a.getClassId())) {
             throw notFound();
         }
         return a;
