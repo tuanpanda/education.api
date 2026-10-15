@@ -75,6 +75,7 @@ class PortalQuizServiceImplTest {
     QuizJson json = new QuizJson();
     LocalDateTime now = OPEN.plusMinutes(10);
     QuizSaveRateLimiter limiter;
+    com.education.base.testsupport.InMemoryTransactionManager txManager = new com.education.base.testsupport.InMemoryTransactionManager();
     PortalQuizServiceImpl service;
     QuizEntity quiz;
 
@@ -87,7 +88,7 @@ class PortalQuizServiceImplTest {
         when(ctx.requireCurrentStudentId()).thenReturn(ME);
         when(quizRepository.findByIdAndIsDeleted(1L, 0)).thenReturn(Optional.of(quiz));
         when(quizRepository.findById(1L)).thenReturn(Optional.of(quiz));
-        when(scope.requireEnrolled(CLASS_ID)).thenReturn(new ClassStudentEntity());
+        when(scope.isEnrolled(CLASS_ID)).thenReturn(true);
         when(grading.expireIfDue(any(), any())).thenAnswer(i -> i.getArgument(0));
         when(attemptRepository.saveAndFlush(any())).thenAnswer(i -> {
             QuizAttemptEntity a = i.getArgument(0);
@@ -101,7 +102,7 @@ class PortalQuizServiceImplTest {
         limiter = new QuizSaveRateLimiter(clock);
         service = new PortalQuizServiceImpl(quizRepository, quizQuestionRepository, ruleRepository, attemptRepository,
                 answerRepository, eventRepository, classRepository, classStudentRepository, ctx, scope, grading, limiter,
-                json, clock);
+                json, clock, txManager);
         service.random = new Random(7);
     }
 
@@ -131,7 +132,7 @@ class PortalQuizServiceImplTest {
 
     @Test
     void otherClassQuiz_is404_andNoAttemptCreated_QZ_K01_K02() {
-        when(scope.requireEnrolled(CLASS_ID)).thenThrow(new OracleBusinessException("CLASS_NOT_FOUND", "x"));
+        when(scope.isEnrolled(CLASS_ID)).thenReturn(false);
         assertThatThrownBy(() -> service.get(1L)).extracting("errorCode").isEqualTo("QUIZ_NOT_FOUND");
         assertThatThrownBy(() -> service.start(1L, "ip", "ua")).extracting("errorCode").isEqualTo("QUIZ_NOT_FOUND");
         verify(attemptRepository, never()).saveAndFlush(any());
@@ -174,7 +175,7 @@ class PortalQuizServiceImplTest {
     @Test
     void withdrawnStudent_ownAttemptIs404_QZ_E08() {
         attempt(100L, ME, "AUTO_SUBMITTED");
-        when(scope.requireEnrolled(CLASS_ID)).thenThrow(new OracleBusinessException("CLASS_NOT_FOUND", "x"));
+        when(scope.isEnrolled(CLASS_ID)).thenReturn(false);
         assertThatThrownBy(() -> service.result(100L)).extracting("errorCode").isEqualTo("QUIZ_ATTEMPT_NOT_FOUND");
     }
 
@@ -232,6 +233,41 @@ class PortalQuizServiceImplTest {
         QuizAttemptEntity existing = attempt(300L, ME, "IN_PROGRESS");
         when(attemptRepository.findFirstByQuizIdAndStudentIdAndStatus(1L, ME, "IN_PROGRESS")).thenReturn(Optional.of(existing));
         assertThat(service.start(1L, "ip", "ua").getAttemptId()).isEqualTo(300L);
+    }
+
+    @Test
+    void start_concurrentUniqueViolation_insertInOwnTx_rereadsInFreshTx_BUG_GD4_2() {
+        when(attemptRepository.findByQuizIdAndStudentIdOrderByAttemptNoAsc(1L, ME)).thenReturn(new ArrayList<>());
+        when(quizQuestionRepository.findByQuizIdOrderBySortOrderAscIdAsc(1L)).thenReturn(List.of(fixed(5L)));
+        org.mockito.Mockito.doThrow(new DataIntegrityViolationException("ORA-00001: UQ_QATT_QUIZ_STUDENT_NO"))
+                .when(attemptRepository).saveAndFlush(any());
+        QuizAttemptEntity existing = attempt(300L, ME, "IN_PROGRESS");
+        when(attemptRepository.findFirstByQuizIdAndStudentIdAndStatus(1L, ME, "IN_PROGRESS")).thenReturn(Optional.of(existing));
+        assertThat(service.start(1L, "ip", "ua").getAttemptId()).isEqualTo(300L);
+        // insert chạy trong tx riêng (rollback), đọc lại trong tx riêng khác (commit); không ghi câu/event.
+        assertThat(txManager.rollbacks).isEqualTo(1);
+        assertThat(txManager.commits).isEqualTo(1);
+        verify(answerRepository, never()).saveAll(anyList());
+        verify(eventRepository, never()).save(any());
+    }
+
+    @Test
+    void start_uniqueViolationWithoutInProgress_rethrows_BUG_GD4_2() {
+        when(attemptRepository.findByQuizIdAndStudentIdOrderByAttemptNoAsc(1L, ME)).thenReturn(new ArrayList<>());
+        when(quizQuestionRepository.findByQuizIdOrderBySortOrderAscIdAsc(1L)).thenReturn(List.of(fixed(5L)));
+        org.mockito.Mockito.doThrow(new DataIntegrityViolationException("x")).when(attemptRepository).saveAndFlush(any());
+        when(attemptRepository.findFirstByQuizIdAndStudentIdAndStatus(1L, ME, "IN_PROGRESS")).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.start(1L, "ip", "ua")).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void start_success_writesAttemptAnswersEventInOneNewTx_BUG_GD4_2() {
+        when(attemptRepository.findByQuizIdAndStudentIdOrderByAttemptNoAsc(1L, ME)).thenReturn(new ArrayList<>());
+        when(quizQuestionRepository.findByQuizIdOrderBySortOrderAscIdAsc(1L)).thenReturn(List.of(fixed(5L)));
+        assertThat(service.start(1L, "ip", "ua").getAttemptId()).isEqualTo(100L);
+        assertThat(txManager.commits).isEqualTo(1);
+        assertThat(txManager.rollbacks).isZero();
+        verify(answerRepository).saveAll(anyList());
     }
 
     @Test

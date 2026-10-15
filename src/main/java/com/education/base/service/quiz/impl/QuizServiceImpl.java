@@ -430,6 +430,7 @@ public class QuizServiceImpl {
         }
         Map<Long, StudentEntity> students = studentRepository.findAllById(enrollmentStatus.keySet()).stream()
                 .collect(Collectors.toMap(StudentEntity::getId, Function.identity()));
+        Set<Long> pendingIds = pendingEssayIds(attempts);
         List<QuizAttemptMatrixDto.Row> rows = new ArrayList<>();
         for (Map.Entry<Long, String> e : enrollmentStatus.entrySet()) {
             List<QuizAttemptEntity> list = byStudent.getOrDefault(e.getKey(), List.of());
@@ -453,6 +454,7 @@ public class QuizServiceImpl {
                     .enrollmentStatus(e.getValue()).attemptsUsed(list.size()).bestScore(best).finalScore(fin)
                     .finalScore10(QuizRules.score10(fin, q.getMaxScore())).status(status)
                     .lastAttemptId(last == null ? null : last.getId()).focusLostCount(focus).flags(new ArrayList<>(flags))
+                    .pendingEssay(last != null && pendingIds.contains(last.getId()))
                     .build());
         }
         rows.sort(Comparator.comparing((QuizAttemptMatrixDto.Row r) -> r.getFullName() == null ? "" : r.getFullName())
@@ -699,6 +701,24 @@ public class QuizServiceImpl {
         ruleRepository.saveAll(rules);
     }
 
+    /** Attempt SUBMITTED/AUTO_SUBMITTED còn ít nhất 1 câu tự luận chưa chấm (POINTS_AWARDED null). */
+    Set<Long> pendingEssayIds(List<QuizAttemptEntity> attempts) {
+        List<Long> ids = attempts.stream().filter(a -> AttemptStatus.SUBMITTED.equals(a.getStatus())
+                || AttemptStatus.AUTO_SUBMITTED.equals(a.getStatus())).map(QuizAttemptEntity::getId).toList();
+        if (ids.isEmpty()) {
+            return Set.of();
+        }
+        Set<Long> out = new java.util.HashSet<>();
+        for (int i = 0; i < ids.size(); i += 900) {
+            for (QuizAnswerEntity x : answerRepository.findByAttemptIdIn(ids.subList(i, Math.min(ids.size(), i + 900)))) {
+                if (x.getPointsAwarded() == null) {
+                    out.add(x.getAttemptId());
+                }
+            }
+        }
+        return out;
+    }
+
     private Map<Long, ClassEntity> classesOf(List<Long> ids) {
         List<Long> d = ids.stream().distinct().toList();
         return d.isEmpty() ? Map.of() : classRepository.findAllById(d).stream()
@@ -712,8 +732,7 @@ public class QuizServiceImpl {
         Map<Long, List<QuizAttemptEntity>> by = new HashMap<>();
         attempts.forEach(a -> by.computeIfAbsent(a.getStudentId(), k -> new ArrayList<>()).add(a));
         long submitted = by.values().stream().filter(l -> l.stream().anyMatch(QuizRules::finished)).count();
-        long pending = attempts.stream().filter(a -> AttemptStatus.SUBMITTED.equals(a.getStatus())
-                || AttemptStatus.AUTO_SUBMITTED.equals(a.getStatus())).count();
+        long pending = pendingEssayIds(attempts).size();
         List<BigDecimal> finals = by.values().stream().map(l -> QuizRules.finalScore(q.getScorePolicy(), l))
                 .filter(Objects::nonNull).map(s -> QuizRules.score10(s, q.getMaxScore())).toList();
         BigDecimal avg = finals.isEmpty() ? null : finals.stream().reduce(BigDecimal.ZERO, BigDecimal::add)

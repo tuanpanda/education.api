@@ -284,6 +284,49 @@ class QuizServiceImplTest {
         assertThatThrownBy(() -> service.grade(100L, 5L, req("1", null, 4L))).isInstanceOf(ForbiddenException.class);
     }
 
+    // ------------------------------------------------------------------ pendingEssay ở ma trận GV (v1.3) + BUG-GD4-3
+
+    QuizAttemptEntity matrixAttempt(long id, long studentId, String status) {
+        return QuizAttemptEntity.builder().id(id).quizId(1L).studentId(studentId).attemptNo(1).status(status)
+                .startedAt(OPEN).deadlineAt(OPEN.plusMinutes(30)).score(BigDecimal.ONE).maxScore(BigDecimal.TEN)
+                .focusLostCount(0).version(0L).build();
+    }
+
+    @Test
+    void matrix_pendingEssayPerRow_andStats_autoSubmittedNoEssayIsNotPending() {
+        List<QuizAttemptEntity> attempts = List.of(
+                matrixAttempt(201L, 1L, "AUTO_SUBMITTED"),   // không tự luận -> không chờ chấm
+                matrixAttempt(202L, 2L, "AUTO_SUBMITTED"),   // còn tự luận chưa chấm
+                matrixAttempt(203L, 3L, "SUBMITTED"),        // còn tự luận chưa chấm
+                matrixAttempt(204L, 4L, "GRADED"),
+                matrixAttempt(205L, 5L, "IN_PROGRESS"));
+        when(attemptRepository.findByQuizIdOrderByStudentIdAscAttemptNoAsc(1L)).thenReturn(attempts);
+        when(answerRepository.findByAttemptIdIn(any())).thenReturn(List.of(
+                QuizAnswerEntity.builder().attemptId(201L).pointsAwarded(BigDecimal.ONE).build(),
+                QuizAnswerEntity.builder().attemptId(202L).pointsAwarded(BigDecimal.ONE).build(),
+                QuizAnswerEntity.builder().attemptId(202L).pointsAwarded(null).build(),
+                QuizAnswerEntity.builder().attemptId(203L).pointsAwarded(null).build()));
+        var m = service.matrix(1L, null);
+        java.util.Map<Long, Boolean> byStudent = new java.util.HashMap<>();
+        m.getRows().forEach(r -> byStudent.put(r.getStudentId(), r.getPendingEssay()));
+        assertThat(byStudent).containsEntry(1L, false).containsEntry(2L, true).containsEntry(3L, true)
+                .containsEntry(4L, false).containsEntry(5L, false);
+        assertThat(m.getQuiz().getStats().getPendingEssay()).isEqualTo(2L);
+        assertThat(m.getQuiz().getStats().getSubmitted()).isEqualTo(4L);
+        // lọc theo AUTO_SUBMITTED trả đúng 2 HS
+        assertThat(service.matrix(1L, "AUTO_SUBMITTED").getRows()).extracting(r -> r.getStudentId())
+                .containsExactlyInAnyOrder(1L, 2L);
+    }
+
+    @Test
+    void pendingEssayIds_ignoresGradedAndInProgress() {
+        when(answerRepository.findByAttemptIdIn(any())).thenReturn(List.of(
+                QuizAnswerEntity.builder().attemptId(301L).pointsAwarded(null).build()));
+        assertThat(service.pendingEssayIds(List.of(matrixAttempt(301L, 1L, "AUTO_SUBMITTED")))).containsExactly(301L);
+        assertThat(service.pendingEssayIds(List.of(matrixAttempt(302L, 1L, "GRADED"),
+                matrixAttempt(303L, 2L, "IN_PROGRESS")))).isEmpty();
+    }
+
     // ------------------------------------------------------------------ CANDIDATE_SNAPSHOT (§9 #7)
 
     @SuppressWarnings("unchecked")

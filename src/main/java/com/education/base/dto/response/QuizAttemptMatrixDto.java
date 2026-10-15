@@ -35,6 +35,8 @@ public class QuizAttemptMatrixDto {
         private String status;
         private Long lastAttemptId;
         private Integer focusLostCount;
+        /** Lượt cuối SUBMITTED/AUTO_SUBMITTED còn câu tự luận chưa chấm. */
+        private Boolean pendingEssay;
         private List<String> flags;
     }
 }

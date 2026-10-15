@@ -40,7 +40,10 @@ import com.education.base.service.impl.StudentScopeGuard;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -84,6 +87,7 @@ public class PortalQuizServiceImpl {
     private final QuizSaveRateLimiter rateLimiter;
     private final QuizJson json;
     private final Clock clock;
+    private final PlatformTransactionManager transactionManager;
     /** Nguồn ngẫu nhiên bốc đề / xáo (test thay được). */
     Random random = new java.security.SecureRandom();
 
@@ -188,24 +192,20 @@ public class PortalQuizServiceImpl {
             order.add(new QuizJson.PaperItem(s.id(), opts));
         }
         a.setQuestionOrder(json.write(order));
+        // Ghi attempt + câu + event trong transaction RIÊNG (REQUIRES_NEW): nếu request song song đã chèn trước
+        // (UQ_QATT_QUIZ_STUDENT_NO / UX_QATT_ONE_IN_PROGRESS) thì chỉ transaction con rollback, transaction ngoài vẫn
+        // dùng được để đọc lại attempt đang làm và trả cùng attemptId (không 500).
         QuizAttemptEntity saved;
         try {
-            saved = attemptRepository.saveAndFlush(a);
+            saved = newTx().execute(st -> insertAttempt(a, paper, now));
         } catch (DataIntegrityViolationException e) {
-            // Hai request start cùng lúc: UX_QATT_ONE_IN_PROGRESS chặn bản thứ 2 -> trả attempt đang làm.
-            QuizAttemptEntity existing = attemptRepository.findFirstByQuizIdAndStudentIdAndStatus(q.getId(), studentId,
-                    AttemptStatus.IN_PROGRESS).orElseThrow(() -> e);
+            QuizAttemptEntity existing = newTx().execute(st -> attemptRepository.findFirstByQuizIdAndStudentIdAndStatus(
+                    q.getId(), studentId, AttemptStatus.IN_PROGRESS).orElse(null));
+            if (existing == null) {
+                throw e;
+            }
             return toAttemptDto(existing, q, now);
         }
-        List<QuizAnswerEntity> answers = new ArrayList<>();
-        int i = 0;
-        for (QuizJson.Snapshot s : paper) {
-            answers.add(QuizAnswerEntity.builder().attemptId(saved.getId()).questionId(s.id()).sortOrder(i++)
-                    .points(s.points()).snapshot(json.write(s)).build());
-        }
-        answerRepository.saveAll(answers);
-        eventRepository.save(QuizAttemptEventEntity.builder().attemptId(saved.getId()).eventType(EventType.STARTED)
-                .occurredAt(now).ipAddress(saved.getIpAddress()).userAgent(saved.getUserAgent()).build());
         return toAttemptDto(saved, q, now);
     }
 
@@ -335,14 +335,32 @@ public class PortalQuizServiceImpl {
 
     // ============================================================================ helpers
 
+    private TransactionTemplate newTx() {
+        TransactionTemplate t = new TransactionTemplate(transactionManager);
+        t.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        return t;
+    }
+
+    private QuizAttemptEntity insertAttempt(QuizAttemptEntity a, List<QuizJson.Snapshot> paper, LocalDateTime now) {
+        QuizAttemptEntity saved = attemptRepository.saveAndFlush(a);
+        List<QuizAnswerEntity> answers = new ArrayList<>();
+        int i = 0;
+        for (QuizJson.Snapshot s : paper) {
+            answers.add(QuizAnswerEntity.builder().attemptId(saved.getId()).questionId(s.id()).sortOrder(i++)
+                    .points(s.points()).snapshot(json.write(s)).build());
+        }
+        answerRepository.saveAll(answers);
+        eventRepository.save(QuizAttemptEventEntity.builder().attemptId(saved.getId()).eventType(EventType.STARTED)
+                .occurredAt(now).ipAddress(saved.getIpAddress()).userAgent(saved.getUserAgent()).build());
+        return saved;
+    }
+
     /** Đề phải: chưa xoá, PUBLISHED/CLOSED đã từng mở, lớp HS đang ENROLLED, now >= OPEN_AT. Khác -> 404. */
     QuizEntity requireStartedQuiz(Long quizId, LocalDateTime now) {
         QuizEntity q = quizRepository.findByIdAndIsDeleted(quizId, PersistenceFlags.NOT_DELETED)
                 .filter(x -> QuizRules.portalListed(x, now) && !now.isBefore(x.getOpenAt()))
                 .orElseThrow(PortalQuizServiceImpl::quizNotFound);
-        try {
-            studentScopeGuard.requireEnrolled(q.getClassId());
-        } catch (OracleBusinessException e) {
+        if (!studentScopeGuard.isEnrolled(q.getClassId())) {
             throw quizNotFound();
         }
         return q;
@@ -356,9 +374,7 @@ public class PortalQuizServiceImpl {
                 .orElseThrow(PortalQuizServiceImpl::attemptNotFound);
         QuizEntity q = quizRepository.findByIdAndIsDeleted(a.getQuizId(), PersistenceFlags.NOT_DELETED)
                 .orElseThrow(PortalQuizServiceImpl::attemptNotFound);
-        try {
-            studentScopeGuard.requireEnrolled(q.getClassId());
-        } catch (OracleBusinessException e) {
+        if (!studentScopeGuard.isEnrolled(q.getClassId())) {
             throw attemptNotFound();
         }
         return a;

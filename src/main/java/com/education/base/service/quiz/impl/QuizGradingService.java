@@ -131,11 +131,24 @@ public class QuizGradingService {
         }
         a.setScore(total);
         a.setMaxScore(max);
-        if (!pending) {
+        boolean auto = AttemptStatus.AUTO_SUBMITTED.equals(a.getStatus());
+        if (pending) {
+            if (AttemptStatus.GRADED.equals(a.getStatus())) {
+                // GV gỡ điểm câu tự luận -> quay về trạng thái nộp ban đầu (nộp tự động = nộp sau hạn + ân hạn).
+                boolean wasAuto = a.getSubmittedAt() != null && a.getDeadlineAt() != null && QuizRules.overdue(a, a.getSubmittedAt());
+                a.setStatus(wasAuto ? AttemptStatus.AUTO_SUBMITTED : AttemptStatus.SUBMITTED);
+            }
+        } else if (!auto || teacherGradedEssay(answers)) {
+            // HS tự nộp: chấm xong -> GRADED. Nộp tự động: chỉ GRADED khi GV đã chấm xong câu tự luận;
+            // đề không có tự luận (chấm máy đủ điểm) giữ AUTO_SUBMITTED.
             a.setStatus(AttemptStatus.GRADED);
-        } else if (AttemptStatus.GRADED.equals(a.getStatus())) {
-            a.setStatus(AttemptStatus.SUBMITTED);
         }
+    }
+
+    /** Có câu tự luận do GV chấm (không phải SYSTEM, không phải câu chấm máy). */
+    static boolean teacherGradedEssay(List<QuizAnswerEntity> answers) {
+        return answers.stream().anyMatch(x -> x.getIsCorrect() == null && x.getPointsAwarded() != null
+                && x.getGradedBy() != null && !"SYSTEM".equals(x.getGradedBy()));
     }
 
     static boolean pendingEssay(List<QuizAnswerEntity> answers) {
