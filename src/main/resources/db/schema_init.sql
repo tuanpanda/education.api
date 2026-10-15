@@ -8,7 +8,7 @@
 -- 8 bảng, 7 sequence, 1 index, 3 Standalone Procedure và dữ liệu tham chiếu.
 --
 -- Chạy bằng SQL*Plus / SQLcl / SQL Developer với user sở hữu schema, ví dụ:
---     sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @schema_init.sql
+--     sqlplus <schema_user>@//localhost:1521/ORCL @schema_init.sql   (mat khau nhap khi duoc hoi)
 --
 -- CẢNH BÁO: Section 0 DROP toàn bộ đối tượng cũ, mọi dữ liệu hiện có sẽ bị mất.
 --------------------------------------------------------------------------------

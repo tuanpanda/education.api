@@ -10,7 +10,7 @@
 --   * Menu 'Quan tri he thong': Nguoi dung (/admin/users), Vai tro & phan quyen (/admin/roles), Menu (/admin/menus).
 --   * ROLE_ADMIN: toan quyen tren moi menu / chuc nang.
 --
---   sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @V12__system_admin_security.sql
+--   sqlplus <schema_user>@//localhost:1521/ORCL @V12__system_admin_security.sql   (mat khau nhap khi duoc hoi)
 -- =============================================================================
 
 SET DEFINE OFF

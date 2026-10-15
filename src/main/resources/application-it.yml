@@ -1,0 +1,20 @@
+# Profile it - API dev (:8080) tro vao schema EDUCATION_PRE (docs/specs/PRE.md, AC-14, AC-15).
+# Ket noi DB lay HOAN TOAN tu bien moi truong, khong co gia tri mac dinh:
+#   DB_URL, DB_USERNAME (EDUCATION_PRE), DB_PASSWORD. Thieu bien -> ung dung khong khoi dong.
+# Khong ghi mat khau vao file nay.
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+app:
+  storage:
+    jobs:
+      # AC-14: PRE khong co file that -> job don file khong duoc chay.
+      enabled: ${APP_FILES_JOBS_ENABLED:false}
+  security:
+    jwt:
+      secret: ${JWT_SECRET:dev-only-education-jwt-secret-change-me-0123456789}
+    cookie:
+      secure: ${AUTH_COOKIE_SECURE:false}
