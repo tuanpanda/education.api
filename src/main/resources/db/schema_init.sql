@@ -8,7 +8,7 @@
 -- 8 bảng, 7 sequence, 1 index, 3 Standalone Procedure và dữ liệu tham chiếu.
 --
 -- Chạy bằng SQL*Plus / SQLcl / SQL Developer với user sở hữu schema, ví dụ:
---     sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @schema_init.sql
+--     sqlplus <schema_user>@//localhost:1521/ORCL @schema_init.sql   (mat khau nhap khi duoc hoi)
 --
 -- CẢNH BÁO: Section 0 DROP toàn bộ đối tượng cũ, mọi dữ liệu hiện có sẽ bị mất.
 --------------------------------------------------------------------------------
@@ -449,8 +449,8 @@ VALUES (1, 'ROLE_ADMIN', 'Quản trị viên tối cao', 'Toàn quyền hệ th�
 INSERT INTO SYS_ROLES (ID, ROLE_CODE, ROLE_NAME, DESCRIPTION, STATUS, IS_DELETED)
 VALUES (2, 'ROLE_TEACHER', 'Giảng viên', 'Quyền xem và quản lý học sinh', 'ACTIVE', 0);
 
--- Mat khau demo 'Education@123' bam SHA-256 (giong V1). V12 chuyen sang BCrypt:
--- admin -> 'Admin@123', teacher1 -> 'Education@123' (ca hai bat buoc doi mat khau).
+-- Mat khau demo bam SHA-256 (giong V1). V12 chuyen sang BCrypt:
+-- admin va teacher1 (ca hai bat buoc doi mat khau; mat khau giao rieng, khong ghi o day).
 INSERT INTO SYS_USERS (ID, USERNAME, PASSWORD_HASH, FULL_NAME, EMAIL, STATUS, IS_DELETED)
 VALUES (1, 'admin', LOWER(RAWTOHEX(STANDARD_HASH('Education@123', 'SHA256'))),
         'Administrator', 'admin@education.com', 'ACTIVE', 0);

@@ -80,7 +80,7 @@ services:
       # UI va API cung origin (https://PUBLIC_DOMAIN, /api qua nginx): de trong. Chi them origin https:// khi can.
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
       DB_URL: ${DB_URL:-jdbc:oracle:thin:@//host.docker.internal:1521/ORCL}
-      DB_USERNAME: ${DB_USERNAME:-EDUCATION}
+      DB_USERNAME: ${DB_USERNAME:?DB_USERNAME is required}
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       APP_STORAGE_DIR: /app/outputs
       RECEIPT_CENTER_NAME: ${RECEIPT_CENTER_NAME:-}
