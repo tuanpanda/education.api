@@ -124,12 +124,8 @@ public class PortalFileServiceImpl implements PortalFileService {
         if (a.isEmpty()) {
             return false;
         }
-        try {
-            studentScopeGuard.requireEnrolled(a.get().getClassId());
-            return true;
-        } catch (OracleBusinessException e) {
-            return false;
-        }
+        // isEnrolled không ném: tránh lỗi ném qua proxy @Transactional lồng nhau đánh dấu tx ngoài rollback-only.
+        return studentScopeGuard.isEnrolled(a.get().getClassId());
     }
 
     private static String disposition(String type, String originalName) {

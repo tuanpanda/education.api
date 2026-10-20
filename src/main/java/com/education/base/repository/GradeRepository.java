@@ -28,4 +28,9 @@ public interface GradeRepository extends JpaRepository<GradeEntity, Long> {
     List<GradeEntity> findByAssignmentIdAndIsDeleted(Long assignmentId, Integer isDeleted);
 
     List<GradeEntity> findByClassIdAndStudentIdAndGradeTypeOrderByIdAsc(Long classId, Long studentId, String gradeType);
+
+    // ---- GĐ4 đồng bộ điểm đề kiểm tra (V22_4) ----
+    List<GradeEntity> findByQuizIdAndStudentIdAndIsDeleted(Long quizId, Long studentId, Integer isDeleted);
+
+    List<GradeEntity> findByQuizIdAndIsDeleted(Long quizId, Integer isDeleted);
 }

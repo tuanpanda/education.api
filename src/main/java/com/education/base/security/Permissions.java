@@ -201,6 +201,20 @@ public class Permissions {
     public static final String LESSON_UPDATE = "MENU_LESSON:UPDATE";
     public static final String LESSON_DELETE = "MENU_LESSON:DELETE";
 
+    // ---- GĐ4 Trắc nghiệm (V22_4). MENU_QUESTION_BANK (/academic/questions) + MENU_QUIZ (/academic/quizzes).
+    // ROLE_TEACHER: MENU_QUESTION_BANK đủ quyền (sửa/xoá chỉ câu của mình - QUESTION_NOT_OWNER); MENU_QUIZ trừ DELETE.
+    public static final String QUESTION_BANK_VIEW = "MENU_QUESTION_BANK:VIEW";
+    public static final String QUESTION_BANK_CREATE = "MENU_QUESTION_BANK:CREATE";
+    public static final String QUESTION_BANK_UPDATE = "MENU_QUESTION_BANK:UPDATE";
+    public static final String QUESTION_BANK_DELETE = "MENU_QUESTION_BANK:DELETE";
+
+    public static final String QUIZ_VIEW = "MENU_QUIZ:VIEW";
+    public static final String QUIZ_CREATE = "MENU_QUIZ:CREATE";
+    public static final String QUIZ_UPDATE = "MENU_QUIZ:UPDATE";
+    public static final String QUIZ_DELETE = "MENU_QUIZ:DELETE";
+    public static final String QUIZ_GRADE = "MENU_QUIZ:GRADE";
+    public static final String QUIZ_EXPORT = "MENU_QUIZ:EXPORT";
+
     /** Ghép mã quyền phẳng từ mã menu và mã chức năng. */
     public static String of(String menuCode, String functionCode) {
         return menuCode + SEPARATOR + functionCode;

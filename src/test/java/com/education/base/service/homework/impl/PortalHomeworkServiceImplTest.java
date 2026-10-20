@@ -68,7 +68,8 @@ class PortalHomeworkServiceImplTest {
     @BeforeEach
     void setUp() {
         when(ctx.requireCurrentStudentId()).thenReturn(ME);
-        when(scopeGuard.requireEnrolled(OTHER_CLASS)).thenThrow(new OracleBusinessException("CLASS_NOT_FOUND", "x"));
+        when(scopeGuard.isEnrolled(org.mockito.ArgumentMatchers.anyLong())).thenReturn(true);
+        when(scopeGuard.isEnrolled(OTHER_CLASS)).thenReturn(false);
         when(submissionRepository.saveAndFlush(any())).thenAnswer(i -> {
             SubmissionEntity s = i.getArgument(0);
             if (s.getId() == null) {

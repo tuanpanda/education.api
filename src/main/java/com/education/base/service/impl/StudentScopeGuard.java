@@ -46,6 +46,23 @@ public class StudentScopeGuard {
     }
 
     /**
+     * Như {@link #requireEnrolled} nhưng trả boolean, KHÔNG ném lỗi. Dùng khi caller đang trong transaction và muốn
+     * tự ném 404 của mình: ném RuntimeException qua proxy {@code @Transactional} lồng nhau sẽ đánh dấu cả
+     * transaction ngoài là rollback-only (-> UnexpectedRollbackException / 500).
+     */
+    @Transactional(readOnly = true)
+    public boolean isEnrolled(Long classId) {
+        if (classId == null) {
+            return false;
+        }
+        Long studentId = portalStudentContext.requireCurrentStudentId();
+        return classStudentRepository
+                .findByClassIdAndStudentIdAndIsDeleted(classId, studentId, PersistenceFlags.NOT_DELETED)
+                .filter(enrollment -> DomainConstants.ENROLLMENT_STATUS_ENROLLED.equals(enrollment.getStatus()))
+                .isPresent();
+    }
+
+    /**
      * Khoản học phí {@code feeId} thuộc học sinh của phiên (chưa xóa mềm).
      */
     @Transactional(readOnly = true)

@@ -48,7 +48,8 @@ class PortalFileServiceImplTest {
         when(assignmentRepository.findByIdAndIsDeleted(1L, 0)).thenReturn(Optional.of(assignment(1, 7, "PUBLISHED", "BOTH")));
         when(assignmentRepository.findByIdAndIsDeleted(2L, 0)).thenReturn(Optional.of(assignment(2, 7, "DRAFT", "BOTH")));
         when(assignmentRepository.findByIdAndIsDeleted(3L, 0)).thenReturn(Optional.of(assignment(3, 8, "PUBLISHED", "BOTH")));
-        when(scopeGuard.requireEnrolled(8L)).thenThrow(new OracleBusinessException("CLASS_NOT_FOUND", "x"));
+        when(scopeGuard.isEnrolled(org.mockito.ArgumentMatchers.anyLong())).thenReturn(true);
+        when(scopeGuard.isEnrolled(8L)).thenReturn(false);
         when(submissionRepository.findById(500L)).thenReturn(Optional.of(submission(500, 1, 42, "SUBMITTED")));
         when(submissionRepository.findById(501L)).thenReturn(Optional.of(submission(501, 1, 43, "SUBMITTED")));
         when(fileStorageService.loadResource(any())).thenReturn(new ByteArrayResource(new byte[]{1}));

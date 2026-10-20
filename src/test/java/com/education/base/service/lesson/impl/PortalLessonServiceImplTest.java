@@ -81,6 +81,10 @@ class PortalLessonServiceImplTest {
             return db.enrollments.values().stream().filter(e -> e.getClassId() == id && e.getStudentId() == ME)
                     .findFirst().orElseThrow(() -> new OracleBusinessException("CLASS_NOT_FOUND", "x"));
         });
+        when(scopeGuard.isEnrolled(anyLong())).thenAnswer(i -> {
+            long id = i.getArgument(0);
+            return db.enrollments.values().stream().anyMatch(e -> e.getClassId() == id && e.getStudentId() == ME);
+        });
         service = new PortalLessonServiceImpl(db.lessonRepository, db.progressRepository, db.classStudentRepository,
                 db.courseRepository, db.assignmentRepository, fileStorageService, ctx, scopeGuard, auditService,
                 db.access, db.catalog, db.clock);
