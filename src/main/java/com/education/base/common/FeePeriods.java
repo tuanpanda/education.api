@@ -116,8 +116,9 @@ public final class FeePeriods {
 
     /**
      * Ghép tên học sinh (không dấu, IN HOA, chỉ {@code A-Z0-9} và dấu cách) trước {@code content}, tổng
-     * {@code <= max}. Không bao giờ cắt {@code content}: tên được cắt ở ranh giới từ nếu được, không thì cắt cứng;
-     * hết chỗ thì bỏ hẳn tên. Tên rỗng / {@code null} -> {@code content} như cũ.
+     * {@code <= max}. Không bao giờ cắt {@code content}. Tên chỉ giữ <b>nguyên từ</b> (lấy dần từ đầu đến khi hết chỗ),
+     * không cắt giữa từ; từ đầu tiên đã không vừa thì bỏ hẳn tên (và dấu cách). Tên rỗng / {@code null} ->
+     * {@code content} như cũ. Chỉ dùng cho phiếu tháng và phiếu khoảng ngày.
      */
     public static String withStudentName(String studentName, String content, int max) {
         String base = content == null ? "" : content.trim();
@@ -126,19 +127,21 @@ public final class FeePeriods {
             return base;
         }
         int room = max - base.length() - (base.isEmpty() ? 0 : 1);
-        if (room <= 0) {
+        StringBuilder kept = new StringBuilder();
+        for (String word : name.split(" ")) {
+            int needed = kept.isEmpty() ? word.length() : kept.length() + 1 + word.length();
+            if (needed > room) {
+                break;
+            }
+            if (!kept.isEmpty()) {
+                kept.append(' ');
+            }
+            kept.append(word);
+        }
+        if (kept.isEmpty()) {
             return base;
         }
-        if (name.length() > room) {
-            boolean wordEnds = name.charAt(room) == ' ';
-            String cut = name.substring(0, room);
-            int lastSpace = cut.lastIndexOf(' ');
-            if (!wordEnds && lastSpace > 0) {
-                cut = cut.substring(0, lastSpace);
-            }
-            name = cut.trim();
-        }
-        return base.isEmpty() ? name : name + " " + base;
+        return base.isEmpty() ? kept.toString() : kept + " " + base;
     }
 
     /** Tên cho nội dung chuyển khoản: bỏ dấu (Đ/đ -> D), IN HOA, chỉ {@code A-Z0-9} + một dấu cách giữa các từ. */

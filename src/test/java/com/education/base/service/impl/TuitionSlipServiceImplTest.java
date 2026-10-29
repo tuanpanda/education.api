@@ -708,8 +708,8 @@ class TuitionSlipServiceImplTest {
         assertThat(slip.isRangeFee()).isTrue();
         assertThat(slip.getAttendedDates()).containsExactly("02/10", "09/10");
         assertThat(slip.getQrPayload()).contains("HS000123 HP 0110-3110");
-        // "Nguyễn Văn A": chỉ còn 3 chỗ -> "NGU"; transferContent == addInfo trong QR và quick link.
-        assertThat(slip.getTransferContent()).isEqualTo("NGU HS000123 HP 0110-3110");
+        // "Nguyễn Văn A": chỉ còn 3 chỗ, "NGUYEN" không vừa -> bỏ tên; transferContent == addInfo trong QR / quick link.
+        assertThat(slip.getTransferContent()).isEqualTo("HS000123 HP 0110-3110");
         assertQrCarries(slip.getQrPayload(), slip.getQuickPayUrl(), slip.getTransferContent());
         String html = service.generateSlipHtml(slip);
         assertThat(html).contains("Từ 01/10/2026 đến 31/10/2026").contains("02/10").doesNotContain("muộn");

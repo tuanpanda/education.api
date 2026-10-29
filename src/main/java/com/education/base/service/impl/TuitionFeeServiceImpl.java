@@ -403,24 +403,18 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
         return tuitionFeeSessionRepository.deleteByFeeId(feeId);
     }
 
-    /** Giới hạn cũ của nội dung mặc định khoản không theo khoảng ngày ({@code "HP <feeCode> <studentCode>"}). */
-    static final int LEGACY_QR_DESCRIPTION_MAX = 99;
-
     /**
-     * Nội dung chuyển khoản mặc định, có tên học sinh không dấu IN HOA ở đầu (tên chỉ dùng chỗ còn lại, không cắt
-     * phần mã/kỳ): phiếu khoảng ngày {@code "<TEN> <code> HP ddMM-ddMM"} (giống phiếu điện tử, 25 ký tự);
-     * khoản khác {@code "<TEN> HP <feeCode> <studentCode>"} (giới hạn cũ 99).
+     * Nội dung chuyển khoản mặc định: phiếu khoảng ngày {@code "<TEN> <code> HP ddMM-ddMM"} (giống phiếu điện tử,
+     * tên theo {@link FeePeriods#withStudentName}); khoản khác giữ nguyên {@code "HP <feeCode> <studentCode>"} như
+     * trước (không thêm tên, tối đa 99).
      */
-    static String defaultQrDescription(TuitionFeeEntity fee, StudentEntity student) {
+    private static String defaultQrDescription(TuitionFeeEntity fee, StudentEntity student) {
         String studentCode = student == null ? "" : student.getStudentCode();
-        String studentName = student == null ? null : student.getFullName();
         if (FeePeriods.isRangeFee(fee.getIsRange())) {
-            return FeePeriods.rangeTransferContent(studentName, studentCode, fee.getPeriodFrom(),
-                    fee.getPeriodTo() == null ? fee.getPeriodFrom() : fee.getPeriodTo());
+            return FeePeriods.rangeTransferContent(student == null ? null : student.getFullName(), studentCode,
+                    fee.getPeriodFrom(), fee.getPeriodTo() == null ? fee.getPeriodFrom() : fee.getPeriodTo());
         }
-        String description = ("HP " + fee.getFeeCode() + " " + (studentCode == null ? "" : studentCode)).trim();
-        description = description.length() > LEGACY_QR_DESCRIPTION_MAX
-                ? description.substring(0, LEGACY_QR_DESCRIPTION_MAX) : description;
-        return FeePeriods.withStudentName(studentName, description, LEGACY_QR_DESCRIPTION_MAX);
+        String description = ("HP " + fee.getFeeCode() + " " + studentCode).trim();
+        return description.length() > 99 ? description.substring(0, 99) : description;
     }
 }

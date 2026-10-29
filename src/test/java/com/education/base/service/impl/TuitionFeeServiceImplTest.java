@@ -92,8 +92,8 @@ class TuitionFeeServiceImplTest {
         assertThat(qr.getQrPayload()).contains("6304");
         assertThat(qr.getBase64Image()).startsWith("data:image/png;base64,");
         assertThat(qr.getQuickUrl()).contains("970436-1234567890");
-        // Khoản không theo khoảng ngày: giữ "HP <feeCode> <code>" (giới hạn cũ 99) + tên ở đầu.
-        assertThat(qr.getTransferContent()).isEqualTo("NGUYEN VAN A HP " + unpaidFee().getFeeCode() + " SV01");
+        // Khoản không theo khoảng ngày: giữ nguyên "HP <feeCode> <code>" như trước, không thêm tên.
+        assertThat(qr.getTransferContent()).isEqualTo("HP " + unpaidFee().getFeeCode() + " SV01");
         TuitionSlipServiceImplTest.assertQrCarries(qr.getQrPayload(), qr.getQuickUrl(), qr.getTransferContent());
     }
 
@@ -111,7 +111,7 @@ class TuitionFeeServiceImplTest {
         TuitionQrResponseDto qr = service.createQr(4L, new TuitionQrRequest());
 
         assertThat(qr.getQrPayload()).contains("HS000123 HP 0110-3110");
-        assertThat(qr.getTransferContent()).isEqualTo("NGU HS000123 HP 0110-3110");
+        assertThat(qr.getTransferContent()).isEqualTo("HS000123 HP 0110-3110");
         TuitionSlipServiceImplTest.assertQrCarries(qr.getQrPayload(), qr.getQuickUrl(), qr.getTransferContent());
     }
 
@@ -137,6 +137,19 @@ class TuitionFeeServiceImplTest {
         TuitionQrResponseDto own = service.createQr(4L, custom);
         assertThat(own.getTransferContent()).isEqualTo("Tu nhap");
         TuitionSlipServiceImplTest.assertQrCarries(own.getQrPayload(), own.getQuickUrl(), own.getTransferContent());
+    }
+
+    @Test
+    void createQr_manualFee_neverAddsName_evenWithShortName() {
+        TuitionFeeEntity fee = unpaidFee();
+        when(tuitionFeeRepository.findByIdAndIsDeleted(4L, 0)).thenReturn(Optional.of(fee));
+        when(studentRepository.findById(8L)).thenReturn(Optional.of(StudentEntity.builder()
+                .id(8L).studentCode("SV01").fullName("Lê An").build()));
+        when(bankAccountService.requireActive()).thenReturn(activeAccount());
+
+        TuitionQrResponseDto qr = service.createQr(4L, new TuitionQrRequest());
+        assertThat(qr.getTransferContent()).isEqualTo("HP FEE01 SV01").doesNotContain("LE");
+        TuitionSlipServiceImplTest.assertQrCarries(qr.getQrPayload(), qr.getQuickUrl(), qr.getTransferContent());
     }
 
     @Test

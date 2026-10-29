@@ -74,9 +74,12 @@ class FeePeriodsTest {
                 .isEqualTo("NGUYEN VAN HS000123 HP T4").hasSize(25);
         assertThat(FeePeriods.legacyTransferContent("Nguyễn Thị Minh Khai", "HS000123", 4))
                 .isEqualTo("NGUYEN THI HS000123 HP T4");
-        // Từ đầu dài hơn chỗ trống -> cắt cứng.
+        // Từ đầu dài hơn chỗ trống -> bỏ hẳn tên (không cắt giữa từ).
         assertThat(FeePeriods.legacyTransferContent("Christopherson Lê", "HS000123", 4))
-                .isEqualTo("CHRISTOPHE HS000123 HP T4").hasSize(25);
+                .isEqualTo("HS000123 HP T4");
+        // 10 chỗ: "LE VAN" (6) vừa, thêm "BACHKHOA" thì vượt -> chỉ giữ "LE VAN".
+        assertThat(FeePeriods.legacyTransferContent("Lê Văn Báchkhoa", "HS000123", 4))
+                .isEqualTo("LE VAN HS000123 HP T4");
         assertThat(FeePeriods.legacyTransferContent(null, "SV01", 4)).isEqualTo("SV01 HP T4");
         assertThat(FeePeriods.legacyTransferContent("  ", "SV01", 4)).isEqualTo("SV01 HP T4");
     }
@@ -88,9 +91,12 @@ class FeePeriodsTest {
                 .isEqualTo("LE VAN SV01 HP 0110-1511");
         assertThat(FeePeriods.rangeTransferContent("Đào Ý", "SV01", OCT_1, NOV_15))
                 .isEqualTo("DAO Y SV01 HP 0110-1511");
-        // "HS000123 HP 0110-1511" = 21 -> 3 chỗ: cắt cứng.
+        // "HS000123 HP 0110-1511" = 21 -> 3 chỗ: "NGUYEN" không vừa -> bỏ tên, không cắt giữa từ.
         assertThat(FeePeriods.rangeTransferContent("Nguyễn Văn A", "HS000123", OCT_1, NOV_15))
-                .isEqualTo("NGU HS000123 HP 0110-1511").hasSize(25);
+                .isEqualTo("HS000123 HP 0110-1511");
+        // 3 chỗ vừa đủ một từ ngắn.
+        assertThat(FeePeriods.rangeTransferContent("Lý An", "HS000123", OCT_1, NOV_15))
+                .isEqualTo("LY HS000123 HP 0110-1511");
         // Mã 12 ký tự lấp đầy 25 -> bỏ hẳn tên, phần mã/kỳ y như cũ.
         assertThat(FeePeriods.rangeTransferContent("Nguyễn Văn A", "ABCDEFGHIJKL", OCT_1, NOV_15))
                 .isEqualTo(FeePeriods.rangeTransferContent("ABCDEFGHIJKL", OCT_1, NOV_15))
@@ -113,6 +119,10 @@ class FeePeriodsTest {
                 assertThat(out.length()).as(n + "|" + c).isLessThanOrEqualTo(FeePeriods.TRANSFER_CONTENT_MAX);
                 assertThat(out).endsWith(c).matches("[A-Z0-9 ]*[A-Za-z0-9 \\-]*").doesNotContain("  ");
                 assertThat(out).doesNotStartWith(" ").doesNotEndWith(" ");
+                String prefix = out.substring(0, out.length() - c.length()).trim();
+                String fullName = FeePeriods.transferName(n);
+                assertThat(prefix.isEmpty() || (fullName + " ").startsWith(prefix + " "))
+                        .as("chỉ giữ nguyên từ: " + out).isTrue();
             }
         }
     }
