@@ -19,7 +19,7 @@ Bot không chạy script này. Mật khẩu chỉ gõ tại prompt, không ghi v
 | 8 | `V23_7__backfill_legacy_fee_sessions.sql` | **DML, chạy tay** | Tạo dòng session cho phiếu tháng cũ còn hiệu lực. `SET EXITCOMMIT OFF`. **Không COMMIT, không EXIT trong file.** |
 | 9 | `V23_8__backfill_legacy_fee_period.sql` | **DML, chạy tay** | Ghi `PERIOD_FROM/TO` = đầu/cuối tháng cho phiếu tháng cũ. `SET EXITCOMMIT OFF`. **Không COMMIT, không EXIT.** `IS_RANGE` giữ 0. **Sau khi COMMIT không có script rollback; chỉ khôi phục được từ bản export Bước 0.** |
 
-**Thứ tự chạy bắt buộc:** V23_1 → V23_6 → **V23_9** → V23_7 → V23_8 → chỉ SELECT kiểm tra → Tuấn gõ `COMMIT;` hoặc `ROLLBACK;`.
+**Thứ tự chạy bắt buộc:** V23_1 → V23_6 → **biên dịch lại INVALID (Bước 3b)** → **V23_9** → **biên dịch lại INVALID, phải 0 dòng (Bước 4b)** → V23_7 → V23_8 → chỉ SELECT kiểm tra → Tuấn gõ `COMMIT;` hoặc `ROLLBACK;`.
 
 - DDL (V23_1–V23_6) và procedure V23_9 là DDL nên **tự commit**, kể cả commit luôn mọi DML đang mở. Vì vậy mọi DDL, kể cả V23_9, phải chạy **trước** V23_7.
 - V23_7 và V23_8 là DML, chạy trong **cùng một giao dịch**.
@@ -142,6 +142,49 @@ SELECT INDEX_NAME, TABLE_NAME, UNIQUENESS, STATUS FROM USER_INDEXES
 SELECT SEQUENCE_NAME, CACHE_SIZE, LAST_NUMBER FROM USER_SEQUENCES WHERE SEQUENCE_NAME = 'SEQ_FIN_TUITION_FEE_SESSIONS';
 ```
 
+## Bước 3b. Biên dịch lại object bị INVALID (bắt buộc)
+
+ALTER TABLE ở V23_1/V23_2 làm các object phụ thuộc `FIN_TUITION_FEES` bị INVALID. Lệnh biên dịch lại là DDL, nên chỉ chạy khi **không** có giao dịch V23_7/V23_8 đang mở. Ở bước này `PRC_RPT_CLASS_COLLECTION` có thể vẫn INVALID vì chưa chạy V23_9; điều đó chấp nhận được, mọi object khác phải VALID.
+
+Cách 1, biên dịch các object đang INVALID của schema:
+
+```sql
+EXEC DBMS_UTILITY.COMPILE_SCHEMA(schema => 'EDUCATION', compile_all => FALSE);
+```
+
+Cách 2, biên dịch từng object phụ thuộc đã biết:
+
+```sql
+ALTER PROCEDURE PRC_GET_TUITION_SLIP_DATA COMPILE;
+SHOW ERRORS PROCEDURE PRC_GET_TUITION_SLIP_DATA
+ALTER PROCEDURE PRC_GET_TUITION_FEE_DETAIL COMPILE;
+SHOW ERRORS PROCEDURE PRC_GET_TUITION_FEE_DETAIL
+ALTER PROCEDURE PRC_RPT_DASHBOARD_METRICS COMPILE;
+SHOW ERRORS PROCEDURE PRC_RPT_DASHBOARD_METRICS
+ALTER PROCEDURE PRC_RPT_FINANCE_SUMMARY COMPILE;
+SHOW ERRORS PROCEDURE PRC_RPT_FINANCE_SUMMARY
+ALTER PROCEDURE PRC_RPT_DEBT_AGING COMPILE;
+SHOW ERRORS PROCEDURE PRC_RPT_DEBT_AGING
+ALTER PROCEDURE PRC_RPT_STUDENT_LEDGER COMPILE;
+SHOW ERRORS PROCEDURE PRC_RPT_STUDENT_LEDGER
+```
+
+Mỗi `SHOW ERRORS` phải in `No errors.`
+
+**Tiêu chí đạt** (bắt buộc trước khi sang bước tiếp theo; ở Bước 3b chỉ được còn `PRC_RPT_CLASS_COLLECTION`):
+
+```sql
+SELECT OBJECT_NAME, OBJECT_TYPE FROM USER_OBJECTS WHERE STATUS = 'INVALID';
+-- phai tra 0 dong ("no rows selected")
+```
+
+Nếu còn dòng nào:
+
+1. Chạy `ALTER <TYPE> <NAME> COMPILE;` rồi `SHOW ERRORS <TYPE> <NAME>` cho từng object.
+2. Ghi lại lỗi và dừng lại.
+
+Không chạy V23_7/V23_8 khi còn object INVALID.
+
 ## Bước 4. V23_9 (procedure báo cáo thu tiền theo lớp, DDL, chạy trước V23_7)
 
 ```sql
@@ -158,6 +201,49 @@ SELECT OBJECT_NAME, OBJECT_TYPE FROM USER_OBJECTS WHERE STATUS = 'INVALID';
 
 Muốn đổi cách tính doanh thu phiếu khoảng ngày: sửa dòng `C_SPLIT_BY_SESSION CONSTANT NUMBER := 1;` (0 = tính trọn vào tháng của `PERIOD_FROM`) rồi chạy lại file.
 **Chỉ chạy lại V23_9 khi không có giao dịch V23_7/V23_8 đang mở**: hoặc chạy trước Bước 5, hoặc sau khi đã COMMIT/ROLLBACK ở Bước 7.
+
+## Bước 4b. Biên dịch lại object bị INVALID (bắt buộc)
+
+Chạy lại sau V23_9 để chắc chắn `PRC_RPT_CLASS_COLLECTION` và các object phụ thuộc đều VALID. ALTER TABLE ở V23_1/V23_2 làm các object phụ thuộc `FIN_TUITION_FEES` bị INVALID. Lệnh biên dịch lại là DDL, nên chỉ chạy khi **không** có giao dịch V23_7/V23_8 đang mở.
+
+Cách 1, biên dịch các object đang INVALID của schema:
+
+```sql
+EXEC DBMS_UTILITY.COMPILE_SCHEMA(schema => 'EDUCATION', compile_all => FALSE);
+```
+
+Cách 2, biên dịch từng object phụ thuộc đã biết:
+
+```sql
+ALTER PROCEDURE PRC_GET_TUITION_SLIP_DATA COMPILE;
+SHOW ERRORS PROCEDURE PRC_GET_TUITION_SLIP_DATA
+ALTER PROCEDURE PRC_GET_TUITION_FEE_DETAIL COMPILE;
+SHOW ERRORS PROCEDURE PRC_GET_TUITION_FEE_DETAIL
+ALTER PROCEDURE PRC_RPT_DASHBOARD_METRICS COMPILE;
+SHOW ERRORS PROCEDURE PRC_RPT_DASHBOARD_METRICS
+ALTER PROCEDURE PRC_RPT_FINANCE_SUMMARY COMPILE;
+SHOW ERRORS PROCEDURE PRC_RPT_FINANCE_SUMMARY
+ALTER PROCEDURE PRC_RPT_DEBT_AGING COMPILE;
+SHOW ERRORS PROCEDURE PRC_RPT_DEBT_AGING
+ALTER PROCEDURE PRC_RPT_STUDENT_LEDGER COMPILE;
+SHOW ERRORS PROCEDURE PRC_RPT_STUDENT_LEDGER
+```
+
+Mỗi `SHOW ERRORS` phải in `No errors.`
+
+**Tiêu chí đạt** (bắt buộc trước Bước 5, V23_7):
+
+```sql
+SELECT OBJECT_NAME, OBJECT_TYPE FROM USER_OBJECTS WHERE STATUS = 'INVALID';
+-- phai tra 0 dong ("no rows selected")
+```
+
+Nếu còn dòng nào:
+
+1. Chạy `ALTER <TYPE> <NAME> COMPILE;` rồi `SHOW ERRORS <TYPE> <NAME>` cho từng object.
+2. Ghi lại lỗi và dừng lại.
+
+Không chạy V23_7/V23_8 khi còn object INVALID.
 
 ### Chạy lại riêng V23_9 (ví dụ sau lỗi biên dịch)
 
@@ -176,14 +262,7 @@ SELECT STATUS FROM USER_OBJECTS WHERE OBJECT_NAME = 'PRC_RPT_CLASS_COLLECTION';
 -- mong doi: VALID
 ```
 
-Sau ALTER TABLE ở V23_1/V23_2, các object phụ thuộc `FIN_TUITION_FEES` bị đánh dấu INVALID. Ví dụ `PRC_GET_TUITION_SLIP_DATA` (code không đổi). Oracle tự biên dịch lại ở lần gọi đầu; muốn kiểm tra ngay thì biên dịch lại từng object, mỗi lệnh là DDL nên cũng không được có giao dịch đang mở:
-
-```sql
-ALTER PROCEDURE PRC_GET_TUITION_SLIP_DATA COMPILE;
-SHOW ERRORS PROCEDURE PRC_GET_TUITION_SLIP_DATA
-SELECT OBJECT_NAME, OBJECT_TYPE, STATUS FROM USER_OBJECTS WHERE STATUS = 'INVALID' ORDER BY OBJECT_TYPE, OBJECT_NAME;
--- mong doi: khong con object nao INVALID
-```
+Sau khi chạy lại V23_9, chạy lại **Bước 4b** (biên dịch lại và kiểm tra 0 object INVALID).
 
 ## Bước 5. V23_7 (DML chạy tay): backfill dòng session cho phiếu tháng cũ
 
