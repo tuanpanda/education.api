@@ -92,6 +92,9 @@ class TuitionFeeServiceImplTest {
         assertThat(qr.getQrPayload()).contains("6304");
         assertThat(qr.getBase64Image()).startsWith("data:image/png;base64,");
         assertThat(qr.getQuickUrl()).contains("970436-1234567890");
+        // Khoản không theo khoảng ngày: giữ "HP <feeCode> <code>" (giới hạn cũ 99) + tên ở đầu.
+        assertThat(qr.getTransferContent()).isEqualTo("NGUYEN VAN A HP " + unpaidFee().getFeeCode() + " SV01");
+        TuitionSlipServiceImplTest.assertQrCarries(qr.getQrPayload(), qr.getQuickUrl(), qr.getTransferContent());
     }
 
     @Test
@@ -108,6 +111,44 @@ class TuitionFeeServiceImplTest {
         TuitionQrResponseDto qr = service.createQr(4L, new TuitionQrRequest());
 
         assertThat(qr.getQrPayload()).contains("HS000123 HP 0110-3110");
+        assertThat(qr.getTransferContent()).isEqualTo("NGU HS000123 HP 0110-3110");
+        TuitionSlipServiceImplTest.assertQrCarries(qr.getQrPayload(), qr.getQuickUrl(), qr.getTransferContent());
+    }
+
+    @Test
+    void createQr_rangeFee_sameTransferContentAsSlip_andCustomDescriptionUntouched() {
+        TuitionFeeEntity fee = unpaidFee();
+        fee.setIsRange(1);
+        fee.setPeriodFrom(java.time.LocalDate.of(2026, 10, 1));
+        fee.setPeriodTo(java.time.LocalDate.of(2026, 10, 10));
+        StudentEntity student = StudentEntity.builder().id(8L).studentCode("SV01").fullName("Đinh Xuân Tuấn").build();
+        when(tuitionFeeRepository.findByIdAndIsDeleted(4L, 0)).thenReturn(Optional.of(fee));
+        when(studentRepository.findById(8L)).thenReturn(Optional.of(student));
+        when(bankAccountService.requireActive()).thenReturn(activeAccount());
+
+        TuitionQrResponseDto qr = service.createQr(4L, new TuitionQrRequest());
+
+        String slipContent = TuitionSlipServiceImpl.transferContentOf(fee, student.getFullName(),
+                student.getStudentCode(), null);
+        assertThat(qr.getTransferContent()).isEqualTo(slipContent).isEqualTo("DINH SV01 HP 0110-1010");
+
+        TuitionQrRequest custom = new TuitionQrRequest();
+        custom.setDescription("  Tu nhap  ");
+        TuitionQrResponseDto own = service.createQr(4L, custom);
+        assertThat(own.getTransferContent()).isEqualTo("Tu nhap");
+        TuitionSlipServiceImplTest.assertQrCarries(own.getQrPayload(), own.getQuickUrl(), own.getTransferContent());
+    }
+
+    @Test
+    void createQr_studentWithoutName_keepsOldContent() {
+        TuitionFeeEntity fee = unpaidFee();
+        when(tuitionFeeRepository.findByIdAndIsDeleted(4L, 0)).thenReturn(Optional.of(fee));
+        when(studentRepository.findById(8L)).thenReturn(Optional.of(StudentEntity.builder()
+                .id(8L).studentCode("SV01").build()));
+        when(bankAccountService.requireActive()).thenReturn(activeAccount());
+
+        assertThat(service.createQr(4L, new TuitionQrRequest()).getTransferContent())
+                .isEqualTo("HP " + fee.getFeeCode() + " SV01");
     }
 
     @Test

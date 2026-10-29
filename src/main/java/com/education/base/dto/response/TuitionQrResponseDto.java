@@ -31,5 +31,8 @@ public class TuitionQrResponseDto {
 
     private String qrPayload;
 
+    /** Nội dung chuyển khoản đúng như addInfo trong QR (tag 62/08) và quick link; {@code null} khi không có QR / không có nội dung. */
+    private String transferContent;
+
     private String base64Image;
 }

@@ -708,6 +708,9 @@ class TuitionSlipServiceImplTest {
         assertThat(slip.isRangeFee()).isTrue();
         assertThat(slip.getAttendedDates()).containsExactly("02/10", "09/10");
         assertThat(slip.getQrPayload()).contains("HS000123 HP 0110-3110");
+        // "Nguyễn Văn A": chỉ còn 3 chỗ -> "NGU"; transferContent == addInfo trong QR và quick link.
+        assertThat(slip.getTransferContent()).isEqualTo("NGU HS000123 HP 0110-3110");
+        assertQrCarries(slip.getQrPayload(), slip.getQuickPayUrl(), slip.getTransferContent());
         String html = service.generateSlipHtml(slip);
         assertThat(html).contains("Từ 01/10/2026 đến 31/10/2026").contains("02/10").doesNotContain("muộn");
     }
@@ -769,6 +772,38 @@ class TuitionSlipServiceImplTest {
         assertThat(slip.isRangeFee()).isFalse();
         assertThat(slip.getAttendedDates()).containsExactly("02/04", "06/04");
         assertThat(slip.getQrPayload()).contains("HS000123 HP T4");
+        assertThat(slip.getTransferContent()).isEqualTo("NGUYEN VAN HS000123 HP T4");
+        assertQrCarries(slip.getQrPayload(), slip.getQuickPayUrl(), slip.getTransferContent());
+    }
+
+    @Test
+    void getSlip_blankStudentName_keepsOldContent_andNoQrMeansNullTransferContent() {
+        TuitionFeeEntity fee = rangeFee(9L, "UNPAID");
+        when(tuitionFeeRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(fee));
+        TuitionSlipResponseDto data = procSlip(9L, List.of());
+        data.setStudentName(" ");
+        when(tuitionFeeRepository.getTuitionSlipData(9L)).thenReturn(data);
+        when(tuitionFeeSessionRepository.findByFeeIdOrderBySessionDateAscIdAsc(9L)).thenReturn(List.of());
+
+        TuitionSlipResponseDto slip = service.getSlip(9L);
+        assertThat(slip.getTransferContent()).isEqualTo("HS000123 HP 0110-3110");
+        assertQrCarries(slip.getQrPayload(), slip.getQuickPayUrl(), slip.getTransferContent());
+
+        TuitionFeeEntity cancelled = rangeFee(10L, "CANCELLED");
+        when(tuitionFeeRepository.findByIdAndIsDeleted(10L, 0)).thenReturn(Optional.of(cancelled));
+        when(tuitionFeeRepository.getTuitionSlipData(10L)).thenReturn(procSlip(10L, List.of()));
+        TuitionSlipResponseDto none = service.getSlip(10L);
+        assertThat(none.getQrPayload()).isNull();
+        assertThat(none.getTransferContent()).isNull();
+    }
+
+    /** addInfo trong QR (tag 62 / sub-tag 08) và quick link đúng bằng {@code transferContent}. */
+    static void assertQrCarries(String payload, String quickUrl, String transferContent) {
+        String sub = "08" + String.format("%02d", transferContent.length()) + transferContent;
+        String tag62 = "62" + String.format("%02d", sub.length()) + sub;
+        assertThat(payload).contains(tag62);
+        assertThat(java.net.URLDecoder.decode(quickUrl, java.nio.charset.StandardCharsets.UTF_8))
+                .contains("addInfo=" + transferContent);
     }
 
     @Test

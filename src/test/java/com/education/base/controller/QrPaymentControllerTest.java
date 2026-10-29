@@ -66,6 +66,9 @@ class QrPaymentControllerTest {
                 .andExpect(jsonPath("$.data.qrPayload").value(containsString("5406150000")))
                 .andExpect(jsonPath("$.data.quickUrl").value(containsString("img.vietqr.io")))
                 .andExpect(jsonPath("$.data.quickUrl").value(containsString("amount=150000")))
+                .andExpect(jsonPath("$.data.transferContent").value("HOC PHI"))
+                .andExpect(jsonPath("$.data.qrPayload").value(containsString("62110807HOC PHI")))
+                .andExpect(jsonPath("$.data.quickUrl").value(containsString("addInfo=HOC+PHI")))
                 .andExpect(jsonPath("$.data.base64Image").value(startsWith("data:image/png;base64,")));
     }
 

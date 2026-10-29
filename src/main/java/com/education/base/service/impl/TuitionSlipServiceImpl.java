@@ -646,9 +646,11 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
             slip.setQrPayload(null);
             slip.setQrBase64(null);
             slip.setQuickPayUrl(null);
+            slip.setTransferContent(null);
             return slip;
         }
-        String description = transferContentOf(fee, slip.getStudentCode(), slip.getMonth());
+        String description = transferContentOf(fee, slip.getStudentName(), slip.getStudentCode(), slip.getMonth());
+        slip.setTransferContent(description);
         String payload = VietQrHelper.buildVietQrPayload(bankBin, accountNo, amountVnd, description);
         slip.setQrPayload(payload);
         slip.setQrBase64(VietQrHelper.generateQrBase64(payload, QR_SIZE, QR_SIZE));
@@ -656,13 +658,16 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
         return slip;
     }
 
-    /** Nội dung chuyển khoản: phiếu khoảng ngày {@code "<code> HP ddMM-ddMM"}, phiếu cũ {@code "<code> HP T<m>"}. */
-    static String transferContentOf(TuitionFeeEntity fee, String studentCode, Integer legacyMonth) {
+    /**
+     * Nội dung chuyển khoản (= addInfo của QR = {@code transferContent} trả FE): {@code "<TEN> <code> HP ddMM-ddMM"}
+     * cho phiếu khoảng ngày, {@code "<TEN> <code> HP T<m>"} cho phiếu cũ; tên chỉ dùng chỗ còn lại trong 25 ký tự.
+     */
+    static String transferContentOf(TuitionFeeEntity fee, String studentName, String studentCode, Integer legacyMonth) {
         if (FeePeriods.isRangeFee(fee.getIsRange())) {
             LocalDate to = fee.getPeriodTo() == null ? fee.getPeriodFrom() : fee.getPeriodTo();
-            return FeePeriods.rangeTransferContent(studentCode, fee.getPeriodFrom(), to);
+            return FeePeriods.rangeTransferContent(studentName, studentCode, fee.getPeriodFrom(), to);
         }
-        return FeePeriods.legacyTransferContent(studentCode, legacyMonth);
+        return FeePeriods.legacyTransferContent(studentName, studentCode, legacyMonth);
     }
 
     /** Có được sinh VietQR cho khoản phí: còn phải thu {@code > 0} và không {@code PAID} / {@code CANCELLED}. */

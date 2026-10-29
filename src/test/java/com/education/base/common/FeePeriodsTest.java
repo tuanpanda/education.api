@@ -50,4 +50,70 @@ class FeePeriodsTest {
         assertThat(FeePeriods.legacyTransferContent("SV01", 4)).isEqualTo("SV01 HP T4");
         assertThat(FeePeriods.legacyTransferContent("SV01", null)).isEqualTo("SV01 HP T0");
     }
+
+    // ---- Tên học sinh trước nội dung chuyển khoản (Tuấn 29/10/2026) ---------------------------------------
+
+    @Test
+    void transferName_stripsDiacritics_includingD_uppercase_onlyAZ09Space_collapsed() {
+        assertThat(FeePeriods.transferName("Nguyễn Thị Ánh Tuyết")).isEqualTo("NGUYEN THI ANH TUYET");
+        assertThat(FeePeriods.transferName("Đinh Xuân Đức")).isEqualTo("DINH XUAN DUC");
+        assertThat(FeePeriods.transferName("đặng  văn-đạt (bé)")).isEqualTo("DANG VAN DAT BE");
+        assertThat(FeePeriods.transferName("  Lê   Ưng  ")).isEqualTo("LE UNG");
+        assertThat(FeePeriods.transferName("Trần Ngọc Ẩn 2")).isEqualTo("TRAN NGOC AN 2");
+        assertThat(FeePeriods.transferName(null)).isEmpty();
+        assertThat(FeePeriods.transferName("   ")).isEmpty();
+        assertThat(FeePeriods.transferName("@@@")).isEmpty();
+    }
+
+    @Test
+    void legacyTransferContent_withName_prefixesNameWithinLimit() {
+        assertThat(FeePeriods.legacyTransferContent("Lê An", "SV01", 4)).isEqualTo("LE AN SV01 HP T4");
+        assertThat(FeePeriods.legacyTransferContent("Đỗ Đức", "SV01", 4)).isEqualTo("DO DUC SV01 HP T4");
+        // "HS000123 HP T4" = 14 -> 10 chỗ cho tên: cắt ở ranh giới từ.
+        assertThat(FeePeriods.legacyTransferContent("Nguyễn Văn Anh", "HS000123", 4))
+                .isEqualTo("NGUYEN VAN HS000123 HP T4").hasSize(25);
+        assertThat(FeePeriods.legacyTransferContent("Nguyễn Thị Minh Khai", "HS000123", 4))
+                .isEqualTo("NGUYEN THI HS000123 HP T4");
+        // Từ đầu dài hơn chỗ trống -> cắt cứng.
+        assertThat(FeePeriods.legacyTransferContent("Christopherson Lê", "HS000123", 4))
+                .isEqualTo("CHRISTOPHE HS000123 HP T4").hasSize(25);
+        assertThat(FeePeriods.legacyTransferContent(null, "SV01", 4)).isEqualTo("SV01 HP T4");
+        assertThat(FeePeriods.legacyTransferContent("  ", "SV01", 4)).isEqualTo("SV01 HP T4");
+    }
+
+    @Test
+    void rangeTransferContent_withName_neverTruncatesCodeOrDates_dropsNameWhenNoRoom() {
+        // "SV01 HP 0110-1511" = 17 -> 7 chỗ cho tên.
+        assertThat(FeePeriods.rangeTransferContent("Lê Văn An", "SV01", OCT_1, NOV_15))
+                .isEqualTo("LE VAN SV01 HP 0110-1511");
+        assertThat(FeePeriods.rangeTransferContent("Đào Ý", "SV01", OCT_1, NOV_15))
+                .isEqualTo("DAO Y SV01 HP 0110-1511");
+        // "HS000123 HP 0110-1511" = 21 -> 3 chỗ: cắt cứng.
+        assertThat(FeePeriods.rangeTransferContent("Nguyễn Văn A", "HS000123", OCT_1, NOV_15))
+                .isEqualTo("NGU HS000123 HP 0110-1511").hasSize(25);
+        // Mã 12 ký tự lấp đầy 25 -> bỏ hẳn tên, phần mã/kỳ y như cũ.
+        assertThat(FeePeriods.rangeTransferContent("Nguyễn Văn A", "ABCDEFGHIJKL", OCT_1, NOV_15))
+                .isEqualTo(FeePeriods.rangeTransferContent("ABCDEFGHIJKL", OCT_1, NOV_15))
+                .isEqualTo("ABCDEFGHIJKL HP 0110-1511");
+        assertThat(FeePeriods.rangeTransferContent("Nguyễn Văn A", "ABCDEFGHIJKLMNOP", OCT_1, NOV_15))
+                .isEqualTo("ABCDEFGHIJKL HP 0110-1511");
+        // Còn đúng 1 chỗ (chỉ đủ dấu cách) -> bỏ tên.
+        assertThat(FeePeriods.rangeTransferContent("An", "ABCDEFGHIJK", OCT_1, NOV_15))
+                .isEqualTo("ABCDEFGHIJK HP 0110-1511");
+        assertThat(FeePeriods.rangeTransferContent(null, "HS000123", OCT_1, NOV_15)).isEqualTo("HS000123 HP 0110-1511");
+    }
+
+    @Test
+    void withStudentName_alwaysWithinLimit_andEndsWithOriginalContent() {
+        String[] names = {"Nguyễn Văn A", "Đặng Thị Bích Ngọc", "X", "Christopherson", "Lê  Ư"};
+        String[] contents = {"SV01 HP T4", "HS000123 HP 0110-3110", "ABCDEFGHIJKL HP 0110-3110", ""};
+        for (String n : names) {
+            for (String c : contents) {
+                String out = FeePeriods.withStudentName(n, c, FeePeriods.TRANSFER_CONTENT_MAX);
+                assertThat(out.length()).as(n + "|" + c).isLessThanOrEqualTo(FeePeriods.TRANSFER_CONTENT_MAX);
+                assertThat(out).endsWith(c).matches("[A-Z0-9 ]*[A-Za-z0-9 \\-]*").doesNotContain("  ");
+                assertThat(out).doesNotStartWith(" ").doesNotEndWith(" ");
+            }
+        }
+    }
 }

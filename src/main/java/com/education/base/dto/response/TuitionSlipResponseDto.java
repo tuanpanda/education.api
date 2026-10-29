@@ -88,6 +88,9 @@ public class TuitionSlipResponseDto {
     private String accountNo;
     private String accountName;
     private String qrPayload;
+
+    /** Nội dung chuyển khoản đúng như addInfo trong QR (tag 62/08) và quick link; {@code null} khi không có QR / không có nội dung. */
+    private String transferContent;
     private String qrBase64;
     private String quickPayUrl;
 }

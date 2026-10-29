@@ -24,6 +24,9 @@ public class QrPaymentResponseDto {
      */
     private String qrPayload;
 
+    /** Nội dung chuyển khoản đúng như addInfo trong QR (tag 62/08) và quick link; {@code null} khi không có QR / không có nội dung. */
+    private String transferContent;
+
     /**
      * Ảnh QR dạng Base64 PNG data URL, tự sinh bằng ZXing nên không phụ thuộc dịch vụ ngoài.
      */

@@ -78,12 +78,21 @@ public final class FeePeriods {
         return periodFrom == null ? feeYear : Integer.valueOf(periodFrom.getYear());
     }
 
-    /** Phiếu tháng cũ / khoản tạo tay: {@code "<code> HP T<m>"} (giữ nguyên như trước). */
+    /** Phiếu tháng cũ / khoản tạo tay: {@code "<code> HP T<m>"} (giữ nguyên như trước, không có tên). */
     public static String legacyTransferContent(String studentCode, Integer month) {
+        return legacyTransferContent(null, studentCode, month);
+    }
+
+    /**
+     * {@code "<TEN KHONG DAU> <code> HP T<m>"}, tối đa {@link #TRANSFER_CONTENT_MAX}. Phần {@code "<code> HP T<m>"}
+     * giữ như trước; tên chỉ dùng chỗ còn lại (xem {@link #withStudentName}).
+     */
+    public static String legacyTransferContent(String studentName, String studentCode, Integer month) {
         String code = asciiCode(studentCode);
         int safeMonth = month == null ? 0 : month;
         String text = (code + " HP T" + safeMonth).trim();
-        return text.length() > TRANSFER_CONTENT_MAX ? text.substring(0, TRANSFER_CONTENT_MAX) : text;
+        text = text.length() > TRANSFER_CONTENT_MAX ? text.substring(0, TRANSFER_CONTENT_MAX) : text;
+        return withStudentName(studentName, text, TRANSFER_CONTENT_MAX);
     }
 
     /**
@@ -91,13 +100,56 @@ public final class FeePeriods {
      * Quá dài thì cắt mã học sinh (chỉ xảy ra khi mã &gt; 12 ký tự), không bao giờ cắt ngày.
      */
     public static String rangeTransferContent(String studentCode, LocalDate from, LocalDate to) {
+        return rangeTransferContent(null, studentCode, from, to);
+    }
+
+    /** {@code "<TEN KHONG DAU> <code> HP <ddMM>-<ddMM>"}: tên chỉ dùng chỗ còn lại trong 25 ký tự. */
+    public static String rangeTransferContent(String studentName, String studentCode, LocalDate from, LocalDate to) {
         String suffix = " HP " + from.format(DDMM) + "-" + to.format(DDMM);
         String code = asciiCode(studentCode);
         int room = TRANSFER_CONTENT_MAX - suffix.length();
         if (code.length() > room) {
             code = code.substring(0, Math.max(room, 0));
         }
-        return (code + suffix).trim();
+        return withStudentName(studentName, (code + suffix).trim(), TRANSFER_CONTENT_MAX);
+    }
+
+    /**
+     * Ghép tên học sinh (không dấu, IN HOA, chỉ {@code A-Z0-9} và dấu cách) trước {@code content}, tổng
+     * {@code <= max}. Không bao giờ cắt {@code content}: tên được cắt ở ranh giới từ nếu được, không thì cắt cứng;
+     * hết chỗ thì bỏ hẳn tên. Tên rỗng / {@code null} -> {@code content} như cũ.
+     */
+    public static String withStudentName(String studentName, String content, int max) {
+        String base = content == null ? "" : content.trim();
+        String name = transferName(studentName);
+        if (name.isEmpty()) {
+            return base;
+        }
+        int room = max - base.length() - (base.isEmpty() ? 0 : 1);
+        if (room <= 0) {
+            return base;
+        }
+        if (name.length() > room) {
+            boolean wordEnds = name.charAt(room) == ' ';
+            String cut = name.substring(0, room);
+            int lastSpace = cut.lastIndexOf(' ');
+            if (!wordEnds && lastSpace > 0) {
+                cut = cut.substring(0, lastSpace);
+            }
+            name = cut.trim();
+        }
+        return base.isEmpty() ? name : name + " " + base;
+    }
+
+    /** Tên cho nội dung chuyển khoản: bỏ dấu (Đ/đ -> D), IN HOA, chỉ {@code A-Z0-9} + một dấu cách giữa các từ. */
+    public static String transferName(String studentName) {
+        if (studentName == null || studentName.isBlank()) {
+            return "";
+        }
+        return asciiFold(studentName).toUpperCase(Locale.ROOT)
+                .replaceAll("[^A-Z0-9 ]", " ")
+                .replaceAll(" +", " ")
+                .trim();
     }
 
     /** Mã học sinh đã bị cắt trong nội dung chuyển khoản phiếu khoảng ngày (cần đối soát tay). */

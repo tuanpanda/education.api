@@ -54,6 +54,14 @@ public class VietQrHelper {
     private static final String PNG_DATA_URL_PREFIX = "data:image/png;base64,";
 
     /**
+     * Nội dung chuyển khoản thực sự nằm trong QR (tag 62/08) và {@code addInfo} của quick link: {@code trim()},
+     * rỗng -> {@code null}. Trả FE trong {@code transferContent} để luôn khớp QR.
+     */
+    public String addInfoOf(String description) {
+        return description == null || description.isBlank() ? null : description.trim();
+    }
+
+    /**
      * Xây dựng chuỗi payload TLV (Tag - Length - Value) chuẩn EMVCo cho VietQR.
      * <p>
      * Các Tag sử dụng: {@code 00} (phiên bản), {@code 01} (phương thức khởi tạo),
