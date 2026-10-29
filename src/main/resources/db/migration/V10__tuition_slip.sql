@@ -3,7 +3,7 @@
 --
 -- Cot ky thu tren FIN_TUITION_FEES, quy luat ma HP, procedure PRC_GET_TUITION_SLIP_DATA.
 --
---   sqlplus EDUCATION/EDUCATION@//localhost:1521/ORCL @V10__tuition_slip.sql
+--   sqlplus <DB_USER>@//localhost:1521/ORCL @V10__tuition_slip.sql   (mat khau nhap tai prompt)
 -- =============================================================================
 
 SET DEFINE OFF
