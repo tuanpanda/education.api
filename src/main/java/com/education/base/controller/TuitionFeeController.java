@@ -4,13 +4,14 @@ import com.education.base.security.Permissions;
 import com.education.base.security.RequirePermission;
 import com.education.base.common.ApiResponse;
 import com.education.base.dto.request.ConfirmPaymentRequest;
-import com.education.base.dto.request.CreateMonthlyInvoiceRequestDto;
+import com.education.base.dto.request.GenerateRangeInvoicesRequestDto;
 import com.education.base.dto.request.TuitionFeeCancelRequest;
 import com.education.base.dto.request.TuitionFeeCreateRequest;
 import com.education.base.dto.request.TuitionFeeFilterRequest;
 import com.education.base.dto.request.TuitionFeeUpdateRequest;
 import com.education.base.dto.request.TuitionQrRequest;
-import com.education.base.dto.response.GenerateMonthlyInvoicesResponseDto;
+import com.education.base.dto.response.BillableSessionsPreviewDto;
+import com.education.base.dto.response.GenerateInvoicesResponseDto;
 import com.education.base.dto.response.PageResponse;
 import com.education.base.dto.response.PaymentTransactionDto;
 import com.education.base.dto.response.TuitionFeeDetailResponse;
@@ -23,6 +24,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -34,8 +37,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/v1/tuition-fees")
@@ -121,16 +127,33 @@ public class TuitionFeeController {
                 tuitionFeeService.confirmPayment(id, payload));
     }
 
-    @Operation(summary = "Sinh phiếu học phí tháng theo điểm danh PRESENT + LATE",
-            description = "Đếm buổi PRESENT + LATE trong tháng, totalAmount = pricePerSession * totalSessions, áp miễn giảm"
-                    + " còn hiệu lực (tối đa bằng tổng tiền), tạo/cập nhật hóa đơn hàng loạt; mỗi học sinh một transaction,"
-                    + " khoản phí xung đột với số đã thu trả về trong conflicts[], lỗi từng học sinh trong errors[].")
-    @PostMapping("/generate-monthly")
+    @Operation(summary = "Xem trước buổi tính phí theo khoảng ngày (chỉ đọc)",
+            description = "Buổi PRESENT + LATE của lớp trong fromDate..toDate (cả hai đầu), theo học sinh, kèm ngày đã"
+                    + " nằm trên phiếu khác (conflictDates). Không có pricePerSession thì các trường tiền là null.")
+    @GetMapping("/billable-sessions")
     @RequirePermission(Permissions.TUITION_FEE_CREATE)
-    public ApiResponse<GenerateMonthlyInvoicesResponseDto> generateMonthly(
-            @Valid @RequestBody CreateMonthlyInvoiceRequestDto request) {
-        return ApiResponse.success("Đã sinh phiếu học phí theo điểm danh.",
-                tuitionSlipService.generateMonthly(request));
+    public ApiResponse<BillableSessionsPreviewDto> previewBillableSessions(
+            @RequestParam("classId") Long classId,
+            @RequestParam("fromDate") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
+            @RequestParam("toDate") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate,
+            @RequestParam(value = "pricePerSession", required = false) BigDecimal pricePerSession) {
+        return ApiResponse.success(tuitionSlipService.previewBillable(classId, fromDate, toDate, pricePerSession));
+    }
+
+    @Operation(summary = "Sinh phiếu học phí theo khoảng ngày (PRESENT + LATE)",
+            description = "totalAmount = số buổi x pricePerSession, chưa áp giảm giá. Tất cả hoặc không: có buổi đã nằm"
+                    + " trên phiếu chưa hủy/chưa xóa thì 409 FEE_SESSION_CONFLICT (data.details) và không tạo phiếu nào.")
+    @PostMapping("/generate-range")
+    @RequirePermission(Permissions.TUITION_FEE_CREATE)
+    public ResponseEntity<ApiResponse<GenerateInvoicesResponseDto>> generateRange(
+            @Valid @RequestBody GenerateRangeInvoicesRequestDto request) {
+        GenerateInvoicesResponseDto result = tuitionSlipService.generateRange(request);
+        // Contract v1.3 §11: tạo >= 1 phiếu -> 201; không tạo phiếu nào -> 200 {createdCount: 0, feeIds: []}.
+        HttpStatus status = result != null && result.getCreatedCount() > 0 ? HttpStatus.CREATED : HttpStatus.OK;
+        return ResponseEntity.status(status)
+                .body(ApiResponse.success(status == HttpStatus.CREATED
+                        ? "Đã sinh phiếu học phí theo khoảng ngày."
+                        : "Không có học sinh nào có buổi tính phí trong khoảng ngày.", result));
     }
 
     @Operation(summary = "Dữ liệu phiếu học phí điện tử",

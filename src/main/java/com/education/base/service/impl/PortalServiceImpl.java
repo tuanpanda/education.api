@@ -1,5 +1,6 @@
 package com.education.base.service.impl;
 
+import com.education.base.common.FeePeriods;
 import com.education.base.common.DomainConstants;
 import com.education.base.common.FeeStatusCalculator;
 import com.education.base.common.PersistenceFlags;
@@ -326,8 +327,13 @@ public class PortalServiceImpl implements PortalService {
                 .classId(fee.getClassId())
                 .classCode(clazz == null ? null : clazz.getClassCode())
                 .className(clazz == null ? null : clazz.getClassName())
-                .feeMonth(fee.getFeeMonth())
-                .feeYear(fee.getFeeYear())
+                .feeMonth(FeePeriods.displayMonth(fee.getFeeMonth(), fee.getPeriodFrom()))
+                .feeYear(FeePeriods.displayYear(fee.getFeeYear(), fee.getFeeMonth(), fee.getPeriodFrom()))
+                .periodFrom(fee.getPeriodFrom())
+                .periodTo(fee.getPeriodTo())
+                .periodText(FeePeriods.periodText(fee.getFeeMonth(), fee.getFeeYear(), fee.getPeriodFrom(),
+                        fee.getPeriodTo()))
+                .rangeFee(FeePeriods.isRangeFee(fee.getIsRange()))
                 .totalAmount(nvl(fee.getTotalAmount()))
                 .discountAmount(nvl(fee.getDiscountAmount()))
                 .paidAmount(nvl(fee.getPaidAmount()))
@@ -477,8 +483,13 @@ public class PortalServiceImpl implements PortalService {
                 .classId(fee.getClassId())
                 .classCode(clazz == null ? null : clazz.getClassCode())
                 .className(clazz == null ? null : clazz.getClassName())
-                .feeMonth(fee.getFeeMonth())
-                .feeYear(fee.getFeeYear())
+                .feeMonth(FeePeriods.displayMonth(fee.getFeeMonth(), fee.getPeriodFrom()))
+                .feeYear(FeePeriods.displayYear(fee.getFeeYear(), fee.getFeeMonth(), fee.getPeriodFrom()))
+                .periodFrom(fee.getPeriodFrom())
+                .periodTo(fee.getPeriodTo())
+                .periodText(FeePeriods.periodText(fee.getFeeMonth(), fee.getFeeYear(), fee.getPeriodFrom(),
+                        fee.getPeriodTo()))
+                .rangeFee(FeePeriods.isRangeFee(fee.getIsRange()))
                 .totalAmount(nvl(fee.getTotalAmount()))
                 .discountAmount(nvl(fee.getDiscountAmount()))
                 .paidAmount(nvl(fee.getPaidAmount()))

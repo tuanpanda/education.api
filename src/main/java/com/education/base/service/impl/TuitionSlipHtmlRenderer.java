@@ -19,7 +19,7 @@ final class TuitionSlipHtmlRenderer {
 
     static String render(TuitionSlipResponseDto data) {
         String className = esc(emptyTo(data.getClassName(), "Lớp học"));
-        String titleMonth = esc(emptyTo(data.getMonthYearText(), ""));
+        String titleMonth = esc(emptyTo(data.getPeriodText(), emptyTo(data.getMonthYearText(), "")));
         String label = esc(emptyTo(data.getSlipLabel(), "Mặc Định"));
         String studentName = esc(emptyTo(data.getStudentName(), ""));
         String studentCode = esc(emptyTo(data.getStudentCode(), ""));
@@ -45,7 +45,9 @@ final class TuitionSlipHtmlRenderer {
             badges.append("<span class=\"day\">").append(esc(day)).append("</span>");
         }
         if (dates.isEmpty()) {
-            badges.append("<span class=\"day empty\">Chưa có buổi PRESENT</span>");
+            badges.append("<span class=\"day empty\">")
+                    .append("CANCELLED".equals(status) ? "Phiếu đã hủy" : "Chưa có buổi học tính phí")
+                    .append("</span>");
         }
 
         return """

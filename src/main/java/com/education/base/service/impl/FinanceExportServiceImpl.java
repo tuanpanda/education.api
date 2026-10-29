@@ -207,7 +207,7 @@ public class FinanceExportServiceImpl implements FinanceExportService {
                     Column.<DebtAgingFeeDto>text("Họ và tên", DebtAgingFeeDto::getStudentName, 26),
                     Column.<DebtAgingFeeDto>text("Trạng thái HS", r -> label(STUDENT_STATUS_LABELS, r.getStudentStatus()), 14),
                     Column.<DebtAgingFeeDto>text("Lớp", r -> classLabel(r.getClassCode(), r.getClassName()), 24),
-                    Column.<DebtAgingFeeDto>text("Kỳ thu", r -> periodOf(r.getFeeYear(), r.getFeeMonth()), 10),
+                    Column.<DebtAgingFeeDto>text("Kỳ thu", r -> periodOrText(r.getPeriodText(), r.getFeeYear(), r.getFeeMonth()), 24),
                     Column.<DebtAgingFeeDto>date("Hạn thu", DebtAgingFeeDto::getDueDate),
                     Column.<DebtAgingFeeDto>text("Trạng thái", r -> label(FEE_STATUS_LABELS, r.getStatus()), 14),
                     Column.<DebtAgingFeeDto>money("Phải thu", DebtAgingFeeDto::getNetAmount),
@@ -254,7 +254,7 @@ public class FinanceExportServiceImpl implements FinanceExportService {
                     Column.<FeeExportRowDto>text("Trạng thái HS", r -> label(STUDENT_STATUS_LABELS, r.getStudentStatus()), 14),
                     Column.<FeeExportRowDto>text("Mã lớp", FeeExportRowDto::getClassCode, 14),
                     Column.<FeeExportRowDto>text("Tên lớp", FeeExportRowDto::getClassName, 24),
-                    Column.<FeeExportRowDto>text("Kỳ thu", r -> periodOf(r.getFeeYear(), r.getFeeMonth()), 10),
+                    Column.<FeeExportRowDto>text("Kỳ thu", r -> periodOrText(r.getPeriodText(), r.getFeeYear(), r.getFeeMonth()), 24),
                     Column.<FeeExportRowDto>money("Tổng tiền", FeeExportRowDto::getTotalAmount),
                     Column.<FeeExportRowDto>money("Miễn giảm", FeeExportRowDto::getDiscountAmount),
                     Column.<FeeExportRowDto>money("Đã thu", FeeExportRowDto::getPaidAmount),
@@ -473,6 +473,14 @@ public class FinanceExportServiceImpl implements FinanceExportService {
             return null;
         }
         return labels.getOrDefault(code, code);
+    }
+
+    /** Phiếu khoảng ngày: {@code periodText}; phiếu tháng / khoản khác: {@code MM/yyyy} như trước. */
+    static String periodOrText(String periodText, Integer year, Integer month) {
+        if (periodText != null && periodText.startsWith("Từ ")) {
+            return periodText;
+        }
+        return periodOf(year, month);
     }
 
     static String periodOf(Integer year, Integer month) {

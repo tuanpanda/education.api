@@ -21,6 +21,7 @@ import com.education.base.repository.ClassRepository;
 import com.education.base.repository.PaymentTransactionRepository;
 import com.education.base.repository.StudentRepository;
 import com.education.base.repository.TuitionFeeRepository;
+import com.education.base.repository.TuitionFeeSessionRepository;
 import com.education.base.service.BankAccountService;
 import com.education.base.service.FileStorageService;
 import com.education.base.service.PaymentService;
@@ -64,6 +65,8 @@ class TuitionFeeServiceImplTest {
     private BankAccountService bankAccountService;
     @Mock
     private PaymentService paymentService;
+    @Mock
+    private TuitionFeeSessionRepository tuitionFeeSessionRepository;
 
     private TuitionFeeServiceImpl service;
 
@@ -71,7 +74,7 @@ class TuitionFeeServiceImplTest {
     void setUp() {
         service = new TuitionFeeServiceImpl(tuitionFeeRepository, paymentTransactionRepository,
                 studentRepository, classRepository, fileStorageService, new FileMapperImpl(),
-                new FinanceAcademicMapperImpl(), bankAccountService, paymentService);
+                new FinanceAcademicMapperImpl(), bankAccountService, paymentService, tuitionFeeSessionRepository);
     }
 
     @Test
@@ -89,6 +92,43 @@ class TuitionFeeServiceImplTest {
         assertThat(qr.getQrPayload()).contains("6304");
         assertThat(qr.getBase64Image()).startsWith("data:image/png;base64,");
         assertThat(qr.getQuickUrl()).contains("970436-1234567890");
+    }
+
+    @Test
+    void createQr_rangeFee_usesRangeTransferContent() {
+        TuitionFeeEntity fee = unpaidFee();
+        fee.setPeriodFrom(java.time.LocalDate.of(2026, 10, 1));
+        fee.setIsRange(1);
+        fee.setPeriodTo(java.time.LocalDate.of(2026, 10, 31));
+        when(tuitionFeeRepository.findByIdAndIsDeleted(4L, 0)).thenReturn(Optional.of(fee));
+        when(studentRepository.findById(8L)).thenReturn(Optional.of(StudentEntity.builder()
+                .id(8L).studentCode("HS000123").fullName("Nguyen Van A").build()));
+        when(bankAccountService.requireActive()).thenReturn(activeAccount());
+
+        TuitionQrResponseDto qr = service.createQr(4L, new TuitionQrRequest());
+
+        assertThat(qr.getQrPayload()).contains("HS000123 HP 0110-3110");
+    }
+
+    @Test
+    void search_rangeFee_hasPeriodTextAndDisplayMonth() {
+        TuitionFeeEntity fee = unpaidFee();
+        fee.setPeriodFrom(java.time.LocalDate.of(2026, 10, 5));
+        fee.setIsRange(1);
+        fee.setPeriodTo(java.time.LocalDate.of(2026, 11, 4));
+        when(tuitionFeeRepository.findAll(org.mockito.ArgumentMatchers.<org.springframework.data.jpa.domain.Specification<TuitionFeeEntity>>any(),
+                any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(fee)));
+
+        var page = service.search(new com.education.base.dto.request.TuitionFeeFilterRequest());
+
+        var row = page.getContent().getFirst();
+        assertThat(row.getPeriodFrom()).isEqualTo(java.time.LocalDate.of(2026, 10, 5));
+        assertThat(row.getPeriodTo()).isEqualTo(java.time.LocalDate.of(2026, 11, 4));
+        assertThat(row.getPeriodText()).isEqualTo("Từ 05/10/2026 đến 04/11/2026");
+        assertThat(row.getFeeMonth()).isEqualTo(10);
+        assertThat(row.getFeeYear()).isEqualTo(2026);
+        assertThat(fee.getFeeMonth()).as("DB FEE_MONTH vẫn NULL").isNull();
     }
 
     @Test
@@ -233,6 +273,79 @@ class TuitionFeeServiceImplTest {
     }
 
     @Test
+    void update_rangeFee_forcesDiscountZero_ignoringRequest() {
+        TuitionFeeEntity fee = unpaidFee();
+        fee.setFeeMonth(null);
+        fee.setFeeYear(null);
+        fee.setPeriodFrom(LocalDate.of(2026, 10, 1));
+        fee.setPeriodTo(LocalDate.of(2026, 10, 31));
+        fee.setIsRange(1);
+        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(4L, 0)).thenReturn(Optional.of(fee));
+        stubDetail(4L);
+
+        service.update(4L, TuitionFeeUpdateRequest.builder()
+                .totalAmount(new BigDecimal("900000")).discountAmount(new BigDecimal("100000")).build());
+
+        assertThat(fee.getDiscountAmount()).isEqualByComparingTo("0");
+        assertThat(fee.getTotalAmount()).isEqualByComparingTo("900000");
+    }
+
+    @Test
+    void update_legacyMonthlyFee_withBackfilledPeriod_keepsRequestedDiscount() {
+        TuitionFeeEntity fee = unpaidFee();
+        fee.setFeeMonth(4);
+        fee.setFeeYear(2026);
+        fee.setPeriodFrom(LocalDate.of(2026, 4, 1));
+        fee.setPeriodTo(LocalDate.of(2026, 4, 30));
+        fee.setDiscountAmount(new BigDecimal("100000"));
+        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(4L, 0)).thenReturn(Optional.of(fee));
+        stubDetail(4L);
+
+        service.update(4L, TuitionFeeUpdateRequest.builder()
+                .totalAmount(new BigDecimal("900000")).discountAmount(new BigDecimal("100000")).build());
+
+        assertThat(fee.getDiscountAmount()).isEqualByComparingTo("100000");
+    }
+
+    @Test
+    void update_manualFeeWithoutMonth_keepsRequestedDiscount() {
+        // Khoản tạo tay: FEE_MONTH NULL nhưng IS_RANGE = 0 -> không phải phiếu khoảng ngày, giữ giảm giá.
+        TuitionFeeEntity fee = unpaidFee();
+        fee.setFeeMonth(null);
+        fee.setFeeYear(null);
+        fee.setPeriodFrom(null);
+        fee.setPeriodTo(null);
+        fee.setIsRange(0);
+        fee.setDiscountAmount(new BigDecimal("50000"));
+        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(4L, 0)).thenReturn(Optional.of(fee));
+        stubDetail(4L);
+
+        service.update(4L, TuitionFeeUpdateRequest.builder()
+                .totalAmount(new BigDecimal("900000")).discountAmount(new BigDecimal("150000")).build());
+
+        assertThat(fee.getDiscountAmount()).isEqualByComparingTo("150000");
+        assertThat(fee.getIsRange()).isZero();
+    }
+
+    @Test
+    void update_manualFeeWithPeriodButNotRangeFlag_keepsDiscount() {
+        // Bảo vệ: chỉ IS_RANGE = 1 mới ép giảm giá = 0, không suy từ FEE_MONTH NULL + PERIOD_FROM.
+        TuitionFeeEntity fee = unpaidFee();
+        fee.setFeeMonth(null);
+        fee.setFeeYear(null);
+        fee.setPeriodFrom(LocalDate.of(2026, 10, 1));
+        fee.setPeriodTo(LocalDate.of(2026, 10, 31));
+        fee.setIsRange(0);
+        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(4L, 0)).thenReturn(Optional.of(fee));
+        stubDetail(4L);
+
+        service.update(4L, TuitionFeeUpdateRequest.builder()
+                .totalAmount(new BigDecimal("900000")).discountAmount(new BigDecimal("100000")).build());
+
+        assertThat(fee.getDiscountAmount()).isEqualByComparingTo("100000");
+    }
+
+    @Test
     void update_nullDiscountMeansZero() {
         TuitionFeeEntity fee = unpaidFee();
         when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(4L, 0)).thenReturn(Optional.of(fee));
@@ -285,6 +398,8 @@ class TuitionFeeServiceImplTest {
         assertThat(detail.getCancelReason()).isEqualTo("Học sinh nghỉ");
         assertThat(detail.getStudentStatus()).isEqualTo("INACTIVE");
         verify(tuitionFeeRepository).saveAndFlush(fee);
+        // Thu theo khoảng ngày: hủy thành công luôn giải phóng ngày (xóa dòng FIN_TUITION_FEE_SESSIONS).
+        verify(tuitionFeeSessionRepository).deleteByFeeId(4L);
     }
 
     @Test
@@ -306,6 +421,8 @@ class TuitionFeeServiceImplTest {
                 .isInstanceOf(OracleBusinessException.class).extracting("errorCode").isEqualTo("CANCEL_REASON_REQUIRED");
         assertThat(partial.getStatus()).isEqualTo("PARTIAL");
         verify(tuitionFeeRepository, never()).saveAndFlush(any());
+        // Hủy bị chặn (đã thu): giữ nguyên các ngày trên phiếu.
+        verify(tuitionFeeSessionRepository, never()).deleteByFeeId(any());
     }
 
     // ---- Xóa ------------------------------------------------------------------------------------------
@@ -320,6 +437,7 @@ class TuitionFeeServiceImplTest {
 
         assertThat(fee.getIsDeleted()).isEqualTo(1);
         verify(tuitionFeeRepository).saveAndFlush(fee);
+        verify(tuitionFeeSessionRepository).deleteByFeeId(4L);
     }
 
     @Test

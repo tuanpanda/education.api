@@ -27,6 +27,19 @@ public class TuitionSlipResponseDto {
     private String monthYearText;
     private Integer month;
     private Integer year;
+
+    /** Kỳ thu theo khoảng ngày; {@code null} với phiếu cũ chưa backfill (V23_8). */
+    private LocalDate periodFrom;
+    private LocalDate periodTo;
+
+    /** {@code "Từ dd/MM/yyyy đến dd/MM/yyyy"} hoặc {@code "Tháng MM/yyyy"} (phiếu cũ). */
+    private String periodText;
+
+    /**
+     * {@code true} khi phiếu tạo bởi "thu theo khoảng ngày" (DB {@code FEE_MONTH IS NULL AND PERIOD_FROM IS NOT NULL});
+     * phiếu tháng cũ (kể cả đã backfill PERIOD_*) = {@code false}. FE dùng để ẩn dòng giảm giá.
+     */
+    private boolean rangeFee;
     private String className;
     private String classCode;
     private String studentCode;
@@ -54,6 +67,10 @@ public class TuitionSlipResponseDto {
 
     private LocalDate dueDate;
 
+    /**
+     * Ngày trên phiếu dạng {@code dd/MM}, tăng dần, không đánh dấu muộn. Phiếu khoảng ngày đọc từ
+     * {@code FIN_TUITION_FEE_SESSIONS}; phiếu đã hủy không có ngày.
+     */
     @Builder.Default
     private List<String> attendedDates = new ArrayList<>();
 

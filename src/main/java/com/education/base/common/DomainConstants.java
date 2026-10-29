@@ -198,6 +198,18 @@ public class DomainConstants {
     /** Tiền tố lý do hủy do hệ thống tự sinh (phân biệt với hủy thủ công). */
     public static final String FEE_AUTO_CANCEL_PREFIX = "auto:";
 
+    /** Thu theo khoảng ngày: khoảng {@code fromDate..toDate} tối đa (số ngày, tính cả hai đầu). */
+    public static final int FEE_RANGE_MAX_DAYS = 366;
+
+    /** 409: có buổi đã nằm trên phiếu chưa hủy / chưa xóa (contract fee-range-api v1.3 mục 3). */
+    public static final String FEE_SESSION_CONFLICT = "FEE_SESSION_CONFLICT";
+
+    /** Unique {@code FIN_TUITION_FEE_SESSIONS(ATTENDANCE_ID)} (V23_4): ORA-00001 trên ràng buộc này -> 409. */
+    public static final String FEE_SESSIONS_UNIQUE_CONSTRAINT = "UQ_FEE_SESSIONS_ATTENDANCE";
+
+    /** Thông báo chung của {@link #FEE_SESSION_CONFLICT}. */
+    public static final String FEE_SESSION_CONFLICT_MESSAGE = "Có buổi học đã được thu học phí ở phiếu khác.";
+
     /** Loại miễn giảm - {@code CK_DISCOUNTS_TYPE} ({@code FIN_STUDENT_DISCOUNTS}, V14_1). */
     public static final String DISCOUNT_TYPE_PATTERN = "PERCENT|AMOUNT";
 

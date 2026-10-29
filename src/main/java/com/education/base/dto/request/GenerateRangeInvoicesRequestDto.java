@@ -2,8 +2,6 @@ package com.education.base.dto.request;
 
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
-import jakarta.validation.constraints.Max;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
@@ -12,28 +10,28 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
 /**
- * Sinh hàng loạt phiếu học phí tháng từ điểm danh {@code PRESENT} của lớp.
+ * Sinh phiếu học phí theo khoảng ngày cho cả lớp ({@code POST /api/v1/tuition-fees/generate-range}).
+ * <p>
+ * {@code fromDate <= toDate} và khoảng tối đa {@code DomainConstants.FEE_RANGE_MAX_DAYS} ngày được kiểm ở Service
+ * (400 {@code VALIDATION_ERROR}).
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class CreateMonthlyInvoiceRequestDto {
+public class GenerateRangeInvoicesRequestDto {
 
     @NotNull(message = "ID lớp học không được để trống")
     private Long classId;
 
-    @NotNull(message = "Tháng thu không được để trống")
-    @Min(value = 1, message = "Tháng thu phải từ 1 đến 12")
-    @Max(value = 12, message = "Tháng thu phải từ 1 đến 12")
-    private Integer month;
+    @NotNull(message = "Từ ngày không được để trống")
+    private LocalDate fromDate;
 
-    @NotNull(message = "Năm thu không được để trống")
-    @Min(value = 2000, message = "Năm thu không hợp lệ")
-    @Max(value = 2100, message = "Năm thu không hợp lệ")
-    private Integer year;
+    @NotNull(message = "Đến ngày không được để trống")
+    private LocalDate toDate;
 
     @NotNull(message = "Đơn giá mỗi buổi không được để trống")
     @DecimalMin(value = "0", inclusive = false, message = "Đơn giá mỗi buổi phải lớn hơn 0")

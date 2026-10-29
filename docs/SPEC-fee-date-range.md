@@ -1,5 +1,26 @@
 # SPEC: Tuition fee by date range (thu học phí theo khoảng ngày)
 
+Version: **v1.1** (2026-10-29), aligned with API contract `fee-range-api` **v1.3 (final)**. v1.0 text below is kept and amended in place; where v1.0 and §0 disagree, **§0 wins**.
+
+## 0. v1.1 decisions (contract v1.3 + QC)
+
+| # | Decision |
+|---|----------|
+| V1 | **No discount on range fees yet (deferred).** `DISCOUNT_AMOUNT = 0`; `StudentDiscountService.computeDiscount` is not called. Editing a range fee (`PUT /{id}`) forces discount to 0 server-side. Legacy monthly fees and manual fees keep the old behaviour (discount taken from the request). |
+| V2 | **Explicit marker `FIN_TUITION_FEES.IS_RANGE NUMBER(1) DEFAULT 0 NOT NULL`** + `CK_FEES_IS_RANGE CHECK (IS_RANGE IN (0,1))` (V23_1). Only `generate-range` writes 1. Legacy and manual fees stay 0 (no backfill). `rangeFee` in every fee DTO = `IS_RANGE = 1` (not derived from `FEE_MONTH IS NULL`, since manual fees may have no month either). |
+| V3 | Range fees keep **`FEE_MONTH`/`FEE_YEAR` NULL in the DB** (so `UQ_FEES_MONTHLY` never applies). DTOs expose a *display* `feeMonth`/`feeYear` derived from `PERIOD_FROM`, plus `periodFrom`, `periodTo`, `periodText`, `rangeFee` on all fee DTOs: slip, search list, detail, portal list/detail, debt aging, student ledger, export rows, payment transaction fee summary. |
+| V4 | Slip dates stay in **`attendedDates`** (dd/MM, sorted, from `FIN_TUITION_FEE_SESSIONS`); no `sessionBadges` field. A **cancelled range slip shows no dates** and never re-reads attendance. The attendance fallback is only for legacy monthly fees without session rows. |
+| V5 | 409 `FEE_SESSION_CONFLICT`: details in **`data.details`** `[{studentId, studentCode, studentName, dates, feeCodes}]`. An ORA-00001 on `UQ_FEE_SESSIONS_ATTENDANCE` (race) maps to the same 409 with `data.details = []`. One `@Transactional` for the whole request: all or nothing. |
+| V6 | Conflict lookup is a **JOIN by class + date range** (session × fee × attendance), not an `IN` list of attendance IDs (avoids ORA-01795 above 1000 IDs). Report period lookups by ID are chunked at 900. |
+| V7 | **Students in scope:** active (ENROLLED) students are always listed, even with 0 sessions (`skippedNoAttendance`). Students who left the class but have billable sessions in the range are billed and listed with `inactive: true`; left students with 0 sessions are not shown. `inactive` is always present in the preview JSON. Money fields are JSON `null` (not omitted) when no price is passed. |
+| V8 | **Revenue by session:** `PRC_RPT_CLASS_COLLECTION` (V23_9) splits `IS_RANGE = 1` fees by the month of `SESSION_DATE` × `PRICE_PER_SESSION` (discount/paid/remaining pro-rated). One-line switch `C_SPLIT_BY_SESSION` (0 = whole fee in the month of `PERIOD_FROM`). Debt-aging and dashboard procedures are unchanged. |
+| V9 | **VietQR reconciliation is manual** for range fees: match by transfer content + amount; a truncated student code (> 12 chars) or multiple matches need manual reconciliation. The backend has no automatic content-parsing reconciliation, so nothing changes there. |
+| V10 | Validation: `toDate - fromDate + 1 <= 366`; a price with more than 2 decimals is 400 (no rounding). 0 fees created → **200**; ≥ 1 → **201**. Cancel/delete always releases the session rows. Missing class → 404 `CLASS_NOT_FOUND`; no permission → 403 (MENU permission `MENU_TUITION_FEE:CREATE`; no per-class restriction this round). `POST /generate-monthly` is removed (now 405 because the path matches `/{id}`). |
+| V11 | Target DB: **EDUCATION_PRE first**, then EDUCATION after approval. DML scripts (V23_7, V23_8) have no COMMIT/EXIT; the owner commits by hand (see `docs/RUN-V23-fee-range.md`). Tests use Mockito / the in-memory transaction manager; no DB. |
+| V12 | Audit: there was no audit entry for `generate-monthly` and `TuitionSlipService` is not covered by `AuditTrailAspect`, so "the same audit action" does not exist; generation is logged (class, range, counts, actor). Open item. |
+| V13 | `V23_4` omits `TABLESPACE EDU`; the table uses the user's default tablespace (checked in the RUN guide). |
+
+
 Status: approved by the owner on 2026-10-29 (widget t102 + "oke" t103). Branches: `feat/fee-date-range` (API, worktree `E:\JAVA\edu-wt\fee-range`) and `feat/fee-date-range-ui` (UI, worktree `E:\JAVA\edu-wt\fee-range-ui`).
 Rules: commit locally only. No push, merge or deploy until the owner has tested on PRE and approved.
 
@@ -7,7 +28,7 @@ Rules: commit locally only. No push, merge or deploy until the owner has tested 
 
 | # | Decision |
 |---|----------|
-| D1 | Amount is computed automatically: `count(billable sessions) × pricePerSession − discounts` (same discount logic as today, `StudentDiscountService.computeDiscount`, clamped to `[0, total]`). |
+| D1 | Amount is computed automatically: `count(billable sessions) × pricePerSession`. ~~− discounts~~ **v1.1: discount deferred, always 0 (§0 V1).** |
 | D2 | If any billable date of a student in the range is already on another fee that is **not cancelled and not deleted**, the request is **rejected** with a conflict error that lists the dates (and the fee codes). Nothing is created. |
 | D3 | The slip does **not** mark late sessions; there is no "(muộn)" marker. LATE and PRESENT dates look the same. |
 | D4 | **Month mode is removed.** Generation only accepts `fromDate` / `toDate`. |
@@ -30,8 +51,7 @@ Rules: commit locally only. No push, merge or deploy until the owner has tested 
   - `teacherComment` and `footerWish` keep their current limits (1000 and 500).
 - **Scope:** generation is per class and covers all active students of the class, as `generate-monthly` does now. A student with 0 billable sessions in the range is skipped and counted in `skippedNoAttendance`.
 - **Conflict (D2):**
-  - Before writing anything, compute every student's billable attendance IDs.
-  - Look them up in `FIN_TUITION_FEE_SESSIONS`, joined to `FIN_TUITION_FEES` where `IS_DELETED=0 AND STATUS<>'CANCELLED'`.
+  - Before writing anything, look up session rows of the class in the range: `FIN_TUITION_FEE_SESSIONS` joined to `FIN_TUITION_FEES` (`IS_DELETED=0 AND STATUS<>'CANCELLED'`) and `EDU_ATTENDANCE` (class, billable status, date in range). v1.1: JOIN, no ID list (§0 V6).
   - If there is any hit, return **HTTP 409** with error code `FEE_SESSION_CONFLICT`. The details list one entry per student: `{studentId, studentCode, studentName, dates:[yyyy-MM-dd...], feeCodes:[...]}`.
   - This is all-or-nothing for the whole request.
   - Race safety: the `UQ_FEE_SESSIONS_ATTENDANCE` unique violation (ORA-00001) must map to the same 409 and must not surface as a 500.
@@ -41,7 +61,8 @@ Rules: commit locally only. No push, merge or deploy until the owner has tested 
   - `PERIOD_FROM = fromDate`, `PERIOD_TO = toDate`.
   - `FEE_MONTH = NULL`, `FEE_YEAR = NULL`.
   - `TOTAL_SESSIONS = count`, `PRICE_PER_SESSION = price`.
-  - `TOTAL_AMOUNT = count×price` (scale 2, HALF_UP), `DISCOUNT_AMOUNT = discount`, `PAID_AMOUNT = 0`.
+  - `TOTAL_AMOUNT = count×price` (scale 2), `DISCOUNT_AMOUNT = 0` (v1.1), `PAID_AMOUNT = 0`.
+  - `IS_RANGE = 1` (v1.1).
   - `STATUS` via `FeeStatusCalculator`.
   - `DUE_DATE = resolveDueDate(toDate, today)`, the existing rule: if `toDate < today`, then today + `FEE_BACKBILL_GRACE_DAYS`.
   - `NOTE = "HP dd/MM/yyyy-dd/MM/yyyy"`.
@@ -70,10 +91,10 @@ Format rules (sqlplus pitfalls seen before):
 
 | File | Content |
 |------|---------|
-| `V23_1__fee_period_columns.sql` | `ALTER TABLE FIN_TUITION_FEES ADD (PERIOD_FROM DATE, PERIOD_TO DATE)` |
+| `V23_1__fee_period_columns.sql` | `ALTER TABLE FIN_TUITION_FEES ADD (PERIOD_FROM DATE, PERIOD_TO DATE)` and (v1.1) `IS_RANGE NUMBER(1) DEFAULT 0 NOT NULL CONSTRAINT CK_FEES_IS_RANGE CHECK (IS_RANGE IN (0,1))`, each column in its own sub-block (one top-level block). Rollback drops all three. |
 | `V23_2__fee_period_check.sql` | `ALTER TABLE FIN_TUITION_FEES ADD CONSTRAINT CK_FEES_PERIOD CHECK (PERIOD_FROM IS NULL OR PERIOD_TO IS NULL OR PERIOD_FROM <= PERIOD_TO)` |
 | `V23_3__seq_fee_sessions.sql` | `CREATE SEQUENCE SEQ_FIN_TUITION_FEE_SESSIONS START WITH 1 INCREMENT BY 1 NOCACHE` |
-| `V23_4__fee_sessions_table.sql` | `CREATE TABLE FIN_TUITION_FEE_SESSIONS (ID NUMBER(19) PRIMARY KEY, FEE_ID NUMBER(19) NOT NULL, ATTENDANCE_ID NUMBER(19) NOT NULL, SESSION_DATE DATE NOT NULL, CREATED_AT TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL, CREATED_BY VARCHAR2(50), CONSTRAINT FK_FEE_SESSIONS_FEE FOREIGN KEY (FEE_ID) REFERENCES FIN_TUITION_FEES(ID), CONSTRAINT FK_FEE_SESSIONS_ATT FOREIGN KEY (ATTENDANCE_ID) REFERENCES EDU_ATTENDANCE(ID), CONSTRAINT UQ_FEE_SESSIONS_ATTENDANCE UNIQUE (ATTENDANCE_ID)) TABLESPACE EDU`. Match the column types to the existing `FIN_TUITION_FEES.ID` / `EDU_ATTENDANCE.ID`; check them on PRE first. |
+| `V23_4__fee_sessions_table.sql` | `CREATE TABLE FIN_TUITION_FEE_SESSIONS (ID NUMBER(19) PRIMARY KEY, FEE_ID NUMBER(19) NOT NULL, ATTENDANCE_ID NUMBER(19) NOT NULL, SESSION_DATE DATE NOT NULL, CREATED_AT TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL, CREATED_BY VARCHAR2(50), CONSTRAINT FK_FEE_SESSIONS_FEE FOREIGN KEY (FEE_ID) REFERENCES FIN_TUITION_FEES(ID), CONSTRAINT FK_FEE_SESSIONS_ATT FOREIGN KEY (ATTENDANCE_ID) REFERENCES EDU_ATTENDANCE(ID), CONSTRAINT UQ_FEE_SESSIONS_ATTENDANCE UNIQUE (ATTENDANCE_ID)) TABLESPACE EDU`. v1.1: tablespace clause omitted (§0 V13). Match the column types to the existing `FIN_TUITION_FEES.ID` / `EDU_ATTENDANCE.ID`; check them on PRE first. |
 | `V23_5__idx_fee_sessions_fee.sql` | `CREATE INDEX IDX_FEE_SESSIONS_FEE ON FIN_TUITION_FEE_SESSIONS (FEE_ID, SESSION_DATE)` |
 | `V23_6__idx_fees_period.sql` | `CREATE INDEX IDX_FEES_PERIOD ON FIN_TUITION_FEES (CLASS_ID, PERIOD_FROM, PERIOD_TO)` |
 | `V23_7__backfill_legacy_fee_sessions.sql` | DML (one `INSERT ... SELECT`, **no COMMIT inside**; the owner decides COMMIT/ROLLBACK). For legacy fees with `IS_DELETED=0 AND STATUS<>'CANCELLED' AND FEE_MONTH IS NOT NULL`, it inserts the billable attendance of that student/class/month, skipping attendance IDs that already have a row. The owner runs it after V23_1–V23_6. |
@@ -85,14 +106,15 @@ Format rules (sqlplus pitfalls seen before):
   - no line has a comment after `;`,
   - the files contain no `password` / `IDENTIFIED BY` / `user/pass@` text,
   - V23_7/V23_8 contain no `COMMIT`.
-- `PRC_GET_TUITION_SLIP_DATA` (V10): check whether it is still used. If it is, either update it to read the session table and period (as a separate V23_9 file) or remove the usage. Document which.
+- v1.1: `V23_9__rpt_class_collection_by_session.sql` replaces `PRC_RPT_CLASS_COLLECTION` (§0 V8).
+- `PRC_GET_TUITION_SLIP_DATA` (V10): check whether it is still used. v1.1: still used and **unchanged**; the backend reads slip dates from `FIN_TUITION_FEE_SESSIONS` itself. If it is, either update it to read the session table and period (as a separate V23_9 file) or remove the usage. Document which.
 
 ## 5. API
 
 - **Preview:** `GET /api/v1/tuition-fees/billable-sessions?classId=&fromDate=yyyy-MM-dd&toDate=yyyy-MM-dd[&pricePerSession=]`
   - Same permission as generate. Read-only.
   - It returns per student: `{studentId, studentCode, studentName, sessionDates:[...], sessionCount, totalAmount?, discountAmount?, netAmount?, conflictDates:[...], conflictFeeCodes:[...]}`, plus totals.
-  - The amount fields are present only when `pricePerSession` is passed.
+  - The amount fields are filled only when `pricePerSession` is passed; otherwise they are JSON `null` (v1.1). Each row also has `inactive` (§0 V7). Totals: `studentCount, billableStudentCount, skippedNoAttendance, sessionCount, totalAmount, discountAmount, netAmount, conflictStudentCount`.
 - **Generate:** `POST /api/v1/tuition-fees/generate-range`
   - Body: `{classId, fromDate, toDate, pricePerSession, teacherComment?, footerWish?}`.
   - It returns the `GenerateMonthlyInvoicesResponseDto` shape, renamed to `GenerateInvoicesResponseDto`, with created/skipped counts and fee IDs. A conflict returns 409 (see §2).
@@ -101,7 +123,7 @@ Format rules (sqlplus pitfalls seen before):
 - **Slip:** `GET /{id}/slip` and `/{id}/slip/html`
   - `TuitionSlipResponseDto` gets `periodFrom`, `periodTo` and `periodText`.
   - `periodText` is `"Từ dd/MM/yyyy đến dd/MM/yyyy"`. Legacy fees keep `"Tháng MM/yyyy"`.
-  - `sessionBadges` are dd/MM strings, sorted ascending, read from `FIN_TUITION_FEE_SESSIONS`. If a legacy fee has no rows, fall back to the current attendance query for that month.
+  - ~~`sessionBadges`~~ v1.1: `attendedDates` are dd/MM strings, sorted ascending, read from `FIN_TUITION_FEE_SESSIONS`. If a legacy fee has no rows, fall back to the current attendance query for that month.
   - There is no late marker.
 - **VietQR transfer content:**
   - Range fee: `"<studentCode> HP <ddMM>-<ddMM>"`, for example `HS000123 HP 0110-3110`.
@@ -153,7 +175,7 @@ Format rules (sqlplus pitfalls seen before):
 **Backend (JUnit, H2 / Mockito as existing):**
 
 1. A range counts only PRESENT and LATE, excludes ABSENT/EXCUSED/others and soft-deleted attendance, and both ends are inclusive.
-2. Amount = count × price − discount; the discount is clamped; scale 2.
+2. Amount = count × price, scale 2; v1.1: discount = 0; `PUT` on a range fee forces discount 0, on legacy/manual fees keeps it.
 3. A conflict with an active fee gives 409 listing the exact dates and fee codes, and nothing is persisted for any student (all-or-nothing).
 4. A conflict with a CANCELLED or deleted fee is not a conflict, because the rows were released on cancel.
 5. A unique-constraint violation maps to 409.

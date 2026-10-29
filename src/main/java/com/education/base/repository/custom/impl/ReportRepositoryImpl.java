@@ -1,5 +1,6 @@
 package com.education.base.repository.custom.impl;
 
+import com.education.base.common.FeePeriods;
 import com.education.base.dto.request.DashboardFilterRequest;
 import com.education.base.dto.request.FeeListExportFilterRequest;
 import com.education.base.dto.request.TransactionListExportFilterRequest;
@@ -237,6 +238,12 @@ public class ReportRepositoryImpl implements ReportRepository {
                     .className(rs.getString("CLASS_NAME"))
                     .feeYear(JdbcValueReaders.getInteger(rs, "FEE_YEAR"))
                     .feeMonth(JdbcValueReaders.getInteger(rs, "FEE_MONTH"))
+                    .periodFrom(JdbcValueReaders.getLocalDate(rs, "PERIOD_FROM"))
+                    .periodTo(JdbcValueReaders.getLocalDate(rs, "PERIOD_TO"))
+                    .periodText(FeePeriods.periodText(JdbcValueReaders.getInteger(rs, "FEE_MONTH"),
+                            JdbcValueReaders.getInteger(rs, "FEE_YEAR"), JdbcValueReaders.getLocalDate(rs, "PERIOD_FROM"),
+                            JdbcValueReaders.getLocalDate(rs, "PERIOD_TO")))
+                    .rangeFee(FeePeriods.isRangeFee(JdbcValueReaders.getInteger(rs, "IS_RANGE")))
                     .totalAmount(JdbcValueReaders.getBigDecimal(rs, "TOTAL_AMOUNT"))
                     .discountAmount(JdbcValueReaders.getBigDecimal(rs, "DISCOUNT_AMOUNT"))
                     .paidAmount(JdbcValueReaders.getBigDecimal(rs, "PAID_AMOUNT"))
@@ -279,7 +286,7 @@ public class ReportRepositoryImpl implements ReportRepository {
     static final String FEE_EXPORT_SELECT = """
             SELECT f.ID, f.FEE_CODE, f.STUDENT_ID, s.STUDENT_CODE, s.FULL_NAME AS STUDENT_NAME,
                    CASE WHEN s.IS_DELETED = 1 THEN 'DELETED' ELSE s.STATUS END AS STUDENT_STATUS,
-                   f.CLASS_ID, c.CLASS_CODE, c.CLASS_NAME, f.FEE_YEAR, f.FEE_MONTH,
+                   f.CLASS_ID, c.CLASS_CODE, c.CLASS_NAME, f.FEE_YEAR, f.FEE_MONTH, f.PERIOD_FROM, f.PERIOD_TO, f.IS_RANGE,
                    f.TOTAL_AMOUNT, f.DISCOUNT_AMOUNT, f.PAID_AMOUNT,
                    GREATEST(f.TOTAL_AMOUNT - f.DISCOUNT_AMOUNT - f.PAID_AMOUNT, 0) AS REMAINING_AMOUNT,
                    f.DUE_DATE, f.STATUS, f.NOTE, f.CREATED_AT
@@ -403,6 +410,18 @@ public class ReportRepositoryImpl implements ReportRepository {
         DebtAgingDto aging = summaries.getFirst();
         aging.setStudents(ProcCursorReader.readCursor(out, "O_STUDENT_CURSOR", DebtAgingStudentDto.class));
         aging.setFees(ProcCursorReader.readCursor(out, "O_DATA_CURSOR", DebtAgingFeeDto.class));
+        Map<Long, FeePeriodRow> periods = findFeePeriods(aging.getFees().stream().map(DebtAgingFeeDto::getFeeId).toList());
+        for (DebtAgingFeeDto fee : aging.getFees()) {
+            FeePeriodRow p = periods.get(fee.getFeeId());
+            if (p != null) {
+                fee.setPeriodFrom(p.periodFrom());
+                fee.setPeriodTo(p.periodTo());
+                fee.setPeriodText(p.text());
+                fee.setRangeFee(FeePeriods.isRangeFee(p.isRange()));
+                fee.setFeeMonth(FeePeriods.displayMonth(p.feeMonth(), p.periodFrom()));
+                fee.setFeeYear(FeePeriods.displayYear(p.feeYear(), p.feeMonth(), p.periodFrom()));
+            }
+        }
         return aging;
     }
 
@@ -450,6 +469,19 @@ public class ReportRepositoryImpl implements ReportRepository {
         }
         StudentLedgerDto ledger = students.getFirst();
         ledger.setEntries(ProcCursorReader.readCursor(out, "O_DATA_CURSOR", StudentLedgerEntryDto.class));
+        Map<Long, FeePeriodRow> periods = findFeePeriods(
+                ledger.getEntries().stream().map(StudentLedgerEntryDto::getFeeId).toList());
+        for (StudentLedgerEntryDto entry : ledger.getEntries()) {
+            FeePeriodRow p = periods.get(entry.getFeeId());
+            if (p != null) {
+                entry.setPeriodFrom(p.periodFrom());
+                entry.setPeriodTo(p.periodTo());
+                entry.setPeriodText(p.text());
+                entry.setRangeFee(FeePeriods.isRangeFee(p.isRange()));
+                entry.setFeeMonth(FeePeriods.displayMonth(p.feeMonth(), p.periodFrom()));
+                entry.setFeeYear(FeePeriods.displayYear(p.feeYear(), p.feeMonth(), p.periodFrom()));
+            }
+        }
         return ledger;
     }
 
@@ -608,5 +640,38 @@ public class ReportRepositoryImpl implements ReportRepository {
 
     private static Date toSqlDate(LocalDate value) {
         return value == null ? null : Date.valueOf(value);
+    }
+
+    /** Số ID tối đa mỗi câu {@code IN (...)} (Oracle giới hạn 1000 - ORA-01795). */
+    static final int PERIOD_LOOKUP_CHUNK = 900;
+
+    /** Kỳ thu của khoản phí (bổ sung cho báo cáo nợ / sổ học sinh - procedure V14_3 không trả cột PERIOD_*). */
+    record FeePeriodRow(Integer feeMonth, Integer feeYear, LocalDate periodFrom, LocalDate periodTo, Integer isRange) {
+        String text() {
+            return FeePeriods.periodText(feeMonth, feeYear, periodFrom, periodTo);
+        }
+    }
+
+    /** Đọc kỳ thu theo ID, chia lô {@link #PERIOD_LOOKUP_CHUNK} để không vượt 1000 phần tử trong IN. */
+    Map<Long, FeePeriodRow> findFeePeriods(List<Long> feeIds) {
+        List<Long> ids = feeIds == null ? List.of()
+                : feeIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        Map<Long, FeePeriodRow> result = new HashMap<>();
+        for (int start = 0; start < ids.size(); start += PERIOD_LOOKUP_CHUNK) {
+            List<Long> chunk = ids.subList(start, Math.min(ids.size(), start + PERIOD_LOOKUP_CHUNK));
+            String marks = String.join(",", java.util.Collections.nCopies(chunk.size(), "?"));
+            jdbcTemplate.query("SELECT ID, FEE_MONTH, FEE_YEAR, PERIOD_FROM, PERIOD_TO, IS_RANGE FROM FIN_TUITION_FEES"
+                            + " WHERE ID IN (" + marks + ")",
+                    (org.springframework.jdbc.core.RowCallbackHandler) rs -> {
+                        result.put(JdbcValueReaders.getLong(rs, "ID"), new FeePeriodRow(
+                                JdbcValueReaders.getInteger(rs, "FEE_MONTH"),
+                                JdbcValueReaders.getInteger(rs, "FEE_YEAR"),
+                                JdbcValueReaders.getLocalDate(rs, "PERIOD_FROM"),
+                                JdbcValueReaders.getLocalDate(rs, "PERIOD_TO"),
+                                JdbcValueReaders.getInteger(rs, "IS_RANGE")));
+                    },
+                    chunk.toArray());
+        }
+        return result;
     }
 }

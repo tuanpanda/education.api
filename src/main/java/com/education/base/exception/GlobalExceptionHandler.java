@@ -63,7 +63,8 @@ public class GlobalExceptionHandler {
     /** GĐ4: lỗi nghiệp vụ kèm {@code data} (ví dụ {@code QUESTION_IMPORT_INVALID} + {@code data.errors}). */
     @ExceptionHandler(BusinessDataException.class)
     public ResponseEntity<ApiResponse<Object>> handleBusinessDataException(BusinessDataException ex) {
-        HttpStatus status = isNotFoundCode(ex.getErrorCode()) ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
+        HttpStatus status = isNotFoundCode(ex.getErrorCode()) ? HttpStatus.NOT_FOUND
+                : isConflictCode(ex.getErrorCode()) ? HttpStatus.CONFLICT : HttpStatus.BAD_REQUEST;
         log.warn("[BusinessException] errorCode={}, status={}, message={}", ex.getErrorCode(), status.value(),
                 ex.getMessage());
         return ResponseEntity.status(status)
@@ -209,6 +210,25 @@ public class GlobalExceptionHandler {
                         "Bài vừa được người khác chấm/cập nhật. Tải lại để xem."));
     }
 
+    /**
+     * Thu học phí theo khoảng ngày: ORA-00001 trên {@code UQ_FEE_SESSIONS_ATTENDANCE} (hai người tạo phiếu cùng lúc)
+     * -> 409 {@code FEE_SESSION_CONFLICT}, {@code data.details} rỗng. Vi phạm ràng buộc khác giữ 500 như cũ.
+     */
+    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
+    public ResponseEntity<ApiResponse<Object>> handleDataIntegrityViolation(
+            org.springframework.dao.DataIntegrityViolationException ex) {
+        if (com.education.base.service.impl.TuitionSlipServiceImpl.isFeeSessionUniqueViolation(ex)) {
+            log.warn("[FeeSessionConflict] {}", com.education.base.common.DomainConstants.FEE_SESSIONS_UNIQUE_CONSTRAINT);
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(ApiResponse.error(com.education.base.common.DomainConstants.FEE_SESSION_CONFLICT,
+                            com.education.base.common.DomainConstants.FEE_SESSION_CONFLICT_MESSAGE,
+                            new com.education.base.dto.response.FeeSessionConflictDto.Payload(java.util.List.of())));
+        }
+        log.error("[DataAccessException] {}", ex.getMessage(), ex);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.error("DATA_ACCESS_ERROR", "Lỗi truy cập dữ liệu tại Database."));
+    }
+
     @ExceptionHandler(DataAccessException.class)
     public ResponseEntity<ApiResponse<Void>> handleDataAccessException(DataAccessException ex) {
         log.error("[DataAccessException] {}", ex.getMessage(), ex);
@@ -289,9 +309,10 @@ public class GlobalExceptionHandler {
     /**
      * Mã lỗi nghiệp vụ biểu diễn "không tìm thấy" ({@code NOT_FOUND}, {@code STUDENT_NOT_FOUND}, {@code FEE_NOT_FOUND}...).
      */
-    /** GĐ2: chỉ GRADE_CONFLICT -> 409; các mã *_CONFLICT cũ (ROOM/TEACHER/CLASS_ASSIGNMENT) giữ 400 để không đổi hành vi FE. */
+    /** GĐ2: GRADE_CONFLICT -> 409 (+ FEE_SESSION_CONFLICT - thu theo khoảng ngày); các mã *_CONFLICT cũ (ROOM/TEACHER/CLASS_ASSIGNMENT) giữ 400 để không đổi hành vi FE. */
     static boolean isConflictCode(String errorCode) {
-        return com.education.base.common.homework.HomeworkErrorCodes.GRADE_CONFLICT.equals(errorCode);
+        return com.education.base.common.homework.HomeworkErrorCodes.GRADE_CONFLICT.equals(errorCode)
+                || com.education.base.common.DomainConstants.FEE_SESSION_CONFLICT.equals(errorCode);
     }
 
     static boolean isNotFoundCode(String errorCode) {

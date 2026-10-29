@@ -1,6 +1,7 @@
 package com.education.base.service.impl;
 
 import com.education.base.common.DomainConstants;
+import com.education.base.common.FeePeriods;
 import com.education.base.common.FeeStatusCalculator;
 import com.education.base.common.PersistenceFlags;
 import com.education.base.common.VietQrHelper;
@@ -26,6 +27,7 @@ import com.education.base.repository.ClassRepository;
 import com.education.base.repository.PaymentTransactionRepository;
 import com.education.base.repository.StudentRepository;
 import com.education.base.repository.TuitionFeeRepository;
+import com.education.base.repository.TuitionFeeSessionRepository;
 import com.education.base.repository.spec.TuitionFeeSpecifications;
 import com.education.base.security.SecurityUtils;
 import com.education.base.service.BankAccountService;
@@ -67,6 +69,7 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
     private final FinanceAcademicMapper financeAcademicMapper;
     private final BankAccountService bankAccountService;
     private final PaymentService paymentService;
+    private final TuitionFeeSessionRepository tuitionFeeSessionRepository;
 
     @Override
     @Transactional(readOnly = true)
@@ -95,6 +98,11 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
         detail.setRemainingAmount(FeeStatusCalculator.remaining(
                 detail.getTotalAmount(), detail.getDiscountAmount(), detail.getPaidAmount()));
         detail.setCancelReason(fee.getCancelReason());
+        detail.setPeriodFrom(fee.getPeriodFrom());
+        detail.setPeriodTo(fee.getPeriodTo());
+        detail.setPeriodText(FeePeriods.periodText(fee.getFeeMonth(), fee.getFeeYear(), fee.getPeriodFrom(),
+                fee.getPeriodTo()));
+        detail.setRangeFee(FeePeriods.isRangeFee(fee.getIsRange()));
         if (fee.getStudentId() != null) {
             studentRepository.findById(fee.getStudentId())
                     .ifPresent(student -> detail.setStudentStatus(student.getStatus()));
@@ -148,7 +156,11 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
                     "Khoản học phí " + fee.getFeeCode() + " đã bị hủy, không sửa được.");
         }
         BigDecimal total = request.getTotalAmount();
-        BigDecimal discount = nvl(request.getDiscountAmount());
+        // Phiếu theo khoảng ngày (contract v1.3 §6): chưa áp giảm giá -> luôn 0, bỏ qua discountAmount gửi lên.
+        // Phiếu tháng cũ / khoản tạo tay: giữ nguyên hành vi cũ (lấy theo request).
+        BigDecimal discount = FeePeriods.isRangeFee(fee.getIsRange())
+                ? BigDecimal.ZERO
+                : nvl(request.getDiscountAmount());
         if (discount.compareTo(total) > 0) {
             throw new OracleBusinessException("INVALID_DISCOUNT",
                     "Số tiền giảm không được lớn hơn tổng số tiền.");
@@ -192,7 +204,8 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
         fee.setCancelReason(reason);
         fee.setUpdatedBy(SecurityUtils.currentUsername());
         tuitionFeeRepository.saveAndFlush(fee);
-        log.info("Đã hủy khoản học phí id={}, lý do={}", fee.getId(), reason);
+        int released = releaseSessions(fee.getId());
+        log.info("Đã hủy khoản học phí id={}, lý do={}, giải phóng {} buổi", fee.getId(), reason, released);
         return getDetail(fee.getId());
     }
 
@@ -211,7 +224,9 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
         fee.setIsDeleted(PersistenceFlags.DELETED);
         fee.setUpdatedBy(SecurityUtils.currentUsername());
         tuitionFeeRepository.saveAndFlush(fee);
-        log.info("Đã xóa mềm khoản học phí id={}, feeCode={}", fee.getId(), fee.getFeeCode());
+        int released = releaseSessions(fee.getId());
+        log.info("Đã xóa mềm khoản học phí id={}, feeCode={}, giải phóng {} buổi", fee.getId(), fee.getFeeCode(),
+                released);
     }
 
     @Override
@@ -335,6 +350,11 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
                                            Map<Long, ClassEntity> classes) {
         TuitionFeeListItemDto dto = financeAcademicMapper.toFeeListItem(entity);
         dto.setRemainingAmount(FeeStatusCalculator.remainingOf(entity));
+        dto.setPeriodText(FeePeriods.periodText(entity.getFeeMonth(), entity.getFeeYear(), entity.getPeriodFrom(),
+                entity.getPeriodTo()));
+        dto.setFeeMonth(FeePeriods.displayMonth(entity.getFeeMonth(), entity.getPeriodFrom()));
+        dto.setFeeYear(FeePeriods.displayYear(entity.getFeeYear(), entity.getFeeMonth(), entity.getPeriodFrom()));
+        dto.setRangeFee(FeePeriods.isRangeFee(entity.getIsRange()));
         StudentEntity student = entity.getStudentId() == null ? null : students.get(entity.getStudentId());
         if (student != null) {
             dto.setStudentCode(student.getStudentCode());
@@ -364,8 +384,24 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
         return fallback;
     }
 
+    /**
+     * Xóa các dòng {@code FIN_TUITION_FEE_SESSIONS} của phiếu trong transaction hiện tại (hủy / xóa mềm),
+     * để các ngày đó được thu lại ở phiếu mới.
+     */
+    private int releaseSessions(Long feeId) {
+        return tuitionFeeSessionRepository.deleteByFeeId(feeId);
+    }
+
+    /**
+     * Nội dung chuyển khoản mặc định: phiếu khoảng ngày {@code "<code> HP ddMM-ddMM"} (giống phiếu điện tử);
+     * khoản khác giữ {@code "HP <feeCode> <studentCode>"} như trước.
+     */
     private static String defaultQrDescription(TuitionFeeEntity fee, StudentEntity student) {
         String studentCode = student == null ? "" : student.getStudentCode();
+        if (FeePeriods.isRangeFee(fee.getIsRange())) {
+            return FeePeriods.rangeTransferContent(studentCode, fee.getPeriodFrom(),
+                    fee.getPeriodTo() == null ? fee.getPeriodFrom() : fee.getPeriodTo());
+        }
         String description = ("HP " + fee.getFeeCode() + " " + studentCode).trim();
         return description.length() > 99 ? description.substring(0, 99) : description;
     }
