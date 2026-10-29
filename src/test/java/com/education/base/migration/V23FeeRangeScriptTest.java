@@ -152,6 +152,112 @@ class V23FeeRangeScriptTest {
         assertThat(read("V23_9__rpt_class_collection_by_session.sql")).contains("f.IS_RANGE = 1");
     }
 
+    // ---- Từ khóa dành riêng Oracle (V$RESERVED_WORDS RESERVED = 'Y') ----------------------------------------
+    // Sự cố V23_9 (29/10/2026): alias "AS SHARE" -> ORA-00923, procedure INVALID.
+
+    /** Danh sách từ dành riêng của Oracle SQL (SQL Language Reference, "Oracle SQL Reserved Words"). */
+    static final java.util.Set<String> ORACLE_RESERVED = java.util.Set.of(
+            "ACCESS", "ADD", "ALL", "ALTER", "AND", "ANY", "AS", "ASC", "AUDIT", "BETWEEN", "BY", "CHAR", "CHECK",
+            "CLUSTER", "COLUMN", "COMMENT", "COMPRESS", "CONNECT", "CREATE", "CURRENT", "DATE", "DECIMAL", "DEFAULT",
+            "DELETE", "DESC", "DISTINCT", "DROP", "ELSE", "EXCLUSIVE", "EXISTS", "FILE", "FLOAT", "FOR", "FROM",
+            "GRANT", "GROUP", "HAVING", "IDENTIFIED", "IMMEDIATE", "IN", "INCREMENT", "INDEX", "INITIAL", "INSERT",
+            "INTEGER", "INTERSECT", "INTO", "IS", "LEVEL", "LIKE", "LOCK", "LONG", "MAXEXTENTS", "MINUS", "MLSLABEL",
+            "MODE", "MODIFY", "NOAUDIT", "NOCOMPRESS", "NOT", "NOWAIT", "NULL", "NUMBER", "OF", "OFFLINE", "ON",
+            "ONLINE", "OPTION", "OR", "ORDER", "PCTFREE", "PRIOR", "PRIVILEGES", "PUBLIC", "RAW", "RENAME", "RESOURCE",
+            "REVOKE", "ROW", "ROWID", "ROWNUM", "ROWS", "SELECT", "SESSION", "SET", "SHARE", "SIZE", "SMALLINT",
+            "START", "SUCCESSFUL", "SYNONYM", "SYSDATE", "TABLE", "THEN", "TO", "TRIGGER", "UID", "UNION", "UNIQUE",
+            "UPDATE", "USER", "VALIDATE", "VALUES", "VARCHAR", "VARCHAR2", "VIEW", "WHENEVER", "WHERE", "WITH");
+
+    static final String ID = "([A-Z_][A-Z0-9_$#]*)";
+    static final java.util.Set<String> NOT_AN_ALIAS = java.util.Set.of("ON", "WHERE", "JOIN", "LEFT", "RIGHT",
+            "INNER", "FULL", "CROSS", "GROUP", "ORDER", "UNION", "CONNECT", "START", "HAVING", "SET");
+    static final List<Pattern> IDENTIFIER_PATTERNS = List.of(
+            Pattern.compile("\\bAS[ \\t]+" + ID),
+            Pattern.compile("(?:\\bWITH|,)\\s*" + ID + "\\s+AS\\s*\\("),
+            Pattern.compile("\\b(?:FROM|JOIN)\\s+[A-Z_][A-Z0-9_$#.]*\\s+" + ID),
+            Pattern.compile("\\bUPDATE\\s+[A-Z_][A-Z0-9_$#]*\\s+" + ID),
+            Pattern.compile("\\b[A-Z_][A-Z0-9_$#]*\\." + ID),
+            Pattern.compile("^\\s*\\(?\\s*" + ID
+                    + "\\s+(?:CONSTANT\\s+)?(?:NUMBER|VARCHAR2|DATE|TIMESTAMP|SYS_REFCURSOR|IN\\b|OUT\\b)",
+                    Pattern.MULTILINE),
+            Pattern.compile("\\bADD\\s*\\(\\s*" + ID),
+            Pattern.compile("\\bCONSTRAINT\\s+" + ID),
+            Pattern.compile("\\bCREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:UNIQUE\\s+)?(?:TABLE|SEQUENCE|INDEX|PROCEDURE|VIEW)\\s+" + ID));
+
+    @Test
+    void noOracleReservedWordUsedAsAliasOrIdentifier() throws IOException {
+        for (String script : ALL) {
+            List<String> hits = reservedIdentifiers(read(script));
+            assertThat(hits).as(script + " dùng từ dành riêng Oracle làm alias/tên").isEmpty();
+        }
+    }
+
+    @Test
+    void reservedWordScanner_detectsKnownBadAliases() {
+        assertThat(reservedWords("SELECT 1 AS SHARE FROM DUAL")).containsExactly("SHARE");
+        assertThat(reservedWords("SELECT f.SHARE * 2 AS AMT FROM FEES f")).containsExactly("SHARE");
+        assertThat(reservedWords("SELECT x.ID FROM FIN_TUITION_FEES LEVEL")).containsExactly("LEVEL");
+        assertThat(reservedWords("WITH SIZE AS (SELECT 1 AS N FROM DUAL) SELECT N FROM SIZE s")).contains("SIZE");
+        assertThat(reservedWords("CREATE TABLE T (\n    ID NUMBER(19),\n    MODE VARCHAR2(10)\n)")).contains("MODE");
+        assertThat(reservedWords("SELECT 1 AS USER, 2 AS ROWS, 3 AS START FROM DUAL"))
+                .containsExactlyInAnyOrder("USER", "ROWS", "START");
+        // Không báo nhầm: từ khóa nằm trong comment, chuỗi, hoặc là một phần của tên dài hơn.
+        assertThat(reservedIdentifiers("-- 1 AS SHARE\nSELECT 'AS SHARE' AS FEE_SHARE, s.SESSION_DATE FROM T s"))
+                .isEmpty();
+    }
+
+    @Test
+    void v23_9_canBeRerunAlone() throws IOException {
+        String text = read("V23_9__rpt_class_collection_by_session.sql");
+        String upper = code(text).toUpperCase(Locale.ROOT);
+        assertThat(upper).contains("CREATE OR REPLACE PROCEDURE PRC_RPT_CLASS_COLLECTION")
+                .contains("SHOW ERRORS PROCEDURE PRC_RPT_CLASS_COLLECTION")
+                .contains("FEE_SHARE")
+                .doesNotContain(" AS SHARE").doesNotContain(".SHARE");
+        assertThat(Pattern.compile("^\\s*(INSERT|UPDATE|DELETE|MERGE|DROP|COMMIT|ROLLBACK)\\b",
+                Pattern.MULTILINE).matcher(upper).find()).as("V23_9 chỉ có CREATE OR REPLACE").isFalse();
+        assertThat(upper).doesNotContain("EXITCOMMIT");
+    }
+
+    /** Alias / tên trong script (bỏ comment, chuỗi; mở q'[...]') trùng từ dành riêng Oracle. */
+    static List<String> reservedIdentifiers(String sql) {
+        String c = scanText(sql);
+        List<String> hits = new java.util.ArrayList<>();
+        for (Pattern p : IDENTIFIER_PATTERNS) {
+            Matcher m = p.matcher(c);
+            while (m.find()) {
+                String word = m.group(1);
+                if (p.pattern().startsWith("\\b(?:FROM|JOIN)") && NOT_AN_ALIAS.contains(word)) {
+                    continue;
+                }
+                if (ORACLE_RESERVED.contains(word)) {
+                    hits.add(word + " <- \"" + m.group().strip().replaceAll("\\s+", " ") + "\"");
+                }
+            }
+        }
+        return hits.stream().distinct().toList();
+    }
+
+    static List<String> reservedWords(String sql) {
+        return reservedIdentifiers(sql).stream().map(h -> h.substring(0, h.indexOf(' '))).distinct().toList();
+    }
+
+    static String scanText(String sql) {
+        StringBuilder sb = new StringBuilder();
+        for (String line : sql.split("\\r?\\n")) {
+            String s = line.strip().toUpperCase(Locale.ROOT);
+            // Chỉ thị sqlplus nằm ở đầu dòng; "   SET f.X = ..." thụt lề là một phần của UPDATE nên vẫn quét.
+            boolean sqlplusDirective = line.toUpperCase(Locale.ROOT).matches("^(SET|WHENEVER|SHOW|PROMPT)\\b.*");
+            if (s.startsWith("--") || sqlplusDirective) {
+                continue;
+            }
+            sb.append(line).append('\n');
+        }
+        String c = Pattern.compile("q'\\[(.*?)\\]'", Pattern.DOTALL).matcher(sb.toString()).replaceAll("$1");
+        c = c.replaceAll("'[^']*'", "''");
+        return c.toUpperCase(Locale.ROOT);
+    }
+
     static String read(String name) throws IOException {
         try (InputStream in = V23FeeRangeScriptTest.class.getResourceAsStream(DIR + name)) {
             assertThat(in).as(name).isNotNull();

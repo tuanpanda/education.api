@@ -159,6 +159,32 @@ SELECT OBJECT_NAME, OBJECT_TYPE FROM USER_OBJECTS WHERE STATUS = 'INVALID';
 Muốn đổi cách tính doanh thu phiếu khoảng ngày: sửa dòng `C_SPLIT_BY_SESSION CONSTANT NUMBER := 1;` (0 = tính trọn vào tháng của `PERIOD_FROM`) rồi chạy lại file.
 **Chỉ chạy lại V23_9 khi không có giao dịch V23_7/V23_8 đang mở**: hoặc chạy trước Bước 5, hoặc sau khi đã COMMIT/ROLLBACK ở Bước 7.
 
+### Chạy lại riêng V23_9 (ví dụ sau lỗi biên dịch)
+
+V23_9 là `CREATE OR REPLACE`, nên chạy lại riêng file này an toàn.
+
+- **Sự cố 29/10/2026:** alias `AS SHARE` (SHARE là từ dành riêng của Oracle) gây ORA-00923 và procedure bị INVALID. Đã sửa thành `FEE_SHARE`.
+- **Điều kiện chạy lại:** chỉ khi **không** có giao dịch V23_7/V23_8 đang mở, vì V23_9 là DDL và sẽ tự commit. Nghĩa là chạy trước Bước 5, hoặc sau khi đã COMMIT/ROLLBACK ở Bước 7.
+- **Không chạy lại** V23_1..V23_8.
+
+```sql
+@V23_9__rpt_class_collection_by_session.sql
+SHOW ERRORS PROCEDURE PRC_RPT_CLASS_COLLECTION
+-- mong doi: "No errors."
+
+SELECT STATUS FROM USER_OBJECTS WHERE OBJECT_NAME = 'PRC_RPT_CLASS_COLLECTION';
+-- mong doi: VALID
+```
+
+Sau ALTER TABLE ở V23_1/V23_2, các object phụ thuộc `FIN_TUITION_FEES` bị đánh dấu INVALID. Ví dụ `PRC_GET_TUITION_SLIP_DATA` (code không đổi). Oracle tự biên dịch lại ở lần gọi đầu; muốn kiểm tra ngay thì biên dịch lại từng object, mỗi lệnh là DDL nên cũng không được có giao dịch đang mở:
+
+```sql
+ALTER PROCEDURE PRC_GET_TUITION_SLIP_DATA COMPILE;
+SHOW ERRORS PROCEDURE PRC_GET_TUITION_SLIP_DATA
+SELECT OBJECT_NAME, OBJECT_TYPE, STATUS FROM USER_OBJECTS WHERE STATUS = 'INVALID' ORDER BY OBJECT_TYPE, OBJECT_NAME;
+-- mong doi: khong con object nao INVALID
+```
+
 ## Bước 5. V23_7 (DML chạy tay): backfill dòng session cho phiếu tháng cũ
 
 **Trước khi chạy:**
@@ -332,6 +358,8 @@ Chỉ test trên **một lớp test riêng**, có học sinh test và điểm da
 5. Xong thì hủy/xóa toàn bộ phiếu test của lớp test, rồi kiểm tra: `SELECT COUNT(*) FROM FIN_TUITION_FEES WHERE IS_RANGE = 1 AND IS_DELETED = 0 AND STATUS <> 'CANCELLED';`
 
 ## Rủi ro đã biết
+
+- **Từ dành riêng Oracle:** V23_9 từng dùng alias `SHARE` (ORA-00923). `V23FeeRangeScriptTest` giờ chặn mọi alias/tên trong V23_1..V23_9 trùng danh sách từ dành riêng (`V$RESERVED_WORDS`, `RESERVED = 'Y'`). Unit test không biên dịch PL/SQL thật, nên vẫn phải kiểm `SHOW ERRORS` và `STATUS` trên DB.
 
 (Quy tắc sửa phiếu: phiếu `IS_RANGE = 1` luôn có giảm giá = 0. Phiếu tháng cũ / khoản tạo tay mà PUT không gửi `discountAmount` thì **giữ** giảm giá hiện có, xem SPEC v1.1 §0 V1. Đây không còn là rủi ro.)
 

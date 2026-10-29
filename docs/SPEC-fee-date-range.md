@@ -221,3 +221,4 @@ Format rules (sqlplus pitfalls seen before):
 - **VietQR reconciliation is manual**, by transfer content + amount. A student code longer than 12 characters is truncated, and multiple matches need manual reconciliation. There is no automatic reconciliation in the backend.
 - **Conflicts are detected by attendance ID.** An attendance row added or changed later inside an old slip's range is not treated as billed and can be billed on a new slip.
 - After COMMIT, **V23_8 cannot be rolled back by script**; restore from the Data Pump export taken before V23_1 (§0 V11).
+- **Oracle reserved words:** V23_9 first used the alias `SHARE` (ORA-00923, procedure INVALID on EDUCATION, 29/10/2026); renamed to `FEE_SHARE`. `V23FeeRangeScriptTest` now fails if any alias or identifier in V23_1..V23_9 is an Oracle reserved word. V23_9 can be re-run alone (`CREATE OR REPLACE`, only when no V23_7/V23_8 transaction is open); verify with `SHOW ERRORS` and `USER_OBJECTS.STATUS = 'VALID'`.

@@ -71,7 +71,7 @@ BEGIN
                    f.TOTAL_AMOUNT,
                    f.DISCOUNT_AMOUNT,
                    GREATEST(f.TOTAL_AMOUNT - f.DISCOUNT_AMOUNT - f.PAID_AMOUNT, 0) AS REMAINING_AMOUNT,
-                   1                                                              AS SHARE,
+                   1                                                              AS FEE_SHARE,
                    CASE
                        WHEN f.FEE_YEAR IS NOT NULL AND f.FEE_MONTH IS NOT NULL THEN f.FEE_YEAR
                        WHEN f.PERIOD_FROM IS NOT NULL THEN EXTRACT(YEAR FROM f.PERIOD_FROM)
@@ -102,7 +102,7 @@ BEGIN
                         ELSE 0 END                                                 AS REMAINING_AMOUNT,
                    CASE WHEN f.TOTAL_AMOUNT > 0
                         THEN COUNT(s.ID) * NVL(f.PRICE_PER_SESSION, 0) / f.TOTAL_AMOUNT
-                        ELSE 0 END                                                 AS SHARE,
+                        ELSE 0 END                                                 AS FEE_SHARE,
                    EXTRACT(YEAR FROM s.SESSION_DATE)                               AS PERIOD_YEAR,
                    EXTRACT(MONTH FROM s.SESSION_DATE)                              AS PERIOD_MONTH
               FROM FIN_TUITION_FEES f
@@ -134,12 +134,12 @@ BEGIN
                ROUND(SUM(f.TOTAL_AMOUNT), 2)                           AS BILLED_AMOUNT,
                ROUND(SUM(f.DISCOUNT_AMOUNT), 2)                        AS DISCOUNT_AMOUNT,
                ROUND(SUM(f.TOTAL_AMOUNT - f.DISCOUNT_AMOUNT), 2)       AS NET_AMOUNT,
-               ROUND(NVL(SUM(p.COLLECTED_AMOUNT * f.SHARE), 0), 2)     AS COLLECTED_AMOUNT,
+               ROUND(NVL(SUM(p.COLLECTED_AMOUNT * f.FEE_SHARE), 0), 2)     AS COLLECTED_AMOUNT,
                ROUND(SUM(CASE WHEN f.STATUS IN ('UNPAID', 'PARTIAL', 'OVERDUE')
                               THEN f.REMAINING_AMOUNT ELSE 0 END), 2)  AS OUTSTANDING_AMOUNT,
                CASE
                    WHEN SUM(f.TOTAL_AMOUNT - f.DISCOUNT_AMOUNT) > 0
-                   THEN ROUND(NVL(SUM(p.COLLECTED_AMOUNT * f.SHARE), 0) * 100
+                   THEN ROUND(NVL(SUM(p.COLLECTED_AMOUNT * f.FEE_SHARE), 0) * 100
                               / SUM(f.TOTAL_AMOUNT - f.DISCOUNT_AMOUNT), 2)
                END                                                     AS COLLECTION_RATE
           FROM FEES f
