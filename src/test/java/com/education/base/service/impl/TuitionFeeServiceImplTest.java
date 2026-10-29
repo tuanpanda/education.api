@@ -346,8 +346,9 @@ class TuitionFeeServiceImplTest {
     }
 
     @Test
-    void update_nullDiscountMeansZero() {
+    void update_nullDiscount_onFeeWithoutDiscount_staysZero() {
         TuitionFeeEntity fee = unpaidFee();
+        fee.setDiscountAmount(null);
         when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(4L, 0)).thenReturn(Optional.of(fee));
         stubDetail(4L);
 
@@ -355,6 +356,54 @@ class TuitionFeeServiceImplTest {
 
         assertThat(fee.getDiscountAmount()).isEqualByComparingTo("0");
         assertThat(fee.getStatus()).isEqualTo("UNPAID");
+    }
+
+    @Test
+    void update_nullDiscount_legacyMonthlyFee_keepsExistingDiscount() {
+        TuitionFeeEntity fee = unpaidFee();
+        fee.setFeeMonth(4);
+        fee.setFeeYear(2026);
+        fee.setIsRange(0);
+        fee.setDiscountAmount(new BigDecimal("150000"));
+        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(4L, 0)).thenReturn(Optional.of(fee));
+        stubDetail(4L);
+
+        service.update(4L, TuitionFeeUpdateRequest.builder().totalAmount(new BigDecimal("900000")).build());
+
+        assertThat(fee.getDiscountAmount()).isEqualByComparingTo("150000");
+        assertThat(fee.getTotalAmount()).isEqualByComparingTo("900000");
+    }
+
+    @Test
+    void update_nullDiscount_manualFee_keepsExistingDiscount() {
+        TuitionFeeEntity fee = unpaidFee();
+        fee.setFeeMonth(null);
+        fee.setFeeYear(null);
+        fee.setIsRange(0);
+        fee.setDiscountAmount(new BigDecimal("150000"));
+        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(4L, 0)).thenReturn(Optional.of(fee));
+        stubDetail(4L);
+
+        service.update(4L, TuitionFeeUpdateRequest.builder().totalAmount(new BigDecimal("900000")).build());
+
+        assertThat(fee.getDiscountAmount()).isEqualByComparingTo("150000");
+    }
+
+    @Test
+    void update_nullDiscount_rangeFee_forcesZero() {
+        TuitionFeeEntity fee = unpaidFee();
+        fee.setFeeMonth(null);
+        fee.setFeeYear(null);
+        fee.setPeriodFrom(LocalDate.of(2026, 10, 1));
+        fee.setPeriodTo(LocalDate.of(2026, 10, 31));
+        fee.setIsRange(1);
+        fee.setDiscountAmount(new BigDecimal("150000"));
+        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(4L, 0)).thenReturn(Optional.of(fee));
+        stubDetail(4L);
+
+        service.update(4L, TuitionFeeUpdateRequest.builder().totalAmount(new BigDecimal("900000")).build());
+
+        assertThat(fee.getDiscountAmount()).isEqualByComparingTo("0");
     }
 
     @Test

@@ -6,7 +6,7 @@ Version: **v1.1** (2026-10-29), aligned with API contract `fee-range-api` **v1.3
 
 | # | Decision |
 |---|----------|
-| V1 | **No discount on range fees yet (deferred).** `DISCOUNT_AMOUNT = 0`; `StudentDiscountService.computeDiscount` is not called. Editing a range fee (`PUT /{id}`) forces discount to 0 server-side. Legacy monthly fees and manual fees keep the old behaviour (discount taken from the request). |
+| V1 | **No discount on range fees yet (deferred).** `DISCOUNT_AMOUNT = 0`; `StudentDiscountService.computeDiscount` is not called. **PUT `/{id}` rule (LEADER):** `IS_RANGE = 1` → discount always forced to 0 server-side (request value ignored). `IS_RANGE = 0` (legacy monthly or manual) → `discountAmount` given: use it (validated ≤ total, net ≥ paid); `discountAmount` null/omitted: **keep the existing discount** (no longer reset to 0). |
 | V2 | **Explicit marker `FIN_TUITION_FEES.IS_RANGE NUMBER(1) DEFAULT 0 NOT NULL`** + `CK_FEES_IS_RANGE CHECK (IS_RANGE IN (0,1))` (V23_1). Only `generate-range` writes 1. Legacy and manual fees stay 0 (no backfill). `rangeFee` in every fee DTO = `IS_RANGE = 1` (not derived from `FEE_MONTH IS NULL`, since manual fees may have no month either). |
 | V3 | Range fees keep **`FEE_MONTH`/`FEE_YEAR` NULL in the DB** (so `UQ_FEES_MONTHLY` never applies). DTOs expose a *display* `feeMonth`/`feeYear` derived from `PERIOD_FROM`, plus `periodFrom`, `periodTo`, `periodText`, `rangeFee` on all fee DTOs: slip, search list, detail, portal list/detail, debt aging, student ledger, export rows, payment transaction fee summary. |
 | V4 | Slip dates stay in **`attendedDates`** (dd/MM, sorted, from `FIN_TUITION_FEE_SESSIONS`); no `sessionBadges` field. A **cancelled range slip shows no dates** and never re-reads attendance. The attendance fallback is only for legacy monthly fees without session rows. |
@@ -16,13 +16,13 @@ Version: **v1.1** (2026-10-29), aligned with API contract `fee-range-api` **v1.3
 | V8 | **Revenue by session:** `PRC_RPT_CLASS_COLLECTION` (V23_9) splits `IS_RANGE = 1` fees by the month of `SESSION_DATE` × `PRICE_PER_SESSION` (discount/paid/remaining pro-rated). One-line switch `C_SPLIT_BY_SESSION` (0 = whole fee in the month of `PERIOD_FROM`). Debt-aging and dashboard procedures are unchanged. |
 | V9 | **VietQR reconciliation is manual** for range fees: match by transfer content + amount; a truncated student code (> 12 chars) or multiple matches need manual reconciliation. The backend has no automatic content-parsing reconciliation, so nothing changes there. |
 | V10 | Validation: `toDate - fromDate + 1 <= 366`; a price with more than 2 decimals is 400 (no rounding). 0 fees created → **200**; ≥ 1 → **201**. Cancel/delete always releases the session rows. Missing class → 404 `CLASS_NOT_FOUND`; no permission → 403 (MENU permission `MENU_TUITION_FEE:CREATE`; no per-class restriction this round). `POST /generate-monthly` is removed (now 405 because the path matches `/{id}`). |
-| V11 | Target DB: **EDUCATION_PRE first**, then EDUCATION after approval. DML scripts (V23_7, V23_8) have no COMMIT/EXIT; the owner commits by hand (see `docs/RUN-V23-fee-range.md`). Tests use Mockito / the in-memory transaction manager; no DB. |
+| V11 | Target DB: the **real schema `EDUCATION`** (there is no separate PRE schema). Before V23_1 the owner takes a **Data Pump export** of `FIN_TUITION_FEES` or the whole `EDUCATION` schema (DBA or `EDUCATION` account, never SYS; dump file outside the repo; password at the prompt only). V23_7/V23_8 are run by hand, with row counts before/after; the owner decides COMMIT/ROLLBACK. After COMMIT, V23_8 UPDATEs cannot be undone by script and are restored from that export. V23_9 (report procedure) is part of the run order and rollback. Functional testing only on a **dedicated test class**. Unit tests use Mockito / the in-memory transaction manager; no DB. See `docs/RUN-V23-fee-range.md`. |
 | V12 | Audit: there was no audit entry for `generate-monthly` and `TuitionSlipService` is not covered by `AuditTrailAspect`, so "the same audit action" does not exist; generation is logged (class, range, counts, actor). Open item. |
 | V13 | `V23_4` omits `TABLESPACE EDU`; the table uses the user's default tablespace (checked in the RUN guide). |
 
 
 Status: approved by the owner on 2026-10-29 (widget t102 + "oke" t103). Branches: `feat/fee-date-range` (API, worktree `E:\JAVA\edu-wt\fee-range`) and `feat/fee-date-range-ui` (UI, worktree `E:\JAVA\edu-wt\fee-range-ui`).
-Rules: commit locally only. No push, merge or deploy until the owner has tested on PRE and approved.
+Rules: commit locally only. No push, merge or deploy until the owner has tested (v1.1: on a dedicated test class in `EDUCATION`) and approved.
 
 ## 1. Decisions (locked)
 
@@ -78,7 +78,7 @@ Rules: commit locally only. No push, merge or deploy until the owner has tested 
 - Duplicate protection for range fees comes from `UQ_FEE_SESSIONS_ATTENDANCE` (one attendance on at most one active fee) together with the service-level check.
 - Add a unit test proving that two range fees in the same month for the same student and class (with disjoint dates) are allowed.
 
-## 4. Migrations (the owner runs them himself, on EDUCATION_PRE first)
+## 4. Migrations (the owner runs them himself on `EDUCATION`, after a Data Pump export; v1.1, see §0 V11)
 
 Format rules (sqlplus pitfalls seen before):
 
@@ -175,7 +175,7 @@ Format rules (sqlplus pitfalls seen before):
 **Backend (JUnit, H2 / Mockito as existing):**
 
 1. A range counts only PRESENT and LATE, excludes ABSENT/EXCUSED/others and soft-deleted attendance, and both ends are inclusive.
-2. Amount = count × price, scale 2; v1.1: discount = 0; `PUT` on a range fee forces discount 0, on legacy/manual fees keeps it.
+2. Amount = count × price, scale 2; v1.1: discount = 0. `PUT` on a range fee (`IS_RANGE = 1`) forces discount 0; on legacy/manual fees (`IS_RANGE = 0`) a given `discountAmount` is used and a null one keeps the existing discount.
 3. A conflict with an active fee gives 409 listing the exact dates and fee codes, and nothing is persisted for any student (all-or-nothing).
 4. A conflict with a CANCELLED or deleted fee is not a conflict, because the rows were released on cancel.
 5. A unique-constraint violation maps to 409.
@@ -198,18 +198,26 @@ Format rules (sqlplus pitfalls seen before):
 - There is no month selector anymore.
 - `npm run test`, `npm run lint` and `npm run build` all pass.
 
-**QA on PRE (TEST bot + owner):**
+**QA (TEST bot + owner), v1.1: on `EDUCATION`, dedicated test class only:**
 
-- Pick a class on EDUCATION_PRE with attendance in October.
+- Use a dedicated test class (test students, test attendance in October). Never create trial fees on real classes.
 - Preview, then generate.
 - Print the slip and check the dates against attendance.
 - Generate again for an overlapping range and expect the conflict.
 - Cancel and regenerate, which should succeed.
-- Check the VietQR content on the slip.
+- Check the VietQR content on the slip (no real payment).
+- Cancel/delete all test fees of the test class afterwards.
 
 ## 9. Environment / safety
 
-- Dev and test run against **EDUCATION_PRE** only, using the `it` profile (`DB_URL`, `DB_USERNAME`, `DB_PASSWORD` from **environment variables only**). Never write credentials into yml, scripts, docs, logs or commits. Never test with SYS.
+- v1.1: the target is the real schema **`EDUCATION`** (no PRE). Integration tests, if any, use the `it` profile (`DB_URL`, `DB_USERNAME`, `DB_PASSWORD` from **environment variables only**) and only a dedicated test class. Never write credentials into yml, scripts, docs, logs or commits. Never use SYS.
 - Do not touch `E:\JAVA\education`, `E:\JAVA\education_ui` or `E:\JAVA\edu-wt\main-ui` (no checkout or commit there).
 - The owner runs the migrations himself. Bots do not run DDL or DML.
 - Commit locally on the feature branches. No push, merge or deploy before the owner approves.
+
+## 10. Rủi ro đã biết (v1.1)
+
+- **No audit** for range generation: the old generate had none and `TuitionSlipService` is not covered by `AuditTrailAspect`. Only application logs exist (class, range, counts, actor).
+- **VietQR reconciliation is manual**, by transfer content + amount. A student code longer than 12 characters is truncated, and multiple matches need manual reconciliation. There is no automatic reconciliation in the backend.
+- **Conflicts are detected by attendance ID.** An attendance row added or changed later inside an old slip's range is not treated as billed and can be billed on a new slip.
+- After COMMIT, **V23_8 cannot be rolled back by script**; restore from the Data Pump export taken before V23_1 (§0 V11).

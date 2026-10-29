@@ -156,11 +156,17 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
                     "Khoản học phí " + fee.getFeeCode() + " đã bị hủy, không sửa được.");
         }
         BigDecimal total = request.getTotalAmount();
-        // Phiếu theo khoảng ngày (contract v1.3 §6): chưa áp giảm giá -> luôn 0, bỏ qua discountAmount gửi lên.
-        // Phiếu tháng cũ / khoản tạo tay: giữ nguyên hành vi cũ (lấy theo request).
-        BigDecimal discount = FeePeriods.isRangeFee(fee.getIsRange())
-                ? BigDecimal.ZERO
-                : nvl(request.getDiscountAmount());
+        // Phiếu theo khoảng ngày (IS_RANGE = 1, contract v1.3 §6): chưa áp giảm giá -> luôn 0, bỏ qua discountAmount.
+        // Phiếu tháng cũ / khoản tạo tay (IS_RANGE = 0): có discountAmount thì lấy theo request;
+        // không gửi (null) thì GIỮ giảm giá hiện có (SPEC v1.1 §0 V1), không đặt về 0.
+        BigDecimal discount;
+        if (FeePeriods.isRangeFee(fee.getIsRange())) {
+            discount = BigDecimal.ZERO;
+        } else if (request.getDiscountAmount() == null) {
+            discount = nvl(fee.getDiscountAmount());
+        } else {
+            discount = request.getDiscountAmount();
+        }
         if (discount.compareTo(total) > 0) {
             throw new OracleBusinessException("INVALID_DISCOUNT",
                     "Số tiền giảm không được lớn hơn tổng số tiền.");
