@@ -15,14 +15,19 @@ Bot không chạy script này. Mật khẩu chỉ gõ tại prompt, không ghi v
 | 4 | `V23_4__fee_sessions_table.sql` | DDL | Bảng `FIN_TUITION_FEE_SESSIONS` + PK, 2 FK, `UQ_FEE_SESSIONS_ATTENDANCE`. Dùng tablespace mặc định của user (không ghi `TABLESPACE EDU`). |
 | 5 | `V23_5__idx_fee_sessions_fee.sql` | DDL | `IDX_FEE_SESSIONS_FEE (FEE_ID, SESSION_DATE)` |
 | 6 | `V23_6__idx_fees_period.sql` | DDL | `IDX_FEES_PERIOD (CLASS_ID, PERIOD_FROM, PERIOD_TO)` |
-| 7 | `V23_7__backfill_legacy_fee_sessions.sql` | **DML, chạy tay** | Tạo dòng session cho phiếu tháng cũ còn hiệu lực. **Không COMMIT, không EXIT trong file.** |
-| 8 | `V23_8__backfill_legacy_fee_period.sql` | **DML, chạy tay** | Ghi `PERIOD_FROM/TO` = đầu/cuối tháng cho phiếu tháng cũ. **Không COMMIT, không EXIT.** `IS_RANGE` giữ 0. **Sau khi COMMIT không có script rollback; chỉ khôi phục được từ bản export Bước 0.** |
-| 9 | `V23_9__rpt_class_collection_by_session.sql` | PL/SQL (procedure báo cáo) | `CREATE OR REPLACE PRC_RPT_CLASS_COLLECTION`: phiếu `IS_RANGE = 1` chia doanh thu theo tháng của `SESSION_DATE`. Công tắc 1 dòng `C_SPLIT_BY_SESSION`. |
+| 7 | `V23_9__rpt_class_collection_by_session.sql` | DDL (procedure báo cáo, tự commit) | `CREATE OR REPLACE PRC_RPT_CLASS_COLLECTION`: phiếu `IS_RANGE = 1` chia doanh thu theo tháng của `SESSION_DATE`. Công tắc 1 dòng `C_SPLIT_BY_SESSION`. **Chạy ngay sau V23_6, trước V23_7.** |
+| 8 | `V23_7__backfill_legacy_fee_sessions.sql` | **DML, chạy tay** | Tạo dòng session cho phiếu tháng cũ còn hiệu lực. `SET EXITCOMMIT OFF`. **Không COMMIT, không EXIT trong file.** |
+| 9 | `V23_8__backfill_legacy_fee_period.sql` | **DML, chạy tay** | Ghi `PERIOD_FROM/TO` = đầu/cuối tháng cho phiếu tháng cũ. `SET EXITCOMMIT OFF`. **Không COMMIT, không EXIT.** `IS_RANGE` giữ 0. **Sau khi COMMIT không có script rollback; chỉ khôi phục được từ bản export Bước 0.** |
 
-- DDL (1–6) và procedure (9) tự commit. Chạy lại an toàn: script báo `already exists` hoặc `CREATE OR REPLACE`.
-- DML (7, 8): **Tuấn tự quyết `COMMIT;` hoặc `ROLLBACK;`** sau khi xem số dòng trước/sau.
-  - Thoát sqlplus bằng `EXIT` sẽ **ghi hẳn** giao dịch đang mở. Vì vậy phải COMMIT/ROLLBACK trước khi thoát.
-- Mỗi file có `WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK`: gặp lỗi thì sqlplus thoát và rollback phần DML chưa commit.
+**Thứ tự chạy bắt buộc:** V23_1 → V23_6 → **V23_9** → V23_7 → V23_8 → chỉ SELECT kiểm tra → Tuấn gõ `COMMIT;` hoặc `ROLLBACK;`.
+
+- DDL (V23_1–V23_6) và procedure V23_9 là DDL nên **tự commit**, kể cả commit luôn mọi DML đang mở. Vì vậy mọi DDL, kể cả V23_9, phải chạy **trước** V23_7.
+- V23_7 và V23_8 là DML, chạy trong **cùng một giao dịch**.
+  - Sau khi chạy hai file này chỉ được chạy **SELECT kiểm tra**.
+  - **Không chạy DDL nào và không `EXIT`** trước khi Tuấn quyết định `COMMIT;` hoặc `ROLLBACK;`. Một câu DDL sẽ tự commit giao dịch đang mở.
+- Hai file DML có `SET EXITCOMMIT OFF`: lỡ thoát sqlplus trước khi quyết định thì giao dịch bị **hủy** (không tự ghi hẳn). Đây chỉ là lưới an toàn, không phải cách làm.
+- Mỗi file có `WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK`. Nếu V23_8 lỗi thì sqlplus thoát và rollback **cả V23_7 lẫn V23_8** chưa commit. Khi đó chạy lại từ Bước 5.
+- Chạy lại an toàn: DDL báo `already exists`, V23_9 là `CREATE OR REPLACE`, còn V23_7 và V23_8 bỏ qua dòng đã có.
 
 ## Bước 0. Sao lưu bằng Data Pump (bắt buộc, trước V23_1)
 
@@ -52,7 +57,7 @@ F:\Database\bin\expdp.exe <DB_USER>@//localhost:1521/<SERVICE> SCHEMAS=EDUCATION
 - Kiểm tra log báo `successfully completed` và số dòng `FIN_TUITION_FEES` trong log khớp với `SELECT COUNT(*) FROM FIN_TUITION_FEES;`.
 - Ghi lại tên file dump và giờ export. Đây là điểm khôi phục duy nhất cho V23_8.
 
-## Bước 1. Mở phiên (một phiên cho V23_1 → V23_9)
+## Bước 1. Mở phiên (một phiên cho V23_1 → V23_6, V23_9, V23_7, V23_8)
 
 ```bat
 cd /d E:\JAVA\edu-wt\fee-range\src\main\resources\db\migration
@@ -137,7 +142,24 @@ SELECT INDEX_NAME, TABLE_NAME, UNIQUENESS, STATUS FROM USER_INDEXES
 SELECT SEQUENCE_NAME, CACHE_SIZE, LAST_NUMBER FROM USER_SEQUENCES WHERE SEQUENCE_NAME = 'SEQ_FIN_TUITION_FEE_SESSIONS';
 ```
 
-## Bước 4. V23_7 (DML chạy tay): backfill dòng session cho phiếu tháng cũ
+## Bước 4. V23_9 (procedure báo cáo thu tiền theo lớp, DDL, chạy trước V23_7)
+
+```sql
+@V23_9__rpt_class_collection_by_session.sql
+-- "Procedure created." + "No errors."
+
+SELECT OBJECT_NAME, OBJECT_TYPE, STATUS, LAST_DDL_TIME FROM USER_OBJECTS
+ WHERE OBJECT_NAME IN ('PRC_RPT_CLASS_COLLECTION','PRC_GET_TUITION_SLIP_DATA');
+-- mong doi STATUS = VALID
+
+SELECT OBJECT_NAME, OBJECT_TYPE FROM USER_OBJECTS WHERE STATUS = 'INVALID';
+-- khong co doi tuong moi bi INVALID
+```
+
+Muốn đổi cách tính doanh thu phiếu khoảng ngày: sửa dòng `C_SPLIT_BY_SESSION CONSTANT NUMBER := 1;` (0 = tính trọn vào tháng của `PERIOD_FROM`) rồi chạy lại file.
+**Chỉ chạy lại V23_9 khi không có giao dịch V23_7/V23_8 đang mở**: hoặc chạy trước Bước 5, hoặc sau khi đã COMMIT/ROLLBACK ở Bước 7.
+
+## Bước 5. V23_7 (DML chạy tay): backfill dòng session cho phiếu tháng cũ
 
 **Trước khi chạy:**
 
@@ -163,7 +185,7 @@ SELECT COUNT(*) EXPECTED_ROWS
 -- sqlplus in "N rows created." -> N phai bang EXPECTED_ROWS
 ```
 
-**Sau khi chạy (chưa COMMIT):**
+**Sau khi chạy (chỉ SELECT, chưa COMMIT):**
 
 ```sql
 SELECT COUNT(*) SESSION_ROWS_AFTER, COUNT(DISTINCT FEE_ID) FEES FROM FIN_TUITION_FEE_SESSIONS;
@@ -189,17 +211,9 @@ SELECT CASE WHEN NVL(s.CNT, 0) = NVL(f.TOTAL_SESSIONS, 0) THEN 'MATCH' ELSE 'MIS
 - Phiếu lệch có thể xảy ra, ví dụ điểm danh bị sửa sau khi lập phiếu hoặc phiếu đã sửa tay.
 - Phiếu lệch vẫn giữ số tiền cũ. Dòng session chỉ dùng để chặn thu trùng và in ngày.
 
-**Tuấn quyết định:**
+**Chưa COMMIT/ROLLBACK ở bước này.** Chuyển sang Bước 6 (V23_8) trong cùng phiên. Không chạy DDL, không `EXIT`.
 
-```sql
-COMMIT;
--- hoac
-ROLLBACK;
-```
-
-Nếu đã COMMIT mà cần gỡ V23_7 thì chạy `DELETE FROM FIN_TUITION_FEE_SESSIONS WHERE CREATED_BY = 'V23_7_BACKFILL';` rồi tự COMMIT.
-
-## Bước 5. V23_8 (DML chạy tay): PERIOD_* cho phiếu tháng cũ
+## Bước 6. V23_8 (DML chạy tay): PERIOD_* cho phiếu tháng cũ
 
 **Trước khi chạy:**
 
@@ -219,7 +233,7 @@ SELECT COUNT(*) WITH_PERIOD_BEFORE FROM FIN_TUITION_FEES WHERE PERIOD_FROM IS NO
 -- "N rows updated." -> N phai bang LEGACY_NO_PERIOD_BEFORE
 ```
 
-**Sau khi chạy (chưa COMMIT):**
+**Sau khi chạy (chỉ SELECT, chưa COMMIT):**
 
 ```sql
 SELECT COUNT(*) LEGACY_NO_PERIOD_AFTER FROM FIN_TUITION_FEES
@@ -237,35 +251,24 @@ SELECT IS_RANGE, COUNT(*) FROM FIN_TUITION_FEES GROUP BY IS_RANGE;
 -- van chi IS_RANGE = 0
 ```
 
-**Tuấn quyết định:**
+## Bước 7. Tuấn quyết định COMMIT hoặc ROLLBACK (V23_7 + V23_8)
+
+Từ lúc chạy V23_7 đến đây chỉ được chạy SELECT. **Không DDL, không EXIT.**
+Xem lại số dòng trước/sau của Bước 5 và Bước 6, rồi gõ **một** trong hai:
 
 ```sql
 COMMIT;
--- hoac
+```
+
+```sql
 ROLLBACK;
 ```
 
-> **Lưu ý:** sau khi đã COMMIT, các UPDATE của V23_8 **không có script rollback**. Muốn trả lại dữ liệu cũ thì phải khôi phục từ bản export ở Bước 0 (xem mục Rollback).
+> **Lưu ý:** sau khi đã COMMIT, các UPDATE của V23_8 **không có script rollback**. Muốn trả lại dữ liệu cũ thì phải khôi phục từ bản export ở Bước 0 (xem mục Rollback). V23_7 thì gỡ được bằng `DELETE ... WHERE CREATED_BY = 'V23_7_BACKFILL'`.
 
-## Bước 6. V23_9 (procedure báo cáo thu tiền theo lớp)
+## Bước 8. Thoát
 
-```sql
-@V23_9__rpt_class_collection_by_session.sql
--- "Procedure created." + "No errors."
-
-SELECT OBJECT_NAME, OBJECT_TYPE, STATUS, LAST_DDL_TIME FROM USER_OBJECTS
- WHERE OBJECT_NAME IN ('PRC_RPT_CLASS_COLLECTION','PRC_GET_TUITION_SLIP_DATA');
--- mong doi STATUS = VALID
-
-SELECT OBJECT_NAME, OBJECT_TYPE FROM USER_OBJECTS WHERE STATUS = 'INVALID';
--- khong co doi tuong moi bi INVALID
-```
-
-Muốn đổi cách tính doanh thu phiếu khoảng ngày: sửa dòng `C_SPLIT_BY_SESSION CONSTANT NUMBER := 1;` (0 = tính trọn vào tháng của `PERIOD_FROM`) rồi chạy lại file.
-
-## Bước 7. Thoát
-
-Chỉ thoát sau khi đã COMMIT/ROLLBACK cả V23_7 và V23_8:
+Chỉ thoát sau khi đã gõ COMMIT hoặc ROLLBACK ở Bước 7:
 
 ```sql
 EXIT
@@ -273,13 +276,16 @@ EXIT
 
 ## Rollback (theo thứ tự ngược)
 
+Ngược với thứ tự chạy (V23_8 → V23_7 → V23_9 → V23_6 … V23_1):
+
 ```sql
--- V23_9: chay lai khoi PRC_RPT_CLASS_COLLECTION trong V14_3__fin_reports.sql (procedure bao cao cu)
--- V23_8: KHONG co script rollback sau COMMIT -> khoi phuc tu ban export Buoc 0 (ben duoi)
--- V23_7 (da COMMIT):
+-- 1) V23_8 (da COMMIT): KHONG co script rollback -> khoi phuc tu ban export Buoc 0 (ben duoi)
+-- 2) V23_7 (da COMMIT):
 DELETE FROM FIN_TUITION_FEE_SESSIONS WHERE CREATED_BY = 'V23_7_BACKFILL';
+-- kiem tra SELECT COUNT(*) roi Tuan tu go COMMIT; hoac ROLLBACK; TRUOC khi chay bat ky DDL nao ben duoi
 COMMIT;
--- V23_6..V23_1:
+-- 3) V23_9: chay lai khoi PRC_RPT_CLASS_COLLECTION trong V14_3__fin_reports.sql (procedure bao cao cu)
+-- 4) V23_6..V23_1:
 DROP INDEX IDX_FEES_PERIOD;
 DROP INDEX IDX_FEE_SESSIONS_FEE;
 DROP TABLE FIN_TUITION_FEE_SESSIONS;
@@ -287,6 +293,8 @@ DROP SEQUENCE SEQ_FIN_TUITION_FEE_SESSIONS;
 ALTER TABLE FIN_TUITION_FEES DROP CONSTRAINT CK_FEES_PERIOD;
 ALTER TABLE FIN_TUITION_FEES DROP (PERIOD_FROM, PERIOD_TO, IS_RANGE);
 ```
+
+Nếu V23_7/V23_8 **chưa COMMIT** thì chỉ cần gõ `ROLLBACK;` ở Bước 7, không cần bước 1–2 ở trên.
 
 **Khôi phục từ bản export (Bước 0):**
 

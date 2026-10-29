@@ -3,12 +3,14 @@
 --
 -- DML: dien PERIOD_FROM = ngay 1, PERIOD_TO = ngay cuoi thang FEE_MONTH/FEE_YEAR cho phieu thang cu chua co PERIOD_FROM.
 -- Phieu cu van giu FEE_MONTH/FEE_YEAR (van hien "Thang MM/yyyy").
--- File KHONG ket thuc giao dich va KHONG co EXIT. Nguoi chay kiem tra theo docs/RUN-V23-fee-range.md roi tu quyet dinh.
+-- File KHONG ket thuc giao dich va KHONG co EXIT. SET EXITCOMMIT OFF: neu lo thoat sqlplus truoc khi quyet dinh
+-- thi giao dich dang mo bi huy. Nguoi chay kiem tra theo docs/RUN-V23-fee-range.md roi tu quyet dinh.
 --
 -- Spec: docs/SPEC-fee-date-range.md muc 4. Huong dan chay: docs/RUN-V23-fee-range.md
 -- Moi file 1 khoi lenh. Chay lai an toan (idempotent).
 --
--- THU TU CHAY: sau V23_7.
+-- THU TU CHAY: sau V23_7 (cung phien, chua quyet dinh). Cuoi cung cua V23.
+-- Sau V23_7/V23_8 chi chay SELECT kiem tra; KHONG chay DDL, KHONG EXIT truoc khi quyet dinh ghi han hay huy.
 --   set NLS_LANG=AMERICAN_AMERICA.AL32UTF8
 --   F:\Database\bin\sqlplus.exe /nolog
 --   CONNECT <DB_USER>@//localhost:1521/<SERVICE>   (mat khau nhap tai prompt)
@@ -16,12 +18,13 @@
 --
 -- ROLLBACK:
 --   Chua ghi han: go lenh huy giao dich (xem RUN guide).
---   Da ghi han: UPDATE FIN_TUITION_FEES SET PERIOD_FROM = NULL, PERIOD_TO = NULL WHERE FEE_MONTH IS NOT NULL
+--   Da ghi han: khong co script rollback chinh xac, khoi phuc tu ban Data Pump export (Buoc 0 RUN guide).
 -- =============================================================================
 
 WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
 SET DEFINE OFF
 SET SQLBLANKLINES ON
+SET EXITCOMMIT OFF
 SET SERVEROUTPUT ON SIZE UNLIMITED
 
 UPDATE FIN_TUITION_FEES f

@@ -3,13 +3,15 @@
 --
 -- DML: tao dong FIN_TUITION_FEE_SESSIONS cho phieu thang cu (IS_DELETED=0, STATUS<>'CANCELLED', co FEE_MONTH/FEE_YEAR)
 -- tu diem danh PRESENT/LATE cua hoc sinh/lop/thang do. Bo qua buoi da co dong (chay lai an toan).
--- File KHONG ket thuc giao dich va KHONG co EXIT (EXIT cua sqlplus mac dinh se ghi han du lieu).
+-- File KHONG ket thuc giao dich va KHONG co EXIT. SET EXITCOMMIT OFF: neu lo thoat sqlplus truoc khi quyet dinh
+-- thi giao dich dang mo bi huy (khong tu ghi han).
 -- Nguoi chay kiem tra theo docs/RUN-V23-fee-range.md roi tu quyet dinh ghi han hay huy.
 --
 -- Spec: docs/SPEC-fee-date-range.md muc 4. Huong dan chay: docs/RUN-V23-fee-range.md
 -- Moi file 1 khoi lenh. Chay lai an toan (idempotent).
 --
--- THU TU CHAY: sau V23_1..V23_6.
+-- THU TU CHAY: sau V23_1..V23_6 va V23_9 (moi DDL chay xong truoc), truoc V23_8.
+-- Sau V23_7/V23_8 chi chay SELECT kiem tra; KHONG chay DDL, KHONG EXIT truoc khi quyet dinh ghi han hay huy.
 --   set NLS_LANG=AMERICAN_AMERICA.AL32UTF8
 --   F:\Database\bin\sqlplus.exe /nolog
 --   CONNECT <DB_USER>@//localhost:1521/<SERVICE>   (mat khau nhap tai prompt)
@@ -23,6 +25,7 @@
 WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
 SET DEFINE OFF
 SET SQLBLANKLINES ON
+SET EXITCOMMIT OFF
 SET SERVEROUTPUT ON SIZE UNLIMITED
 
 INSERT INTO FIN_TUITION_FEE_SESSIONS (ID, FEE_ID, ATTENDANCE_ID, SESSION_DATE, CREATED_AT, CREATED_BY)

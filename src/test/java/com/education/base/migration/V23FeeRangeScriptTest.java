@@ -89,11 +89,24 @@ class V23FeeRangeScriptTest {
     void dmlScriptsNeitherCommitNorExit() throws IOException {
         for (String script : DML) {
             String upper = read(script).toUpperCase(Locale.ROOT);
-            assertThat(upper).as(script).doesNotContain("COMMIT");
+            // Không có lệnh COMMIT (từ đứng riêng); chỉ được phép chỉ thị sqlplus SET EXITCOMMIT OFF.
+            assertThat(Pattern.compile("\\bCOMMIT\\b").matcher(upper).find()).as(script + " COMMIT").isFalse();
+            assertThat(upper.replace("SET EXITCOMMIT OFF", "")).as(script).doesNotContain("EXITCOMMIT");
+            String code = code(read(script));
+            int exitCommit = code.indexOf("SET EXITCOMMIT OFF");
+            assertThat(exitCommit).as(script + " SET EXITCOMMIT OFF").isGreaterThanOrEqualTo(0);
+            Matcher first = STATEMENT.matcher(code);
+            assertThat(first.find()).isTrue();
+            assertThat(first.start()).as(script + " EXITCOMMIT OFF trước câu DML").isGreaterThan(exitCommit);
             assertThat(Pattern.compile("^\\s*EXIT\\b", Pattern.MULTILINE).matcher(upper).find()).as(script).isFalse();
         }
         assertThat(read("V23_7__backfill_legacy_fee_sessions.sql")).contains("NOT EXISTS").contains("'V23_7_BACKFILL'");
         assertThat(read("V23_8__backfill_legacy_fee_period.sql")).contains("PERIOD_FROM IS NULL");
+        for (String ddl : ALL) {
+            if (!DML.contains(ddl)) {
+                assertThat(read(ddl)).as(ddl + " chỉ DML mới cần EXITCOMMIT").doesNotContain("EXITCOMMIT");
+            }
+        }
     }
 
     @Test

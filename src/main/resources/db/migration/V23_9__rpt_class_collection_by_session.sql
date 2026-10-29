@@ -14,7 +14,7 @@
 -- Spec: docs/SPEC-fee-date-range.md muc 4. Huong dan chay: docs/RUN-V23-fee-range.md
 -- Moi file 1 khoi lenh. Chay lai an toan (CREATE OR REPLACE).
 --
--- THU TU CHAY: sau V23_8 (can cot IS_RANGE cua V23_1 va bang FIN_TUITION_FEE_SESSIONS cua V23_4).
+-- THU TU CHAY: ngay sau V23_6, TRUOC V23_7/V23_8 (la DDL, tu ghi han; can cot IS_RANGE cua V23_1 va bang cua V23_4).
 --   set NLS_LANG=AMERICAN_AMERICA.AL32UTF8
 --   F:\Database\bin\sqlplus.exe /nolog
 --   CONNECT <DB_USER>@//localhost:1521/<SERVICE>   (mat khau nhap tai prompt)
