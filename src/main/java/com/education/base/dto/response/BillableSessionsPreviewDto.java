@@ -54,6 +54,16 @@ public class BillableSessionsPreviewDto {
         private List<String> conflictFeeCodes = new ArrayList<>();
         /** Học sinh đã nghỉ lớp nhưng có buổi trong khoảng: vẫn được thu. */
         private boolean inactive;
+
+        /** Số buổi PRESENT/LATE trong khoảng chưa nằm trên phiếu hiệu lực (= {@code sessionCount}, v1.4 §13). */
+        private int unbilledCount;
+
+        /** {@code unbilledCount >= 10} (gói cố định {@code FEE_PACKAGE_SIZE}). */
+        private boolean eligible;
+
+        /** Ngày (dd/MM, tăng dần) của tối đa 10 buổi cũ nhất - các buổi sẽ nằm trên phiếu. */
+        @Builder.Default
+        private List<String> packageDates = new ArrayList<>();
     }
 
     @Data
@@ -70,5 +80,8 @@ public class BillableSessionsPreviewDto {
         private BigDecimal discountAmount;
         private BigDecimal netAmount;
         private int conflictStudentCount;
+
+        /** Số học sinh đủ gói ({@code eligible = true}). */
+        private int eligibleStudentCount;
     }
 }

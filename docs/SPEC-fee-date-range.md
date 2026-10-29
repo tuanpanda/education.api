@@ -1,6 +1,6 @@
 # SPEC: Tuition fee by date range (thu học phí theo khoảng ngày)
 
-Version: **v1.1** (2026-10-29), aligned with API contract `fee-range-api` **v1.3 (final)**. v1.0 text below is kept and amended in place; where v1.0 and §0 disagree, **§0 wins**.
+Version: **v1.2** (2026-10-29), aligned with API contract `fee-range-api` **v1.4** (§13 fixed 10-session packages, see §13 below; where §13 and older sections disagree, **§13 wins**). v1.1 was aligned with v1.3. v1.0 text below is kept and amended in place; where v1.0 and §0 disagree, **§0 wins**.
 
 ## 0. v1.1 decisions (contract v1.3 + QC)
 
@@ -215,10 +215,25 @@ Format rules (sqlplus pitfalls seen before):
 - The owner runs the migrations himself. Bots do not run DDL or DML.
 - Commit locally on the feature branches. No push, merge or deploy before the owner approves.
 
-## 10. Rủi ro đã biết (v1.1)
+## 10. Rủi ro đã biết (v1.1, v1.2)
 
 - **No audit** for range generation: the old generate had none and `TuitionSlipService` is not covered by `AuditTrailAspect`. Only application logs exist (class, range, counts, actor).
 - **VietQR reconciliation is manual**, by transfer content + amount. A student code longer than 12 characters is truncated, and multiple matches need manual reconciliation. There is no automatic reconciliation in the backend.
 - **Conflicts are detected by attendance ID.** An attendance row added or changed later inside an old slip's range is not treated as billed and can be billed on a new slip.
 - After COMMIT, **V23_8 cannot be rolled back by script**; restore from the Data Pump export taken before V23_1 (§0 V11).
 - **Oracle reserved words:** V23_9 first used the alias `SHARE` (ORA-00923, procedure INVALID on EDUCATION, 29/10/2026); renamed to `FEE_SHARE`. `V23FeeRangeScriptTest` now fails if any alias or identifier in V23_1..V23_9 is an Oracle reserved word. V23_9 can be re-run alone (`CREATE OR REPLACE`, only when no V23_7/V23_8 transaction is open); verify with `SHOW ERRORS` and `USER_OBJECTS.STATUS = 'VALID'`.
+- **v1.2 deploy order:** the new backend maps `IS_PARTIAL`/`PARTIAL_REASON`; run V24 (`docs/RUN-V24-fee-partial.md`) **before** starting it, otherwise every `FIN_TUITION_FEES` query fails with ORA-00904.
+- **v1.2 409 from a race has empty `details`:** after a failed flush the backend cannot tell which student clashed; FE should reload the preview.
+
+## 13. v1.2: fixed 10-session packages (contract v1.4 §13–§13.7)
+
+| # | Rule |
+|---|------|
+| P1 | `DomainConstants.FEE_PACKAGE_SIZE = 10` (backend constant, not per class). |
+| P2 | **Unbilled session** = PRESENT/LATE in `[fromDate, toDate]` (§11 limits unchanged) whose attendance ID is **not** on a fee that is not cancelled and not deleted (same JOIN as V6). Overlapping ranges are not blocked; the per-attendance UQ is the only duplicate guard (§13.1). Cancel/delete already deletes the fee's `FIN_TUITION_FEE_SESSIONS` rows, so a cancelled slip's sessions are unbilled again (§13.4) — no UQ change needed. Paid slips cannot be cancelled (`FEE_HAS_PAYMENTS`). |
+| P3 | **Preview** lists every active (ENROLLED) student, including 0 unbilled (`unbilledCount = 0`, `eligible = false`, `packageDates = []`), plus left students with ≥ 1 unbilled (`inactive = true`). Per row: `unbilledCount` (= `sessionCount`), `eligible` (`unbilledCount >= 10`), `packageDates` (dd/MM of the ≤ 10 oldest), `sessionDates` (all unbilled), `totalAmount = price × min(unbilled, 10)`. Billed sessions are hidden: `conflictDates`/`conflictFeeCodes` are always `[]`, `totals.conflictStudentCount = 0`. New `totals.eligibleStudentCount`. |
+| P4 | **POST `/generate-range`** requires `students: [{studentId, allowPartial?, partialReason?}]`. One slip per student with the **10 oldest** unbilled sessions (date, then attendance ID); leftovers wait. `PERIOD_FROM/TO` = first/last billed session date; note `HP dd/MM/yyyy-dd/MM/yyyy` of those dates; `dueDate = resolveDueDate(PERIOD_TO, today)`; discount 0; `IS_RANGE = 1`. |
+| P5 | **Partial (§13.2, §13.5):** 1–9 unbilled + `allowPartial = true` + `partialReason` (trimmed, 1–200 chars) → all sessions, `IS_PARTIAL = 1`, `PARTIAL_REASON`. ≥ 10 → `allowPartial`/`partialReason` ignored, `IS_PARTIAL = 0`, reason NULL. Migration V24_1/V24_2 (owner runs it). `partial`, `partialReason` on the generate response `slips[]`, slip, search list and detail. |
+| P6 | **Errors (all or nothing, §13.3/§13.6):** every `data.details[]` item = `{studentId, studentName, field, code, message, unbilledCount}`. Codes: `STUDENTS_REQUIRED` (empty/missing array: one item, studentId/studentName null, `field = "students"`), `STUDENT_ID_REQUIRED` / `DUPLICATE_STUDENT` (`field = "studentId"`), `PARTIAL_REASON_REQUIRED` / `PARTIAL_REASON_TOO_LONG` (`field = "partialReason"`), `NOT_IN_CLASS` (`field = "studentId"`), `NO_UNBILLED_SESSION`, `STUDENT_NOT_ELIGIBLE` (< 10 without allowPartial). Top-level code: `VALIDATION_ERROR` if any request-data error (first five), else `STUDENT_NOT_ELIGIBLE`; both 400. Race on `UQ_FEE_SESSIONS_ATTENDANCE` → 409 `FEE_SESSION_CONFLICT`, `details = []` (§13.7). |
+| P7 | "In class" = present in the preview list (active student, or left student with ≥ 1 unbilled session in the range). |
+

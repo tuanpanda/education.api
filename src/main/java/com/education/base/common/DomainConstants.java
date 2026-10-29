@@ -204,6 +204,15 @@ public class DomainConstants {
     /** 409: có buổi đã nằm trên phiếu chưa hủy / chưa xóa (contract fee-range-api v1.3 mục 3). */
     public static final String FEE_SESSION_CONFLICT = "FEE_SESSION_CONFLICT";
 
+    /** Gói cố định số buổi trên một phiếu theo khoảng ngày (contract v1.4 §13, không cấu hình theo lớp). */
+    public static final int FEE_PACKAGE_SIZE = 10;
+
+    /** Độ dài tối đa lý do thu chưa đủ gói ({@code PARTIAL_REASON VARCHAR2(200 CHAR)}, V24_1). */
+    public static final int FEE_PARTIAL_REASON_MAX = 200;
+
+    /** 400: học sinh được chọn không đủ điều kiện tạo phiếu (contract v1.4 §13). */
+    public static final String STUDENT_NOT_ELIGIBLE = "STUDENT_NOT_ELIGIBLE";
+
     /** Unique {@code FIN_TUITION_FEE_SESSIONS(ATTENDANCE_ID)} (V23_4): ORA-00001 trên ràng buộc này -> 409. */
     public static final String FEE_SESSIONS_UNIQUE_CONSTRAINT = "UQ_FEE_SESSIONS_ATTENDANCE";
 

@@ -11,9 +11,11 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
 /**
- * Sinh phiếu học phí theo khoảng ngày cho cả lớp ({@code POST /api/v1/tuition-fees/generate-range}).
+ * Sinh phiếu học phí theo gói 10 buổi cho các học sinh được chọn ({@code POST /api/v1/tuition-fees/generate-range},
+ * contract fee-range-api v1.4 §13).
  * <p>
  * {@code fromDate <= toDate} và khoảng tối đa {@code DomainConstants.FEE_RANGE_MAX_DAYS} ngày được kiểm ở Service
  * (400 {@code VALIDATION_ERROR}).
@@ -43,4 +45,26 @@ public class GenerateRangeInvoicesRequestDto {
 
     @Size(max = 500, message = "Lời chúc không được vượt quá 500 ký tự")
     private String footerWish;
+
+    /**
+     * Học sinh được chọn (bắt buộc, ≥ 1). Rỗng / trùng / thiếu lý do... được kiểm ở Service để trả đủ
+     * {@code data.details} (contract §13.6), nên không gắn {@code @NotEmpty} ở đây.
+     */
+    private List<StudentSelection> students;
+
+    /** Một học sinh trong {@code students}. */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class StudentSelection {
+
+        private Long studentId;
+
+        /** {@code true}: cho thu khi chưa đủ 10 buổi (1-9 buổi), bắt buộc {@link #partialReason}. Bỏ qua khi đủ 10. */
+        private Boolean allowPartial;
+
+        /** Lý do thu chưa đủ gói, 1-200 ký tự (bắt buộc khi {@code allowPartial} và học sinh < 10 buổi). */
+        private String partialReason;
+    }
 }

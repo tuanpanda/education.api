@@ -222,7 +222,7 @@ public class GlobalExceptionHandler {
             return ResponseEntity.status(HttpStatus.CONFLICT)
                     .body(ApiResponse.error(com.education.base.common.DomainConstants.FEE_SESSION_CONFLICT,
                             com.education.base.common.DomainConstants.FEE_SESSION_CONFLICT_MESSAGE,
-                            new com.education.base.dto.response.FeeSessionConflictDto.Payload(java.util.List.of())));
+                            new com.education.base.dto.response.FeeStudentErrorDto.Payload(java.util.List.of())));
         }
         log.error("[DataAccessException] {}", ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

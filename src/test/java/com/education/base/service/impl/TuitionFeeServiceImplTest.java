@@ -116,6 +116,8 @@ class TuitionFeeServiceImplTest {
         fee.setPeriodFrom(java.time.LocalDate.of(2026, 10, 5));
         fee.setIsRange(1);
         fee.setPeriodTo(java.time.LocalDate.of(2026, 11, 4));
+        fee.setIsPartial(1);
+        fee.setPartialReason("Nghỉ giữa khóa");
         when(tuitionFeeRepository.findAll(org.mockito.ArgumentMatchers.<org.springframework.data.jpa.domain.Specification<TuitionFeeEntity>>any(),
                 any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(fee)));
@@ -129,6 +131,8 @@ class TuitionFeeServiceImplTest {
         assertThat(row.getFeeMonth()).isEqualTo(10);
         assertThat(row.getFeeYear()).isEqualTo(2026);
         assertThat(fee.getFeeMonth()).as("DB FEE_MONTH vẫn NULL").isNull();
+        assertThat(row.isPartial()).isTrue();
+        assertThat(row.getPartialReason()).isEqualTo("Nghỉ giữa khóa");
     }
 
     @Test
@@ -535,6 +539,24 @@ class TuitionFeeServiceImplTest {
         when(fileStorageService.getFilesByRef(any(), any())).thenReturn(List.of());
 
         assertThat(service.getDetail(4L).getRemainingAmount()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void getDetail_exposesPartialFlagAndReason() {
+        TuitionFeeEntity stored = unpaidFee();
+        stored.setId(4L);
+        stored.setIsRange(1);
+        stored.setIsPartial(1);
+        stored.setPartialReason("Nghỉ giữa khóa");
+        stubDetail(stored);
+
+        TuitionFeeDetailResponse detail = service.getDetail(4L);
+
+        assertThat(detail.isPartial()).isTrue();
+        assertThat(detail.getPartialReason()).isEqualTo("Nghỉ giữa khóa");
+        stored.setIsPartial(0);
+        stored.setPartialReason(null);
+        assertThat(service.getDetail(4L).isPartial()).isFalse();
     }
 
     private void stubDetail(Long id) {

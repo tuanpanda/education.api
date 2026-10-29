@@ -32,6 +32,8 @@ public interface FinanceAcademicMapper {
     @Mapping(target = "periodFrom", ignore = true)
     @Mapping(target = "periodTo", ignore = true)
     @Mapping(target = "isRange", ignore = true)
+    @Mapping(target = "isPartial", ignore = true)
+    @Mapping(target = "partialReason", ignore = true)
     TuitionFeeEntity toFeeEntity(TuitionFeeCreateRequest request);
 
     @Mapping(target = "studentCode", ignore = true)
@@ -49,6 +51,8 @@ public interface FinanceAcademicMapper {
     @Mapping(target = "remainingAmount", ignore = true)
     @Mapping(target = "periodText", ignore = true)
     @Mapping(target = "rangeFee", ignore = true)
+    @Mapping(target = "partial", ignore = true)
+    @Mapping(target = "partialReason", ignore = true)
     TuitionFeeListItemDto toFeeListItem(TuitionFeeEntity entity);
 
     @Mapping(target = "classCode", ignore = true)

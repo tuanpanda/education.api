@@ -103,6 +103,8 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
         detail.setPeriodText(FeePeriods.periodText(fee.getFeeMonth(), fee.getFeeYear(), fee.getPeriodFrom(),
                 fee.getPeriodTo()));
         detail.setRangeFee(FeePeriods.isRangeFee(fee.getIsRange()));
+        detail.setPartial(FeePeriods.isPartialFee(fee.getIsPartial()));
+        detail.setPartialReason(fee.getPartialReason());
         if (fee.getStudentId() != null) {
             studentRepository.findById(fee.getStudentId())
                     .ifPresent(student -> detail.setStudentStatus(student.getStatus()));
@@ -361,6 +363,8 @@ public class TuitionFeeServiceImpl implements TuitionFeeService {
         dto.setFeeMonth(FeePeriods.displayMonth(entity.getFeeMonth(), entity.getPeriodFrom()));
         dto.setFeeYear(FeePeriods.displayYear(entity.getFeeYear(), entity.getFeeMonth(), entity.getPeriodFrom()));
         dto.setRangeFee(FeePeriods.isRangeFee(entity.getIsRange()));
+        dto.setPartial(FeePeriods.isPartialFee(entity.getIsPartial()));
+        dto.setPartialReason(entity.getPartialReason());
         StudentEntity student = entity.getStudentId() == null ? null : students.get(entity.getStudentId());
         if (student != null) {
             dto.setStudentCode(student.getStudentCode());

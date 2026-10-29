@@ -5,7 +5,7 @@ import com.education.base.support.WithAuthUser;
 import org.springframework.context.annotation.Import;
 import com.education.base.common.DomainConstants;
 import com.education.base.dto.response.BillableSessionsPreviewDto;
-import com.education.base.dto.response.FeeSessionConflictDto;
+import com.education.base.dto.response.FeeStudentErrorDto;
 import com.education.base.dto.response.GenerateInvoicesResponseDto;
 import com.education.base.exception.BusinessDataException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -147,10 +147,99 @@ class TuitionFeeControllerTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("PHIẾU HỌC PHÍ")));
     }
 
-    // ---- Thu theo khoảng ngày (contract fee-range-api v1.3) -----------------------------------------------
+    // ---- Thu theo khoảng ngày (contract fee-range-api v1.4 §13 gói 10 buổi) ----------------------------------
 
     private static final String RANGE_BODY =
-            "{\"classId\":3,\"fromDate\":\"2026-10-01\",\"toDate\":\"2026-10-31\",\"pricePerSession\":80000}";
+            "{\"classId\":3,\"fromDate\":\"2026-10-01\",\"toDate\":\"2026-10-31\",\"pricePerSession\":80000,"
+                    + "\"students\":[{\"studentId\":8},"
+                    + "{\"studentId\":9,\"allowPartial\":true,\"partialReason\":\"Nghỉ giữa khóa\"}]}";
+
+    @Test
+    void generateRange_bindsStudents_andReturnsSlipsWithPartialFlags() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenReturn(GenerateInvoicesResponseDto.builder()
+                .createdCount(2).feeIds(new java.util.ArrayList<>(List.of(9L, 10L)))
+                .slips(new java.util.ArrayList<>(List.of(
+                        GenerateInvoicesResponseDto.CreatedSlip.builder().feeId(9L).studentId(8L).sessionCount(10)
+                                .periodFrom(LocalDate.of(2026, 10, 1)).periodTo(LocalDate.of(2026, 10, 20))
+                                .totalAmount(new BigDecimal("800000")).partial(false).build(),
+                        GenerateInvoicesResponseDto.CreatedSlip.builder().feeId(10L).studentId(9L).sessionCount(3)
+                                .partial(true).partialReason("Nghỉ giữa khóa").build())))
+                .build());
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.slips[0].partial").value(false))
+                .andExpect(jsonPath("$.data.slips[0].periodTo").value("2026-10-20"))
+                .andExpect(jsonPath("$.data.slips[1].partial").value(true))
+                .andExpect(jsonPath("$.data.slips[1].partialReason").value("Nghỉ giữa khóa"));
+
+        org.mockito.ArgumentCaptor<com.education.base.dto.request.GenerateRangeInvoicesRequestDto> captor =
+                org.mockito.ArgumentCaptor.forClass(com.education.base.dto.request.GenerateRangeInvoicesRequestDto.class);
+        org.mockito.Mockito.verify(tuitionSlipService).generateRange(captor.capture());
+        var students = captor.getValue().getStudents();
+        org.assertj.core.api.Assertions.assertThat(students).hasSize(2);
+        org.assertj.core.api.Assertions.assertThat(students.get(0).getStudentId()).isEqualTo(8L);
+        org.assertj.core.api.Assertions.assertThat(students.get(0).getAllowPartial()).isNull();
+        org.assertj.core.api.Assertions.assertThat(students.get(1).getAllowPartial()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(students.get(1).getPartialReason()).isEqualTo("Nghỉ giữa khóa");
+    }
+
+    @Test
+    void generateRange_studentNotEligible_returns400_detailsLockedShape() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenThrow(new BusinessDataException(
+                DomainConstants.STUDENT_NOT_ELIGIBLE, "Có học sinh không đủ điều kiện tạo phiếu.",
+                new FeeStudentErrorDto.Payload(List.of(
+                        FeeStudentErrorDto.builder().studentId(8L).studentName("Học sinh A").field(null)
+                                .code("STUDENT_NOT_ELIGIBLE").message("Chưa đủ 10 buổi (hiện 4 buổi).")
+                                .unbilledCount(4).build(),
+                        FeeStudentErrorDto.builder().studentId(9L).field("studentId").code("NOT_IN_CLASS")
+                                .message("Học sinh không thuộc lớp.").unbilledCount(0).build()))));
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("STUDENT_NOT_ELIGIBLE"))
+                .andExpect(jsonPath("$.data.details[0].studentId").value(8))
+                .andExpect(jsonPath("$.data.details[0].studentName").value("Học sinh A"))
+                .andExpect(jsonPath("$.data.details[0].code").value("STUDENT_NOT_ELIGIBLE"))
+                .andExpect(jsonPath("$.data.details[0].message").value("Chưa đủ 10 buổi (hiện 4 buổi)."))
+                .andExpect(jsonPath("$.data.details[0].unbilledCount").value(4))
+                .andExpect(jsonPath("$.data.details[1].field").value("studentId"))
+                .andExpect(jsonPath("$.data.details[1].code").value("NOT_IN_CLASS"));
+    }
+
+    @Test
+    void generateRange_emptyStudents_returns400_oneDetailOnFieldStudents() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenThrow(new BusinessDataException(
+                "VALIDATION_ERROR", "Chọn ít nhất một học sinh để tạo phiếu.",
+                new FeeStudentErrorDto.Payload(List.of(FeeStudentErrorDto.builder().field("students")
+                        .code("STUDENTS_REQUIRED").message("Chọn ít nhất một học sinh để tạo phiếu.").build()))));
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.data.details.length()").value(1))
+                .andExpect(jsonPath("$.data.details[0].field").value("students"))
+                .andExpect(jsonPath("$.data.details[0].code").value("STUDENTS_REQUIRED"));
+    }
+
+    @Test
+    void generateRange_partialReasonMissing_returns400_fieldPartialReason() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenThrow(new BusinessDataException(
+                "VALIDATION_ERROR", "Danh sách học sinh không hợp lệ.",
+                new FeeStudentErrorDto.Payload(List.of(FeeStudentErrorDto.builder().studentId(9L)
+                        .studentName("Học sinh B").field("partialReason").code("PARTIAL_REASON_REQUIRED")
+                        .message("Thu chưa đủ gói (3 buổi) phải nhập lý do.").unbilledCount(3).build()))));
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.data.details[0].field").value("partialReason"))
+                .andExpect(jsonPath("$.data.details[0].code").value("PARTIAL_REASON_REQUIRED"));
+    }
 
     @Test
     void generateRange_created_returns201WithFeeIds() throws Exception {
@@ -179,20 +268,19 @@ class TuitionFeeControllerTest {
     }
 
     @Test
-    void generateRange_conflict_returns409WithDetails() throws Exception {
+    void generateRange_conflict_returns409_detailsLockedShape() throws Exception {
         when(tuitionSlipService.generateRange(any())).thenThrow(new BusinessDataException(
                 DomainConstants.FEE_SESSION_CONFLICT, DomainConstants.FEE_SESSION_CONFLICT_MESSAGE,
-                new FeeSessionConflictDto.Payload(List.of(FeeSessionConflictDto.builder()
-                        .studentId(8L).studentCode("HS01").studentName("A")
-                        .dates(List.of(LocalDate.of(2026, 10, 9))).feeCodes(List.of("HP-000812")).build()))));
+                new FeeStudentErrorDto.Payload(List.of(FeeStudentErrorDto.builder()
+                        .studentId(8L).studentName("A").code("FEE_SESSION_CONFLICT")
+                        .message("Có buổi học đã được thu học phí ở phiếu khác.").build()))));
 
         mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
                         .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("FEE_SESSION_CONFLICT"))
                 .andExpect(jsonPath("$.data.details[0].studentId").value(8))
-                .andExpect(jsonPath("$.data.details[0].dates[0]").value("2026-10-09"))
-                .andExpect(jsonPath("$.data.details[0].feeCodes[0]").value("HP-000812"));
+                .andExpect(jsonPath("$.data.details[0].code").value("FEE_SESSION_CONFLICT"));
     }
 
     @Test
@@ -261,6 +349,7 @@ class TuitionFeeControllerTest {
                         .students(List.of(BillableSessionsPreviewDto.StudentRow.builder()
                                 .studentId(8L).studentCode("HS01").sessionDates(List.of(LocalDate.of(2026, 10, 2)))
                                 .sessionCount(1).conflictDates(List.of()).conflictFeeCodes(List.of())
+                                .unbilledCount(1).eligible(false).packageDates(List.of("02/10"))
                                 .inactive(true).build()))
                         .totals(BillableSessionsPreviewDto.Totals.builder().studentCount(1).billableStudentCount(1)
                                 .sessionCount(1).build())
@@ -271,6 +360,10 @@ class TuitionFeeControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.students[0].inactive").value(true))
                 .andExpect(jsonPath("$.data.students[0].sessionDates[0]").value("2026-10-02"))
+                .andExpect(jsonPath("$.data.students[0].unbilledCount").value(1))
+                .andExpect(jsonPath("$.data.students[0].eligible").value(false))
+                .andExpect(jsonPath("$.data.students[0].packageDates[0]").value("02/10"))
+                .andExpect(jsonPath("$.data.totals.eligibleStudentCount").value(0))
                 // exists() của jsonPath coi null là không có: kiểm tra chuỗi JSON để chắc trường có mặt với giá trị null
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"pricePerSession\":null")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("\"totalAmount\":null")))
@@ -294,13 +387,15 @@ class TuitionFeeControllerTest {
     void getSlip_rangeFee_exposesPeriodAndRangeFlag() throws Exception {
         when(tuitionSlipService.getSlip(9L)).thenReturn(TuitionSlipResponseDto.builder()
                 .invoiceId(9L).periodFrom(LocalDate.of(2026, 10, 1)).periodTo(LocalDate.of(2026, 10, 31))
-                .periodText("Từ 01/10/2026 đến 31/10/2026").rangeFee(true).attendedDates(List.of("02/10")).build());
+                .periodText("Từ 01/10/2026 đến 31/10/2026").rangeFee(true).partial(true).partialReason("Nghỉ giữa khóa").attendedDates(List.of("02/10")).build());
 
         mockMvc.perform(get("/api/v1/tuition-fees/9/slip"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.periodFrom").value("2026-10-01"))
                 .andExpect(jsonPath("$.data.periodText").value("Từ 01/10/2026 đến 31/10/2026"))
                 .andExpect(jsonPath("$.data.rangeFee").value(true))
+                .andExpect(jsonPath("$.data.partial").value(true))
+                .andExpect(jsonPath("$.data.partialReason").value("Nghỉ giữa khóa"))
                 .andExpect(jsonPath("$.data.attendedDates[0]").value("02/10"));
     }
 

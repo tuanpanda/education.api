@@ -40,6 +40,11 @@ public final class FeePeriods {
         return isRange != null && isRange == RANGE_FLAG;
     }
 
+    /** Phiếu gói chưa đủ 10 buổi ({@code IS_PARTIAL = 1}, V24). */
+    public static boolean isPartialFee(Integer isPartial) {
+        return isPartial != null && isPartial == RANGE_FLAG;
+    }
+
     /**
      * {@code "Tháng MM/yyyy"} cho phiếu tháng cũ; {@code "Từ dd/MM/yyyy đến dd/MM/yyyy"} cho phiếu khoảng ngày;
      * {@code null} khi không xác định được kỳ.

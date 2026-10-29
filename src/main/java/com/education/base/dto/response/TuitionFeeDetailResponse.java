@@ -58,6 +58,12 @@ public class TuitionFeeDetailResponse {
      */
     private boolean rangeFee;
 
+    /** {@code true}: phiếu gói chưa đủ 10 buổi ({@code IS_PARTIAL = 1}, contract v1.4 §13.2). */
+    private boolean partial;
+
+    /** Lý do thu chưa đủ gói ({@code null} nếu không phải phiếu partial). */
+    private String partialReason;
+
     /** Lý do hủy ({@code STATUS = CANCELLED}); lấy từ {@code FIN_TUITION_FEES.CANCEL_REASON} (V14_1). */
     private String cancelReason;
 

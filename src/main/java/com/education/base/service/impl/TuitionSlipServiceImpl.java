@@ -10,7 +10,7 @@ import com.education.base.dto.response.BankAccountResponseDto;
 import com.education.base.dto.response.BillableSessionsPreviewDto;
 import com.education.base.dto.response.BillableSessionsPreviewDto.StudentRow;
 import com.education.base.dto.response.BillableSessionsPreviewDto.Totals;
-import com.education.base.dto.response.FeeSessionConflictDto;
+import com.education.base.dto.response.FeeStudentErrorDto;
 import com.education.base.dto.response.GenerateInvoicesResponseDto;
 import com.education.base.dto.response.TuitionSlipResponseDto;
 import com.education.base.entity.ClassEntity;
@@ -46,11 +46,9 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 
 /**
  * Phiếu học phí theo khoảng ngày (SPEC-fee-date-range v1.1, contract fee-range-api v1.3).
@@ -70,6 +68,21 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
     private static final DateTimeFormatter DAY_MONTH = DateTimeFormatter.ofPattern("dd/MM");
     private static final DateTimeFormatter NOTE_DATE = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final String VALIDATION_ERROR = "VALIDATION_ERROR";
+    /** {@code packageDates} trong preview (contract v1.4 §13). */
+    private static final DateTimeFormatter PACKAGE_DATE = DAY_MONTH;
+    /** {@code details[].code} (khung lỗi thống nhất với FE). */
+    static final String CODE_STUDENTS_REQUIRED = "STUDENTS_REQUIRED";
+    static final String CODE_STUDENT_ID_REQUIRED = "STUDENT_ID_REQUIRED";
+    static final String CODE_DUPLICATE_STUDENT = "DUPLICATE_STUDENT";
+    static final String CODE_PARTIAL_REASON_REQUIRED = "PARTIAL_REASON_REQUIRED";
+    static final String CODE_PARTIAL_REASON_TOO_LONG = "PARTIAL_REASON_TOO_LONG";
+    static final String CODE_NOT_IN_CLASS = "NOT_IN_CLASS";
+    static final String CODE_NO_UNBILLED_SESSION = "NO_UNBILLED_SESSION";
+    static final String CODE_STUDENT_NOT_ELIGIBLE = DomainConstants.STUDENT_NOT_ELIGIBLE;
+    /** {@code details[].field}. */
+    static final String FIELD_STUDENTS = "students";
+    static final String FIELD_STUDENT_ID = "studentId";
+    static final String FIELD_PARTIAL_REASON = "partialReason";
 
     private final TuitionFeeRepository tuitionFeeRepository;
     private final TuitionFeeSessionRepository tuitionFeeSessionRepository;
@@ -99,6 +112,11 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
     // Xem trước
     // ---------------------------------------------------------------------------------------------
 
+    /**
+     * Contract v1.4 §13: mỗi học sinh chỉ đếm buổi PRESENT/LATE trong khoảng <b>chưa</b> nằm trên phiếu hiệu lực
+     * (phiếu đã hủy không giữ buổi - §13.4). {@code totalAmount} = giá x số buổi của phiếu sẽ tạo
+     * ({@code min(unbilledCount, 10)}).
+     */
     @Override
     @Transactional(readOnly = true)
     public BillableSessionsPreviewDto previewBillable(Long classId, LocalDate fromDate, LocalDate toDate,
@@ -112,35 +130,40 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
         int billable = 0;
         int skipped = 0;
         int sessions = 0;
-        int conflictStudents = 0;
+        int eligibleStudents = 0;
         BigDecimal total = price == null ? null : BigDecimal.ZERO.setScale(2);
         for (PlannedStudent s : plan.students()) {
-            BigDecimal amount = price == null ? null : amountOf(price, s.sessions().size());
-            StudentConflict conflict = plan.conflicts().get(s.student().getId());
+            int unbilled = s.sessions().size();
+            List<BillableAttendanceRow> pack = packageOf(s.sessions());
+            BigDecimal amount = price == null ? null : amountOf(price, pack.size());
+            boolean eligible = unbilled >= DomainConstants.FEE_PACKAGE_SIZE;
             rows.add(StudentRow.builder()
                     .studentId(s.student().getId())
                     .studentCode(s.student().getStudentCode())
                     .studentName(s.student().getFullName())
                     .sessionDates(s.sessions().stream().map(BillableAttendanceRow::attendanceDate).toList())
-                    .sessionCount(s.sessions().size())
+                    .sessionCount(unbilled)
+                    .unbilledCount(unbilled)
+                    .eligible(eligible)
+                    .packageDates(pack.stream().map(r -> r.attendanceDate().format(PACKAGE_DATE)).toList())
                     .totalAmount(amount)
                     .discountAmount(price == null ? null : BigDecimal.ZERO.setScale(2))
                     .netAmount(amount)
-                    .conflictDates(conflict == null ? new ArrayList<>() : new ArrayList<>(conflict.dates()))
-                    .conflictFeeCodes(conflict == null ? new ArrayList<>() : new ArrayList<>(conflict.feeCodes()))
+                    .conflictDates(new ArrayList<>())
+                    .conflictFeeCodes(new ArrayList<>())
                     .inactive(s.inactive())
                     .build());
-            if (s.sessions().isEmpty()) {
+            if (unbilled == 0) {
                 skipped++;
             } else {
                 billable++;
-                sessions += s.sessions().size();
+                sessions += unbilled;
                 if (total != null) {
                     total = total.add(amount);
                 }
             }
-            if (conflict != null) {
-                conflictStudents++;
+            if (eligible) {
+                eligibleStudents++;
             }
         }
         return BillableSessionsPreviewDto.builder()
@@ -157,7 +180,8 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
                         .totalAmount(total)
                         .discountAmount(price == null ? null : BigDecimal.ZERO.setScale(2))
                         .netAmount(total)
-                        .conflictStudentCount(conflictStudents)
+                        .conflictStudentCount(0)
+                        .eligibleStudentCount(eligibleStudents)
                         .build())
                 .build();
     }
@@ -167,8 +191,14 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * Một transaction cho cả lớp: xung đột (kiểm trước khi ghi, hoặc ORA-00001 trên
-     * {@code UQ_FEE_SESSIONS_ATTENDANCE} khi hai người tạo cùng lúc) -> 409 và rollback toàn bộ.
+     * Một transaction, tất cả hoặc không (contract v1.4 §13.3):
+     * <ul>
+     *     <li>Kiểm toàn bộ {@code students} trước khi ghi; có lỗi thì 400 với {@code data.details} đủ mọi học sinh
+     *     lỗi ({@code VALIDATION_ERROR} nếu có lỗi dữ liệu request, ngược lại {@code STUDENT_NOT_ELIGIBLE}).</li>
+     *     <li>Mỗi học sinh một phiếu: 10 buổi chưa thu cũ nhất; chưa đủ 10 chỉ khi {@code allowPartial} + lý do
+     *     (lấy hết, {@code IS_PARTIAL = 1}). Đủ 10 thì {@code allowPartial} bị bỏ qua (§13.5).</li>
+     *     <li>Hai người tạo cùng lúc: ORA-00001 trên {@code UQ_FEE_SESSIONS_ATTENDANCE} -> 409, rollback (§13.7).</li>
+     * </ul>
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -176,6 +206,13 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
         GenerateRangeInvoicesRequestDto payload = request == null ? new GenerateRangeInvoicesRequestDto() : request;
         validateRange(payload.getFromDate(), payload.getToDate());
         BigDecimal price = validatePrice(payload.getPricePerSession());
+        List<GenerateRangeInvoicesRequestDto.StudentSelection> selections = payload.getStudents();
+        if (selections == null || selections.isEmpty()) {
+            String message = "Chọn ít nhất một học sinh để tạo phiếu.";
+            throw new BusinessDataException(VALIDATION_ERROR, message,
+                    new FeeStudentErrorDto.Payload(List.of(FeeStudentErrorDto.builder()
+                            .field(FIELD_STUDENTS).code(CODE_STUDENTS_REQUIRED).message(message).build())));
+        }
         ClassEntity clazz = requireClass(payload.getClassId());
         // Thiếu STK thụ hưởng thì không ghi gì (phiếu cần QR).
         bankAccountService.requireActive();
@@ -183,26 +220,24 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
         LocalDate from = payload.getFromDate();
         LocalDate to = payload.getToDate();
         BillingPlan plan = plan(clazz, from, to);
-        if (!plan.conflicts().isEmpty()) {
-            throw conflict(toConflictDetails(plan));
-        }
+        List<SelectedStudent> selected = validateSelections(selections, plan);
 
         String comment = blankToNull(payload.getTeacherComment());
         String wish = firstNonBlank(payload.getFooterWish(), DomainConstants.TUITION_SLIP_DEFAULT_WISH);
-        LocalDate dueDate = resolveDueDate(to, LocalDate.now());
+        LocalDate today = LocalDate.now();
         String actor = SecurityUtils.currentUsername();
-        String note = "HP " + from.format(NOTE_DATE) + "-" + to.format(NOTE_DATE);
 
-        GenerateInvoicesResponseDto result = GenerateInvoicesResponseDto.builder().build();
+        GenerateInvoicesResponseDto result = GenerateInvoicesResponseDto.builder()
+                .skippedNoAttendance((int) plan.students().stream()
+                        .filter(s -> !s.inactive() && s.sessions().isEmpty()).count())
+                .build();
         try {
-            for (PlannedStudent s : plan.students()) {
-                if (s.sessions().isEmpty()) {
-                    if (!s.inactive()) {
-                        result.setSkippedNoAttendance(result.getSkippedNoAttendance() + 1);
-                    }
-                    continue;
-                }
-                int count = s.sessions().size();
+            for (SelectedStudent s : selected) {
+                List<BillableAttendanceRow> sessions = s.sessions();
+                int count = sessions.size();
+                LocalDate periodFrom = sessions.get(0).attendanceDate();
+                LocalDate periodTo = sessions.get(count - 1).attendanceDate();
+                LocalDate dueDate = resolveDueDate(periodTo, today);
                 BigDecimal totalAmount = amountOf(price, count);
                 BigDecimal discount = BigDecimal.ZERO.setScale(2);
                 TuitionFeeEntity saved = tuitionFeeRepository.saveAndFlush(TuitionFeeEntity.builder()
@@ -214,12 +249,14 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
                         .paidAmount(BigDecimal.ZERO)
                         .dueDate(dueDate)
                         .status(FeeStatusCalculator.resolveFeeStatus(totalAmount, discount, BigDecimal.ZERO, dueDate))
-                        .note(note)
+                        .note("HP " + periodFrom.format(NOTE_DATE) + "-" + periodTo.format(NOTE_DATE))
                         .feeMonth(null)
                         .feeYear(null)
-                        .periodFrom(from)
-                        .periodTo(to)
+                        .periodFrom(periodFrom)
+                        .periodTo(periodTo)
                         .isRange(FeePeriods.RANGE_FLAG)
+                        .isPartial(s.partialReason() == null ? 0 : FeePeriods.RANGE_FLAG)
+                        .partialReason(s.partialReason())
                         .pricePerSession(price)
                         .totalSessions(count)
                         .teacherComment(comment)
@@ -229,7 +266,7 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
                         .createdBy(actor)
                         .build());
                 List<TuitionFeeSessionEntity> rows = new ArrayList<>(count);
-                for (BillableAttendanceRow row : s.sessions()) {
+                for (BillableAttendanceRow row : sessions) {
                     rows.add(TuitionFeeSessionEntity.builder()
                             .feeId(saved.getId())
                             .attendanceId(row.attendanceId())
@@ -239,6 +276,18 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
                 }
                 tuitionFeeSessionRepository.saveAllAndFlush(rows);
                 result.getFeeIds().add(saved.getId());
+                result.getSlips().add(GenerateInvoicesResponseDto.CreatedSlip.builder()
+                        .feeId(saved.getId())
+                        .feeCode(saved.getFeeCode())
+                        .studentId(s.student().getId())
+                        .studentCode(s.student().getStudentCode())
+                        .sessionCount(count)
+                        .periodFrom(periodFrom)
+                        .periodTo(periodTo)
+                        .totalAmount(totalAmount)
+                        .partial(s.partialReason() != null)
+                        .partialReason(s.partialReason())
+                        .build());
                 result.setCreatedCount(result.getCreatedCount() + 1);
             }
         } catch (DataIntegrityViolationException e) {
@@ -250,9 +299,103 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
             throw e;
         }
 
-        log.info("Sinh phiếu học phí lớp {} từ {} đến {}: created={}, skippedNoAttendance={}, actor={}",
-                clazz.getClassCode(), from, to, result.getCreatedCount(), result.getSkippedNoAttendance(), actor);
+        log.info("Sinh phiếu học phí lớp {} từ {} đến {}: created={}, partial={}, actor={}",
+                clazz.getClassCode(), from, to, result.getCreatedCount(),
+                result.getSlips().stream().filter(GenerateInvoicesResponseDto.CreatedSlip::isPartial).count(), actor);
         return result;
+    }
+
+    /**
+     * Kiểm mọi phần tử {@code students}, gom đủ lỗi rồi mới ném (contract v1.4 §13.3, §13.6). Trả về danh sách
+     * học sinh hợp lệ (thứ tự request) kèm các buổi sẽ lên phiếu.
+     */
+    private static List<SelectedStudent> validateSelections(
+            List<GenerateRangeInvoicesRequestDto.StudentSelection> selections, BillingPlan plan) {
+        Map<Long, PlannedStudent> byId = new HashMap<>();
+        for (PlannedStudent s : plan.students()) {
+            byId.put(s.student().getId(), s);
+        }
+        List<FeeStudentErrorDto> errors = new ArrayList<>();
+        boolean requestError = false;
+        Set<Long> seen = new HashSet<>();
+        List<SelectedStudent> selected = new ArrayList<>();
+        for (GenerateRangeInvoicesRequestDto.StudentSelection sel : selections) {
+            Long studentId = sel == null ? null : sel.getStudentId();
+            if (studentId == null) {
+                errors.add(error(null, null, null, FIELD_STUDENT_ID, CODE_STUDENT_ID_REQUIRED, "Thiếu studentId."));
+                requestError = true;
+                continue;
+            }
+            PlannedStudent planned = byId.get(studentId);
+            Integer unbilled = planned == null ? null : planned.sessions().size();
+            if (!seen.add(studentId)) {
+                errors.add(error(studentId, planned, unbilled, FIELD_STUDENT_ID, CODE_DUPLICATE_STUDENT,
+                        "Học sinh bị chọn trùng trong danh sách."));
+                requestError = true;
+                continue;
+            }
+            if (planned == null) {
+                errors.add(error(studentId, null, 0, FIELD_STUDENT_ID, CODE_NOT_IN_CLASS,
+                        "Học sinh không thuộc lớp."));
+                continue;
+            }
+            int count = planned.sessions().size();
+            if (count == 0) {
+                errors.add(error(studentId, planned, 0, null, CODE_NO_UNBILLED_SESSION,
+                        "Không có buổi chưa thu trong khoảng ngày."));
+                continue;
+            }
+            if (count >= DomainConstants.FEE_PACKAGE_SIZE) {
+                // §13.5: đủ gói -> bỏ qua allowPartial / partialReason, IS_PARTIAL = 0.
+                selected.add(new SelectedStudent(planned.student(), packageOf(planned.sessions()), null));
+                continue;
+            }
+            if (!Boolean.TRUE.equals(sel.getAllowPartial())) {
+                errors.add(error(studentId, planned, count, null, CODE_STUDENT_NOT_ELIGIBLE,
+                        "Chưa đủ " + DomainConstants.FEE_PACKAGE_SIZE + " buổi (hiện " + count + " buổi)."));
+                continue;
+            }
+            String reason = blankToNull(sel.getPartialReason());
+            if (reason == null) {
+                errors.add(error(studentId, planned, count, FIELD_PARTIAL_REASON, CODE_PARTIAL_REASON_REQUIRED,
+                        "Thu chưa đủ gói (" + count + " buổi) phải nhập lý do."));
+                requestError = true;
+                continue;
+            }
+            if (reason.codePointCount(0, reason.length()) > DomainConstants.FEE_PARTIAL_REASON_MAX) {
+                errors.add(error(studentId, planned, count, FIELD_PARTIAL_REASON, CODE_PARTIAL_REASON_TOO_LONG,
+                        "Lý do không được vượt quá " + DomainConstants.FEE_PARTIAL_REASON_MAX + " ký tự."));
+                requestError = true;
+                continue;
+            }
+            selected.add(new SelectedStudent(planned.student(), planned.sessions(), reason));
+        }
+        if (!errors.isEmpty()) {
+            throw new BusinessDataException(
+                    requestError ? VALIDATION_ERROR : DomainConstants.STUDENT_NOT_ELIGIBLE,
+                    requestError ? "Danh sách học sinh không hợp lệ."
+                            : "Có học sinh không đủ điều kiện tạo phiếu.",
+                    new FeeStudentErrorDto.Payload(errors));
+        }
+        return selected;
+    }
+
+    private static FeeStudentErrorDto error(Long studentId, PlannedStudent planned, Integer unbilled, String field,
+                                            String code, String message) {
+        return FeeStudentErrorDto.builder()
+                .studentId(studentId)
+                .studentName(planned == null ? null : planned.student().getFullName())
+                .field(field)
+                .code(code)
+                .message(message)
+                .unbilledCount(unbilled)
+                .build();
+    }
+
+    /** Tối đa 10 buổi cũ nhất (danh sách đã sắp theo ngày, attendanceId). */
+    private static List<BillableAttendanceRow> packageOf(List<BillableAttendanceRow> sessions) {
+        return sessions.size() <= DomainConstants.FEE_PACKAGE_SIZE ? sessions
+                : sessions.subList(0, DomainConstants.FEE_PACKAGE_SIZE);
     }
 
     /** ORA-00001 trên {@code UQ_FEE_SESSIONS_ATTENDANCE} (tìm trong cả chuỗi nguyên nhân). */
@@ -267,42 +410,33 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
         return false;
     }
 
-    static BusinessDataException conflict(List<FeeSessionConflictDto> details) {
+    static BusinessDataException conflict(List<FeeStudentErrorDto> details) {
         return new BusinessDataException(DomainConstants.FEE_SESSION_CONFLICT,
-                DomainConstants.FEE_SESSION_CONFLICT_MESSAGE, new FeeSessionConflictDto.Payload(details));
-    }
-
-    private static List<FeeSessionConflictDto> toConflictDetails(BillingPlan plan) {
-        List<FeeSessionConflictDto> details = new ArrayList<>();
-        for (PlannedStudent s : plan.students()) {
-            StudentConflict c = plan.conflicts().get(s.student().getId());
-            if (c == null) {
-                continue;
-            }
-            details.add(FeeSessionConflictDto.builder()
-                    .studentId(s.student().getId())
-                    .studentCode(s.student().getStudentCode())
-                    .studentName(s.student().getFullName())
-                    .dates(new ArrayList<>(c.dates()))
-                    .feeCodes(new ArrayList<>(c.feeCodes()))
-                    .build());
-        }
-        return details;
+                DomainConstants.FEE_SESSION_CONFLICT_MESSAGE, new FeeStudentErrorDto.Payload(details));
     }
 
     /**
-     * Danh sách học sinh + buổi tính phí + xung đột của lớp trong khoảng.
+     * Danh sách học sinh + buổi <b>chưa thu</b> của lớp trong khoảng (contract v1.4 §13, §13.4).
      * <ul>
+     *     <li>Buổi đã nằm trên phiếu hiệu lực (chưa hủy, chưa xóa) bị loại; khoảng ngày chồng nhau không bị chặn
+     *     (§13.1). Hủy/xóa phiếu giải phóng {@code TUITION_FEE_SESSIONS} nên buổi được tính lại.</li>
      *     <li>Học sinh đang học (ENROLLED, còn được liệt kê): luôn có mặt, kể cả 0 buổi.</li>
-     *     <li>Học sinh đã nghỉ lớp: chỉ có mặt khi có ít nhất 1 buổi ({@code inactive = true}).</li>
+     *     <li>Học sinh đã nghỉ lớp: chỉ có mặt khi còn ít nhất 1 buổi chưa thu ({@code inactive = true}).</li>
      * </ul>
-     * Xung đột tra bằng JOIN theo lớp + khoảng ngày (không IN-list - tránh ORA-01795).
+     * Buổi đã thu tra bằng JOIN theo lớp + khoảng ngày (không IN-list - tránh ORA-01795).
      */
     private BillingPlan plan(ClassEntity clazz, LocalDate from, LocalDate to) {
+        Set<Long> billed = new HashSet<>();
+        for (FeeSessionConflictRow row : tuitionFeeSessionRepository.findActiveConflictsInClassRange(
+                clazz.getId(), from, to, DomainConstants.BILLABLE_ATTENDANCE_STATUSES)) {
+            if (row.attendanceId() != null) {
+                billed.add(row.attendanceId());
+            }
+        }
         Map<Long, List<BillableAttendanceRow>> byStudent = new LinkedHashMap<>();
         for (BillableAttendanceRow row : attendanceRepository.findBillableInClassRange(
                 clazz.getId(), from, to, DomainConstants.BILLABLE_ATTENDANCE_STATUSES)) {
-            if (row.attendanceDate() == null || row.studentId() == null) {
+            if (row.attendanceDate() == null || row.studentId() == null || billed.contains(row.attendanceId())) {
                 continue;
             }
             byStudent.computeIfAbsent(row.studentId(), k -> new ArrayList<>()).add(row);
@@ -344,19 +478,7 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
                         Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(p -> p.student().getId()));
 
-        Map<Long, StudentConflict> conflicts = new HashMap<>();
-        for (FeeSessionConflictRow row : tuitionFeeSessionRepository.findActiveConflictsInClassRange(
-                clazz.getId(), from, to, DomainConstants.BILLABLE_ATTENDANCE_STATUSES)) {
-            StudentConflict c = conflicts.computeIfAbsent(row.studentId(),
-                    k -> new StudentConflict(new TreeSet<>(), new LinkedHashSet<>()));
-            if (row.sessionDate() != null) {
-                c.dates().add(row.sessionDate());
-            }
-            if (row.feeCode() != null) {
-                c.feeCodes().add(row.feeCode());
-            }
-        }
-        return new BillingPlan(planned, conflicts);
+        return new BillingPlan(planned);
     }
 
     private static void validateRange(LocalDate from, LocalDate to) {
@@ -448,6 +570,8 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
         slip.setPeriodFrom(fee.getPeriodFrom());
         slip.setPeriodTo(fee.getPeriodTo());
         slip.setRangeFee(range);
+        slip.setPartial(FeePeriods.isPartialFee(fee.getIsPartial()));
+        slip.setPartialReason(fee.getPartialReason());
         if (range) {
             slip.setMonth(FeePeriods.displayMonth(null, fee.getPeriodFrom()));
             slip.setYear(FeePeriods.displayYear(null, null, fee.getPeriodFrom()));
@@ -596,9 +720,10 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
     private record PlannedStudent(StudentEntity student, List<BillableAttendanceRow> sessions, boolean inactive) {
     }
 
-    private record StudentConflict(TreeSet<LocalDate> dates, LinkedHashSet<String> feeCodes) {
+    private record SelectedStudent(StudentEntity student, List<BillableAttendanceRow> sessions,
+                                   String partialReason) {
     }
 
-    private record BillingPlan(List<PlannedStudent> students, Map<Long, StudentConflict> conflicts) {
+    private record BillingPlan(List<PlannedStudent> students) {
     }
 }
