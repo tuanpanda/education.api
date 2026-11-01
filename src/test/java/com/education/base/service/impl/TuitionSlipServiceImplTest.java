@@ -823,6 +823,47 @@ class TuitionSlipServiceImplTest {
         verify(tuitionFeeSessionRepository, never()).findByFeeIdOrderBySessionDateAscIdAsc(anyLong());
     }
 
+    // ---- BUG-FEE-RANGE-03: khoản tạo tay không có tên trên mọi đường QR (BA §15.3) ---------------------------
+
+    @Test
+    void getSlip_manualFee_qrHasNoName_exactPreviousContent_monthlyAndRangeHaveName() {
+        TuitionFeeEntity manual = TuitionFeeEntity.builder().id(9L).feeCode("HP9").studentId(8L).classId(CLASS_ID)
+                .totalAmount(new BigDecimal("160000")).discountAmount(BigDecimal.ZERO)
+                .paidAmount(BigDecimal.ZERO).status("UNPAID").isDeleted(0).build();
+        when(tuitionFeeRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(manual));
+        when(tuitionFeeRepository.getTuitionSlipData(9L)).thenReturn(procSlip(9L, List.of("03/11")));
+
+        TuitionSlipResponseDto slip = service.getSlip(9L);
+
+        // procSlip: "Nguyễn Văn A", HS000123, tháng 11 -> trước đây "HS000123 HP T11".
+        assertThat(slip.getTransferContent()).isEqualTo("HS000123 HP T11")
+                .isEqualTo(TuitionSlipServiceImpl.transferContent("HS000123", 11));
+        assertQrCarries(slip.getQrPayload(), slip.getQuickPayUrl(), slip.getTransferContent());
+        assertThat(slip.getQrPayload()).doesNotContain("NGUYEN");
+        // PNG / bản in dùng chính dữ liệu phiếu này.
+        assertThat(service.generateSlipHtml(slip)).doesNotContain("NGUYEN VAN");
+
+        TuitionFeeEntity monthly = TuitionFeeEntity.builder().id(10L).feeCode("HP10").studentId(8L).classId(CLASS_ID)
+                .feeMonth(11).feeYear(2026).totalAmount(new BigDecimal("160000")).discountAmount(BigDecimal.ZERO)
+                .paidAmount(BigDecimal.ZERO).status("UNPAID").isDeleted(0).build();
+        when(tuitionFeeRepository.findByIdAndIsDeleted(10L, 0)).thenReturn(Optional.of(monthly));
+        when(tuitionFeeRepository.getTuitionSlipData(10L)).thenReturn(procSlip(10L, List.of("03/11")));
+        lenient().when(tuitionFeeSessionRepository.findByFeeIdOrderBySessionDateAscIdAsc(10L)).thenReturn(List.of());
+        TuitionSlipResponseDto m = service.getSlip(10L);
+        // "HS000123 HP T11" = 15 -> 9 chỗ: "NGUYEN VAN" (10) không vừa -> chỉ "NGUYEN".
+        assertThat(m.getTransferContent()).isEqualTo("NGUYEN HS000123 HP T11");
+        assertQrCarries(m.getQrPayload(), m.getQuickPayUrl(), m.getTransferContent());
+
+        TuitionFeeEntity range = rangeFee(11L, "UNPAID");
+        range.setPeriodTo(LocalDate.of(2026, 10, 10));
+        StudentEntity shortName = student(8L, "SV01");
+        assertThat(TuitionSlipServiceImpl.transferContentOf(range, "Lê Văn An", shortName.getStudentCode(), null))
+                .isEqualTo("LE VAN SV01 HP 0110-1010");
+        assertThat(TuitionSlipServiceImpl.transferContentOf(manual, "Lê Văn An", "SV01", 4)).isEqualTo("SV01 HP T4");
+        assertThat(TuitionSlipServiceImpl.transferContentOf(monthly, "Lê Văn An", "SV01", 4))
+                .isEqualTo("LE VAN AN SV01 HP T4");
+    }
+
     // ---- 10. VietQR ------------------------------------------------------------------------------------
 
     @Test

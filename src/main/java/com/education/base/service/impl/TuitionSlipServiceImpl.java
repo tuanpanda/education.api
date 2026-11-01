@@ -659,15 +659,22 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
     }
 
     /**
-     * Nội dung chuyển khoản (= addInfo của QR = {@code transferContent} trả FE): {@code "<TEN> <code> HP ddMM-ddMM"}
-     * cho phiếu khoảng ngày, {@code "<TEN> <code> HP T<m>"} cho phiếu cũ; tên chỉ dùng chỗ còn lại trong 25 ký tự.
+     * Nội dung chuyển khoản (= addInfo của QR = {@code transferContent} trả FE; dùng chung cho phiếu, PNG, bản in):
+     * <ul>
+     *     <li>Phiếu khoảng ngày ({@code IS_RANGE = 1}): {@code "<TEN> <code> HP ddMM-ddMM"}.</li>
+     *     <li>Phiếu tháng ({@code FEE_MONTH} có giá trị): {@code "<TEN> <code> HP T<m>"}.</li>
+     *     <li>Khoản tạo tay (không tháng, không khoảng ngày): {@code "<code> HP T<m>"} đúng như trước, <b>không tên</b>
+     *     (BA §15.3, BUG-FEE-RANGE-03).</li>
+     * </ul>
+     * Tên chỉ dùng chỗ còn lại trong 25 ký tự, nguyên từ ({@link FeePeriods#withStudentName}).
      */
     static String transferContentOf(TuitionFeeEntity fee, String studentName, String studentCode, Integer legacyMonth) {
         if (FeePeriods.isRangeFee(fee.getIsRange())) {
             LocalDate to = fee.getPeriodTo() == null ? fee.getPeriodFrom() : fee.getPeriodTo();
             return FeePeriods.rangeTransferContent(studentName, studentCode, fee.getPeriodFrom(), to);
         }
-        return FeePeriods.legacyTransferContent(studentName, studentCode, legacyMonth);
+        String name = fee.getFeeMonth() == null ? null : studentName;
+        return FeePeriods.legacyTransferContent(name, studentCode, legacyMonth);
     }
 
     /** Có được sinh VietQR cho khoản phí: còn phải thu {@code > 0} và không {@code PAID} / {@code CANCELLED}. */
