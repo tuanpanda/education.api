@@ -224,6 +224,9 @@ public class GlobalExceptionHandler {
                             com.education.base.common.DomainConstants.FEE_SESSION_CONFLICT_MESSAGE,
                             new com.education.base.dto.response.FeeStudentErrorDto.Payload(java.util.List.of())));
         }
+        if (isValueTooLarge(ex)) {
+            return valueTooLarge(ex);
+        }
         log.error("[DataAccessException] {}", ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error("DATA_ACCESS_ERROR", "Lỗi truy cập dữ liệu tại Database."));
@@ -231,6 +234,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(DataAccessException.class)
     public ResponseEntity<ApiResponse<Void>> handleDataAccessException(DataAccessException ex) {
+        if (isValueTooLarge(ex)) {
+            return valueTooLarge(ex);
+        }
         log.error("[DataAccessException] {}", ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error("DATA_ACCESS_ERROR", "Lỗi truy cập dữ liệu tại Database."));
@@ -310,6 +316,30 @@ public class GlobalExceptionHandler {
      * Mã lỗi nghiệp vụ biểu diễn "không tìm thấy" ({@code NOT_FOUND}, {@code STUDENT_NOT_FOUND}, {@code FEE_NOT_FOUND}...).
      */
     /** GĐ2: GRADE_CONFLICT -> 409 (+ FEE_SESSION_CONFLICT - thu theo khoảng ngày); các mã *_CONFLICT cũ (ROOM/TEACHER/CLASS_ASSIGNMENT) giữ 400 để không đổi hành vi FE. */
+    /**
+     * ORA-12899 (giá trị quá dài cho cột) ở bất kỳ tầng nào của chuỗi nguyên nhân. Phòng hờ cho BUG-FEE-RANGE-04:
+     * độ dài đã được kiểm theo ký tự ở validation; nếu DB còn cột BYTE (chưa chạy V25) thì trả 400 thay vì 500.
+     */
+    static boolean isValueTooLarge(Throwable error) {
+        for (Throwable t = error; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            String message = t.getMessage();
+            if (message != null && message.contains("ORA-12899")) {
+                return true;
+            }
+            if (t instanceof java.sql.SQLException sql && sql.getErrorCode() == 12899) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static <T> ResponseEntity<ApiResponse<T>> valueTooLarge(Exception ex) {
+        log.warn("[ValueTooLarge] ORA-12899: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("VALIDATION_ERROR",
+                        com.education.base.common.DomainConstants.VALUE_TOO_LONG_MESSAGE));
+    }
+
     static boolean isConflictCode(String errorCode) {
         return com.education.base.common.homework.HomeworkErrorCodes.GRADE_CONFLICT.equals(errorCode)
                 || com.education.base.common.DomainConstants.FEE_SESSION_CONFLICT.equals(errorCode);

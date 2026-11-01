@@ -294,6 +294,63 @@ class TuitionSlipServiceImplTest {
         assertThat(savedFees().getFirst().getPartialReason()).hasSize(200);
     }
 
+    @Test
+    void generate_partialReason201AccentedChars_tooLong_noWrites() {
+        enrolled(student(8L, "HS01"));
+        attendance(row(1, 8L, OCT_1));
+        noConflicts();
+
+        assertThatThrownBy(() -> service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"),
+                partialSel(8L, "ạ".repeat(201)))))
+                .isInstanceOfSatisfying(BusinessDataException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("VALIDATION_ERROR");
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getField)
+                            .containsExactly(TuitionSlipServiceImpl.FIELD_PARTIAL_REASON);
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getCode)
+                            .containsExactly(TuitionSlipServiceImpl.CODE_PARTIAL_REASON_TOO_LONG);
+                });
+        assertNoWrites();
+    }
+
+    @Test
+    void generate_partialReason200SurrogatePairs_countedAsChars_accepted() {
+        enrolled(student(8L, "HS01"));
+        attendance(row(1, 8L, OCT_1));
+        noConflicts();
+        String reason = "\uD835\uDC00".repeat(200);
+
+        service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"), partialSel(8L, reason)));
+
+        assertThat(savedFees().getFirst().getPartialReason()).isEqualTo(reason);
+    }
+
+    @Test
+    void generate_teacherComment1000AccentedChars_saved_1001_validation_noWrites() {
+        enrolled(student(8L, "HS01"));
+        attendance(daily(1, 8L, OCT_1, 10).toArray(BillableAttendanceRow[]::new));
+        noConflicts();
+        GenerateRangeInvoicesRequestDto ok = withStudents(request(OCT_1, OCT_31, "1000"), sel(8L));
+        ok.setTeacherComment("ệ".repeat(1000));
+        ok.setFooterWish("ữ".repeat(500));
+
+        service.generateRange(ok);
+
+        assertThat(savedFees().getFirst().getTeacherComment()).hasSize(1000);
+        assertThat(savedFees().getFirst().getFooterWish()).hasSize(500);
+    }
+
+    @Test
+    void generate_teacherCommentOrFooterWishTooLong_validation_noWrites() {
+        GenerateRangeInvoicesRequestDto longComment = withStudents(request(OCT_1, OCT_31, "1000"), sel(8L));
+        longComment.setTeacherComment("ệ".repeat(1001));
+        GenerateRangeInvoicesRequestDto longWish = withStudents(request(OCT_1, OCT_31, "1000"), sel(8L));
+        longWish.setFooterWish("ữ".repeat(501));
+
+        assertValidation(() -> service.generateRange(longComment));
+        assertValidation(() -> service.generateRange(longWish));
+        assertNoWrites();
+    }
+
     // ---- 5. Danh sách học sinh: tất cả hoặc không, details đủ mọi học sinh lỗi (§13.3, §13.6) ------------
 
     @Test

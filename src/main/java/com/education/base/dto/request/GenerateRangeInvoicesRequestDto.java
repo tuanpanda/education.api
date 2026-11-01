@@ -1,9 +1,11 @@
 package com.education.base.dto.request;
 
+import com.education.base.common.DomainConstants;
+import com.education.base.common.validation.MaxCodePoints;
+
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -40,10 +42,13 @@ public class GenerateRangeInvoicesRequestDto {
     @Digits(integer = 13, fraction = 2, message = "Đơn giá tối đa 13 chữ số phần nguyên và 2 chữ số thập phân")
     private BigDecimal pricePerSession;
 
-    @Size(max = 1000, message = "Nhận xét giáo viên không được vượt quá 1000 ký tự")
+    /** Tối đa 1000 ký tự (code point, cột {@code TEACHER_COMMENT VARCHAR2(1000 CHAR)} sau V25_1). */
+    @MaxCodePoints(value = DomainConstants.FEE_TEACHER_COMMENT_MAX,
+            message = "Nhận xét giáo viên không được vượt quá 1000 ký tự")
     private String teacherComment;
 
-    @Size(max = 500, message = "Lời chúc không được vượt quá 500 ký tự")
+    /** Tối đa 500 ký tự (code point, cột {@code FOOTER_WISH VARCHAR2(500 CHAR)} sau V25_1). */
+    @MaxCodePoints(value = DomainConstants.FEE_FOOTER_WISH_MAX, message = "Lời chúc không được vượt quá 500 ký tự")
     private String footerWish;
 
     /**

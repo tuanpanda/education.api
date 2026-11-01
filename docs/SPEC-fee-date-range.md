@@ -237,3 +237,11 @@ Format rules (sqlplus pitfalls seen before):
 | P6 | **Errors (all or nothing, §13.3/§13.6):** every `data.details[]` item = `{studentId, studentName, field, code, message, unbilledCount}`. Codes: `STUDENTS_REQUIRED` (empty/missing array: one item, studentId/studentName null, `field = "students"`), `STUDENT_ID_REQUIRED` / `DUPLICATE_STUDENT` (`field = "studentId"`), `PARTIAL_REASON_REQUIRED` / `PARTIAL_REASON_TOO_LONG` (`field = "partialReason"`), `NOT_IN_CLASS` (`field = "studentId"`), `NO_UNBILLED_SESSION`, `STUDENT_NOT_ELIGIBLE` (< 10 without allowPartial). Top-level code: `VALIDATION_ERROR` if any request-data error (first five), else `STUDENT_NOT_ELIGIBLE`; both 400. Race on `UQ_FEE_SESSIONS_ATTENDANCE` → 409 `FEE_SESSION_CONFLICT`, `details = []` (§13.7). |
 | P7 | "In class" = present in the preview list (active student, or left student with ≥ 1 unbilled session in the range). |
 
+
+## 16. v1.3: text limits in characters (BUG-FEE-RANGE-04, contract §16)
+
+| # | Rule |
+|---|------|
+| T1 | Limits are **characters** (Unicode code points, = Oracle `CHAR` semantics in AL32UTF8): `teacherComment` ≤ 1000, `footerWish` ≤ 500, `partialReason` ≤ 200. Checked by `@MaxCodePoints` on the request (and again in `TuitionSlipServiceImpl` before any write); overflow → 400 `VALIDATION_ERROR`. `partialReason` keeps the §13 `details[]` shape (`PARTIAL_REASON_TOO_LONG`). |
+| T2 | V25_1 switches user-text columns from BYTE to CHAR (same `n`, only when `CHAR_USED = 'B'`): `FIN_TUITION_FEES.NOTE/CANCEL_REASON/TEACHER_COMMENT/FOOTER_WISH/SLIP_LABEL`, `FIN_PAYMENT_TRANSACTIONS.NOTE/PAYER_NAME/VOID_REASON`; verifies `PARTIAL_REASON` is 200 CHAR. Owner runs it (`docs/RUN-V25-fee-text-char.md`). |
+| T3 | Defensive: any ORA-12899 reaching `GlobalExceptionHandler` (`DataIntegrityViolationException` or other `DataAccessException`) → 400 `VALIDATION_ERROR` "Nội dung vượt quá độ dài cho phép." instead of 500. |

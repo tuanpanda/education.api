@@ -206,6 +206,9 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
         GenerateRangeInvoicesRequestDto payload = request == null ? new GenerateRangeInvoicesRequestDto() : request;
         validateRange(payload.getFromDate(), payload.getToDate());
         BigDecimal price = validatePrice(payload.getPricePerSession());
+        // Giới hạn theo ký tự (code point), contract §16 - kiểm trước mọi truy vấn/ghi.
+        requireMaxChars(payload.getTeacherComment(), DomainConstants.FEE_TEACHER_COMMENT_MAX, "Nhận xét giáo viên");
+        requireMaxChars(payload.getFooterWish(), DomainConstants.FEE_FOOTER_WISH_MAX, "Lời chúc");
         List<GenerateRangeInvoicesRequestDto.StudentSelection> selections = payload.getStudents();
         if (selections == null || selections.isEmpty()) {
             String message = "Chọn ít nhất một học sinh để tạo phiếu.";
@@ -362,7 +365,8 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
                 requestError = true;
                 continue;
             }
-            if (reason.codePointCount(0, reason.length()) > DomainConstants.FEE_PARTIAL_REASON_MAX) {
+            if (com.education.base.common.validation.MaxCodePointsValidator.length(reason)
+                    > DomainConstants.FEE_PARTIAL_REASON_MAX) {
                 errors.add(error(studentId, planned, count, FIELD_PARTIAL_REASON, CODE_PARTIAL_REASON_TOO_LONG,
                         "Lý do không được vượt quá " + DomainConstants.FEE_PARTIAL_REASON_MAX + " ký tự."));
                 requestError = true;
@@ -390,6 +394,13 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
                 .message(message)
                 .unbilledCount(unbilled)
                 .build();
+    }
+
+    /** Giới hạn theo <b>ký tự</b> (code point), giống {@code VARCHAR2(n CHAR)} - contract §16. */
+    private static void requireMaxChars(String value, int max, String label) {
+        if (com.education.base.common.validation.MaxCodePointsValidator.length(value) > max) {
+            throw new OracleBusinessException(VALIDATION_ERROR, label + " không được vượt quá " + max + " ký tự.");
+        }
     }
 
     /** Tối đa 10 buổi cũ nhất (danh sách đã sắp theo ngày, attendanceId). */

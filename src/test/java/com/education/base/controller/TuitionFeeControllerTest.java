@@ -307,6 +307,82 @@ class TuitionFeeControllerTest {
                 .andExpect(jsonPath("$.code").value("DATA_ACCESS_ERROR"));
     }
 
+    // ---- BUG-FEE-RANGE-04: giới hạn theo KÝ TỰ (contract §16) -----------------------------------------------
+
+    private static String rangeBodyWith(String field, String value) {
+        return "{\"classId\":3,\"fromDate\":\"2026-10-01\",\"toDate\":\"2026-10-31\",\"pricePerSession\":80000,"
+                + "\"" + field + "\":\"" + value + "\",\"students\":[{\"studentId\":8}]}";
+    }
+
+    private void stubCreated() {
+        when(tuitionSlipService.generateRange(any())).thenReturn(GenerateInvoicesResponseDto.builder()
+                .createdCount(1).feeIds(new java.util.ArrayList<>(List.of(9L))).build());
+    }
+
+    @Test
+    void generateRange_teacherComment1000AccentedChars_returns201() throws Exception {
+        stubCreated();
+        String comment = "ệ".repeat(1000);
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(rangeBodyWith("teacherComment", comment)))
+                .andExpect(status().isCreated());
+        verify(tuitionSlipService).generateRange(org.mockito.ArgumentMatchers.argThat(
+                r -> comment.equals(r.getTeacherComment())));
+    }
+
+    @Test
+    void generateRange_teacherComment1001AccentedChars_returns400Validation() throws Exception {
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(rangeBodyWith("teacherComment", "ệ".repeat(1001))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("teacherComment")));
+        verifyNoInteractions(tuitionSlipService);
+    }
+
+    @Test
+    void generateRange_footerWish500AccentedChars_returns201_501_returns400() throws Exception {
+        stubCreated();
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(rangeBodyWith("footerWish", "ữ".repeat(500))))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(rangeBodyWith("footerWish", "ữ".repeat(501))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("footerWish")));
+        verify(tuitionSlipService, org.mockito.Mockito.times(1)).generateRange(any());
+    }
+
+    @Test
+    void generateRange_ora12899IntegrityViolation_returns400Validation_noSchemaLeak() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenThrow(new DataIntegrityViolationException(
+                "could not execute statement", new java.sql.SQLException(
+                "ORA-12899: value too large for column \"EDU\".\"FIN_TUITION_FEES\".\"TEACHER_COMMENT\" "
+                        + "(actual: 2000, maximum: 1000)", "72000", 12899)));
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value(DomainConstants.VALUE_TOO_LONG_MESSAGE));
+    }
+
+    @Test
+    void generateRange_ora12899AsJpaSystemException_returns400Validation() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenThrow(new org.springframework.orm.jpa.JpaSystemException(
+                new RuntimeException("could not execute statement",
+                        new java.sql.SQLException("value too large", "72000", 12899))));
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value(DomainConstants.VALUE_TOO_LONG_MESSAGE));
+    }
+
     @Test
     void generateRange_invalidBody_returns400() throws Exception {
         mockMvc.perform(post("/api/v1/tuition-fees/generate-range")

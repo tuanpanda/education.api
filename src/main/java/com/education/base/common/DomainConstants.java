@@ -210,6 +210,15 @@ public class DomainConstants {
     /** Độ dài tối đa lý do thu chưa đủ gói ({@code PARTIAL_REASON VARCHAR2(200 CHAR)}, V24_1). */
     public static final int FEE_PARTIAL_REASON_MAX = 200;
 
+    /** Nhận xét giáo viên trên phiếu: tối đa 1000 ký tự (contract §16; {@code TEACHER_COMMENT VARCHAR2(1000 CHAR)}). */
+    public static final int FEE_TEACHER_COMMENT_MAX = 1000;
+
+    /** Lời chúc cuối phiếu: tối đa 500 ký tự (contract §16; {@code FOOTER_WISH VARCHAR2(500 CHAR)}). */
+    public static final int FEE_FOOTER_WISH_MAX = 500;
+
+    /** 400 khi Oracle báo ORA-12899 (giá trị quá dài cho cột) - phòng hờ, thường đã chặn ở validation. */
+    public static final String VALUE_TOO_LONG_MESSAGE = "Nội dung vượt quá độ dài cho phép.";
+
     /** 400: học sinh được chọn không đủ điều kiện tạo phiếu (contract v1.4 §13). */
     public static final String STUDENT_NOT_ELIGIBLE = "STUDENT_NOT_ELIGIBLE";
 
