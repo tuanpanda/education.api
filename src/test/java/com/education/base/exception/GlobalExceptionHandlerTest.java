@@ -189,6 +189,34 @@ class GlobalExceptionHandlerTest {
         }
     }
 
+    @Test
+    void ora12899_anywhereInCauseChain_mapsTo400Validation_withoutColumnName() {
+        java.sql.SQLException ora = new java.sql.SQLException(
+                "ORA-12899: value too large for column \"EDU\".\"FIN_TUITION_FEES\".\"FOOTER_WISH\"", "72000", 12899);
+        ResponseEntity<ApiResponse<Object>> integrity = handler.handleDataIntegrityViolation(
+                new org.springframework.dao.DataIntegrityViolationException("x", new RuntimeException("y", ora)));
+        assertThat(integrity.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(integrity.getBody().getCode()).isEqualTo("VALIDATION_ERROR");
+        assertThat(integrity.getBody().getMessage()).doesNotContain("FIN_").doesNotContain("FOOTER_WISH");
+
+        ResponseEntity<ApiResponse<Void>> access = handler.handleDataAccessException(
+                new org.springframework.orm.jpa.JpaSystemException(new RuntimeException("z",
+                        new java.sql.SQLException("value too large", "72000", 12899))));
+        assertThat(access.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(access.getBody().getCode()).isEqualTo("VALIDATION_ERROR");
+
+        assertThat(GlobalExceptionHandler.isValueTooLarge(new RuntimeException("ORA-12899: x"))).isTrue();
+        assertThat(GlobalExceptionHandler.isValueTooLarge(new RuntimeException("ORA-01400: x"))).isFalse();
+        assertThat(GlobalExceptionHandler.isValueTooLarge(null)).isFalse();
+    }
+
+    @Test
+    void otherDataAccessError_stays500() {
+        ResponseEntity<ApiResponse<Void>> access = handler.handleDataAccessException(
+                new DataAccessResourceFailureException("ORA-03113: end-of-file on communication channel"));
+        assertThat(access.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
     private record DummyValidated(@NotBlank(message = "không được trống") String keyword) {
     }
 }

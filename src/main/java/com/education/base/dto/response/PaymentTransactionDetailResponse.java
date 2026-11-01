@@ -53,6 +53,13 @@ public class PaymentTransactionDetailResponse {
         private String className;
         private Integer feeMonth;
         private Integer feeYear;
+        /** Kỳ thu theo khoảng ngày ({@code null} với phiếu cũ chưa backfill). */
+        private LocalDate periodFrom;
+        private LocalDate periodTo;
+        /** {@code "Từ dd/MM/yyyy đến dd/MM/yyyy"} hoặc {@code "Tháng MM/yyyy"}. */
+        private String periodText;
+        /** {@code true}: phiếu theo khoảng ngày (DB FEE_MONTH NULL, PERIOD_FROM có giá trị). */
+        private boolean rangeFee;
         private BigDecimal totalAmount;
         private BigDecimal discountAmount;
         private BigDecimal paidAmount;

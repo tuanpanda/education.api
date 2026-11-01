@@ -84,6 +84,34 @@ public class TuitionFeeEntity {
     @Column(name = "FEE_YEAR")
     private Integer feeYear;
 
+    /** Kỳ thu theo khoảng ngày (V23_1): ngày đầu, tính cả ngày này. Phiếu tháng cũ được backfill ở V23_8. */
+    @Column(name = "PERIOD_FROM")
+    private LocalDate periodFrom;
+
+    /** Kỳ thu theo khoảng ngày (V23_1): ngày cuối, tính cả ngày này. */
+    @Column(name = "PERIOD_TO")
+    private LocalDate periodTo;
+
+    /**
+     * {@code 1} = phiếu sinh theo khoảng ngày ({@code generate-range}); {@code 0} = phiếu tháng cũ / khoản tạo tay
+     * (V23_1, {@code DEFAULT 0 NOT NULL}, {@code CK_FEES_IS_RANGE}). Chỉ {@code generate-range} ghi 1.
+     */
+    @Column(name = "IS_RANGE", nullable = false)
+    @Builder.Default
+    private Integer isRange = 0;
+
+    /**
+     * {@code 1} = phiếu gói chưa đủ 10 buổi (thu theo ngoại lệ, contract v1.4 §13.2), {@code 0} = còn lại
+     * (V24_1, {@code DEFAULT 0 NOT NULL}, {@code CK_FEES_IS_PARTIAL}). Chỉ {@code generate-range} ghi 1.
+     */
+    @Column(name = "IS_PARTIAL", nullable = false)
+    @Builder.Default
+    private Integer isPartial = 0;
+
+    /** Lý do thu chưa đủ gói (1-200 ký tự), chỉ có khi {@code IS_PARTIAL = 1} ({@code CK_FEES_PARTIAL_REASON}, V24_2). */
+    @Column(name = "PARTIAL_REASON", length = 200)
+    private String partialReason;
+
     @Column(name = "PRICE_PER_SESSION")
     private BigDecimal pricePerSession;
 
@@ -126,6 +154,12 @@ public class TuitionFeeEntity {
     void onCreate() {
         if (isDeleted == null) {
             isDeleted = 0;
+        }
+        if (isRange == null) {
+            isRange = 0;
+        }
+        if (isPartial == null) {
+            isPartial = 0;
         }
         if (discountAmount == null) {
             discountAmount = BigDecimal.ZERO;

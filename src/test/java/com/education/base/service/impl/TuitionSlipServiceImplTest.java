@@ -1,490 +1,984 @@
 package com.education.base.service.impl;
 
 import com.education.base.common.DomainConstants;
+import com.education.base.common.FeePeriods;
 import com.education.base.common.VietQrHelper;
+import com.education.base.dto.request.GenerateRangeInvoicesRequestDto;
 import com.education.base.dto.response.BankAccountResponseDto;
-import com.education.base.dto.request.CreateMonthlyInvoiceRequestDto;
-import com.education.base.dto.response.GenerateMonthlyInvoicesResponseDto;
+import com.education.base.dto.response.BillableSessionsPreviewDto;
+import com.education.base.dto.response.FeeStudentErrorDto;
+import com.education.base.dto.response.GenerateInvoicesResponseDto;
 import com.education.base.dto.response.TuitionSlipResponseDto;
-import com.education.base.entity.AttendanceEntity;
 import com.education.base.entity.ClassEntity;
 import com.education.base.entity.ClassStudentEntity;
-import com.education.base.entity.StudentDiscountEntity;
 import com.education.base.entity.StudentEntity;
 import com.education.base.entity.TuitionFeeEntity;
+import com.education.base.entity.TuitionFeeSessionEntity;
+import com.education.base.exception.BusinessDataException;
+import com.education.base.exception.OracleBusinessException;
 import com.education.base.repository.AttendanceRepository;
 import com.education.base.repository.ClassRepository;
 import com.education.base.repository.ClassStudentRepository;
-import com.education.base.repository.StudentDiscountRepository;
 import com.education.base.repository.StudentRepository;
 import com.education.base.repository.TuitionFeeRepository;
+import com.education.base.repository.TuitionFeeSessionRepository;
+import com.education.base.repository.projection.BillableAttendanceRow;
+import com.education.base.repository.projection.FeeSessionConflictRow;
 import com.education.base.service.BankAccountService;
+import com.education.base.service.TuitionSlipService;
+import com.education.base.testsupport.InMemoryTransactionManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/**
+ * Thu học phí theo khoảng ngày (SPEC-fee-date-range mục 8, contract fee-range-api v1.4 §13 gói 10 buổi).
+ */
 @ExtendWith(MockitoExtension.class)
 class TuitionSlipServiceImplTest {
 
-    private static final long CLASS_ID = 3L;
-    /** Tháng 4/2026 đã qua so với ngày chạy test (>= 10/2026) trừ khi chỉ định khác. */
-    private static final int MONTH = 4;
-    private static final int YEAR = 2026;
+    static final long CLASS_ID = 3L;
+    static final LocalDate OCT_1 = LocalDate.of(2026, 10, 1);
+    static final LocalDate OCT_31 = LocalDate.of(2026, 10, 31);
 
     @Mock
-    private TuitionFeeRepository tuitionFeeRepository;
+    TuitionFeeRepository tuitionFeeRepository;
     @Mock
-    private AttendanceRepository attendanceRepository;
+    TuitionFeeSessionRepository tuitionFeeSessionRepository;
     @Mock
-    private ClassStudentRepository classStudentRepository;
+    AttendanceRepository attendanceRepository;
     @Mock
-    private ClassRepository classRepository;
+    ClassStudentRepository classStudentRepository;
     @Mock
-    private StudentRepository studentRepository;
+    ClassRepository classRepository;
     @Mock
-    private BankAccountService bankAccountService;
+    StudentRepository studentRepository;
     @Mock
-    private StudentDiscountRepository studentDiscountRepository;
-    @Mock
-    private PlatformTransactionManager transactionManager;
+    BankAccountService bankAccountService;
 
-    private TuitionSlipServiceImpl service;
+    TuitionSlipServiceImpl service;
+    final AtomicLong ids = new AtomicLong(900);
 
     @BeforeEach
     void setUp() {
-        StudentDiscountServiceImpl discountService = new StudentDiscountServiceImpl(
-                studentDiscountRepository, studentRepository, classRepository, null);
-        service = new TuitionSlipServiceImpl(tuitionFeeRepository, attendanceRepository, classStudentRepository,
-                classRepository, studentRepository, bankAccountService, discountService, transactionManager);
+        service = new TuitionSlipServiceImpl(tuitionFeeRepository, tuitionFeeSessionRepository, attendanceRepository,
+                classStudentRepository, classRepository, studentRepository, bankAccountService);
         lenient().when(bankAccountService.requireActive()).thenReturn(BankAccountResponseDto.builder()
-                .bankBin("970436")
-                .bankName("Vietcombank")
-                .accountNo("1234567890")
-                .accountName("TRUONG EDUCATION")
-                .active(true)
-                .build());
-        lenient().when(tuitionFeeRepository.saveAndFlush(any())).thenAnswer(invocation -> {
-            TuitionFeeEntity entity = invocation.getArgument(0);
-            if (entity.getId() == null) {
-                entity.setId(91L);
+                .bankBin("970436").bankName("Vietcombank").accountNo("1234567890").accountName("TRUNG TAM")
+                .active(true).build());
+        lenient().when(tuitionFeeRepository.saveAndFlush(any())).thenAnswer(inv -> {
+            TuitionFeeEntity e = inv.getArgument(0);
+            if (e.getId() == null) {
+                e.setId(ids.incrementAndGet());
             }
-            return entity;
+            return e;
         });
+        lenient().when(tuitionFeeRepository.nextTuitionFeeCode()).thenAnswer(inv -> "HP" + ids.get());
+        lenient().when(tuitionFeeSessionRepository.saveAllAndFlush(anyList())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(classRepository.findByIdAndIsDeleted(CLASS_ID, 0)).thenReturn(Optional.of(ClassEntity.builder()
+                .id(CLASS_ID).classCode("LH01").className("Lớp Sao Mai").build()));
     }
 
-    // ---- B1 -------------------------------------------------------------------------------------------
+    // ---- 1. Gói 10 buổi: PRESENT + LATE, cả hai đầu, 10 buổi cũ nhất, phần dư chờ lần sau (v1.4 §13) ----------
 
     @Test
-    void generateMonthly_billsPresentAndLateButNotAbsent() {
-        givenClassWithStudents(student(8L, "SV20260001"));
-        givenAttendance(
-                attendance(8L, "PRESENT", 2),
-                attendance(8L, "ABSENT", 4),
-                attendance(8L, "LATE", 6),
-                attendance(8L, "EXCUSED", 7),
-                attendance(8L, "PRESENT", 8));
-        when(tuitionFeeRepository.findMonthlyFeeId(8L, CLASS_ID, YEAR, MONTH)).thenReturn(Optional.empty());
-        when(tuitionFeeRepository.nextTuitionFeeCode()).thenReturn("HP2026040001");
+    void generate_queriesBillableStatusesWithInclusiveRange_billsEarliest10_leftoversWait() {
+        enrolled(student(8L, "HS01"));
+        List<BillableAttendanceRow> rows = new ArrayList<>(daily(100, 8L, OCT_1, 12));
+        java.util.Collections.reverse(rows);
+        attendance(rows.toArray(BillableAttendanceRow[]::new));
+        noConflicts();
 
-        GenerateMonthlyInvoicesResponseDto result = service.generateMonthly(request(MONTH, YEAR));
+        GenerateInvoicesResponseDto result = service.generateRange(withStudents(request(OCT_1, OCT_31, "80000"),
+                sel(8L)));
 
-        TuitionFeeEntity saved = capturedSave();
-        assertThat(saved.getTotalSessions()).isEqualTo(3);
-        assertThat(saved.getTotalAmount()).isEqualByComparingTo("240000.00");
-        assertThat(saved.getPricePerSession()).isEqualByComparingTo("80000.00");
-        assertThat(result.getCreatedCount()).isEqualTo(1);
-        TuitionSlipResponseDto slip = result.getSlips().getFirst();
-        assertThat(slip.getAttendedDates()).containsExactly("02/04", "06/04", "08/04");
-        assertThat(slip.getQrPayload()).contains("5406240000");
-        assertThat(slip.getQrPayload()).contains("SV20260001 HP T4");
-        assertThat(slip.getQrBase64()).startsWith("data:image/png;base64,");
+        verify(attendanceRepository).findBillableInClassRange(CLASS_ID, OCT_1, OCT_31,
+                DomainConstants.BILLABLE_ATTENDANCE_STATUSES);
         assertThat(DomainConstants.BILLABLE_ATTENDANCE_STATUSES).containsExactly("PRESENT", "LATE");
+        assertThat(DomainConstants.FEE_PACKAGE_SIZE).isEqualTo(10);
+        TuitionFeeEntity fee = savedFees().getFirst();
+        assertThat(fee.getTotalSessions()).isEqualTo(10);
+        assertThat(savedSessions()).extracting(TuitionFeeSessionEntity::getAttendanceId)
+                .containsExactly(100L, 101L, 102L, 103L, 104L, 105L, 106L, 107L, 108L, 109L);
+        assertThat(fee.getPeriodFrom()).as("PERIOD_FROM = buổi đầu thực thu").isEqualTo(OCT_1);
+        assertThat(fee.getPeriodTo()).as("PERIOD_TO = buổi cuối thực thu").isEqualTo(LocalDate.of(2026, 10, 10));
+        assertThat(fee.getNote()).isEqualTo("HP 01/10/2026-10/10/2026");
+        assertThat(fee.getIsPartial()).isZero();
+        assertThat(fee.getPartialReason()).isNull();
+        assertThat(result.getCreatedCount()).isEqualTo(1);
+        assertThat(result.getFeeIds()).containsExactly(fee.getId());
+        GenerateInvoicesResponseDto.CreatedSlip slip = result.getSlips().getFirst();
+        assertThat(slip.getFeeId()).isEqualTo(fee.getId());
+        assertThat(slip.getStudentId()).isEqualTo(8L);
+        assertThat(slip.getSessionCount()).isEqualTo(10);
+        assertThat(slip.getPeriodFrom()).isEqualTo(OCT_1);
+        assertThat(slip.getPeriodTo()).isEqualTo(LocalDate.of(2026, 10, 10));
+        assertThat(slip.isPartial()).isFalse();
+        assertThat(slip.getPartialReason()).isNull();
     }
 
-    // ---- B2 -------------------------------------------------------------------------------------------
+    // ---- 2. Tiền = số buổi x đơn giá, scale 2, không giảm giá ------------------------------------------
 
     @Test
-    void generateMonthly_existingFee_isReloadedUnderRowLockAndPaidAmountPreserved() {
-        givenClassWithStudents(student(8L, "SV01"));
-        givenAttendance(attendance(8L, "PRESENT", 2), attendance(8L, "PRESENT", 9), attendance(8L, "LATE", 16));
-        when(tuitionFeeRepository.findMonthlyFeeId(8L, CLASS_ID, YEAR, MONTH)).thenReturn(Optional.of(50L));
-        // Bản ghi dưới khóa dòng có PAID_AMOUNT mới nhất (một thanh toán vừa được ghi đồng thời).
-        LocalDate due = LocalDate.now().plusDays(10);
-        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(50L, 0)).thenReturn(Optional.of(fee(50L, 8L)
-                .totalAmount(new BigDecimal("160000")).paidAmount(new BigDecimal("100000"))
-                .dueDate(due).status("PARTIAL").build()));
+    void generate_amountIsSessionsTimesPrice_discountZero_monthNull_dueFromLastSession() {
+        enrolled(student(8L, "HS01"));
+        attendance(daily(1, 8L, OCT_1, 10).toArray(BillableAttendanceRow[]::new));
+        noConflicts();
 
-        GenerateMonthlyInvoicesResponseDto result = service.generateMonthly(request(MONTH, YEAR));
+        service.generateRange(withStudents(request(OCT_1, OCT_31, "80000.5"), sel(8L)));
 
-        TuitionFeeEntity saved = capturedSave();
-        assertThat(saved.getId()).isEqualTo(50L);
-        assertThat(saved.getPaidAmount()).isEqualByComparingTo("100000");
-        assertThat(saved.getTotalAmount()).isEqualByComparingTo("240000.00");
-        assertThat(saved.getStatus()).isEqualTo("PARTIAL");
-        assertThat(saved.getDueDate()).isEqualTo(due);
-        assertThat(result.getUpdatedCount()).isEqualTo(1);
-        assertThat(result.getSlips().getFirst().getRemainingAmount()).isEqualByComparingTo("140000");
-        assertThat(result.getSlips().getFirst().getQrPayload()).contains("5406140000");
-        verify(tuitionFeeRepository, never()).findByStudentIdAndClassIdAndFeeYearAndFeeMonthAndIsDeleted(
-                any(), any(), any(), any(), any());
+        TuitionFeeEntity fee = savedFees().getFirst();
+        assertThat(fee.getTotalAmount()).isEqualByComparingTo("800005.00");
+        assertThat(fee.getTotalAmount().scale()).isEqualTo(2);
+        assertThat(fee.getDiscountAmount()).isEqualByComparingTo("0");
+        assertThat(fee.getPaidAmount()).isEqualByComparingTo("0");
+        assertThat(fee.getPricePerSession()).isEqualByComparingTo("80000.50");
+        assertThat(fee.getFeeMonth()).isNull();
+        assertThat(fee.getFeeYear()).isNull();
+        assertThat(fee.getIsRange()).as("chỉ generate-range ghi IS_RANGE = 1").isEqualTo(1);
+        assertThat(fee.getSlipLabel()).isEqualTo(DomainConstants.TUITION_SLIP_LABEL_DEFAULT);
+        assertThat(fee.getStatus()).isIn("UNPAID", "OVERDUE");
+        assertThat(fee.getDueDate()).isEqualTo(TuitionSlipServiceImpl.resolveDueDate(
+                LocalDate.of(2026, 10, 10), LocalDate.now()));
     }
 
-    // ---- B3 -------------------------------------------------------------------------------------------
+    // ---- 3. Chỉ buổi chưa thu; khoảng chồng nhau không bị chặn (§13.1, §13.4) ---------------------------
 
     @Test
-    void generateMonthly_netBelowPaid_isReportedAsConflictAndFeeLeftUnchanged() {
-        givenClassWithStudents(student(8L, "SV01"));
-        givenAttendance(attendance(8L, "PRESENT", 2));
-        when(tuitionFeeRepository.findMonthlyFeeId(8L, CLASS_ID, YEAR, MONTH)).thenReturn(Optional.of(50L));
-        TuitionFeeEntity existing = fee(50L, 8L).feeCode("HP01")
-                .totalAmount(new BigDecimal("240000")).paidAmount(new BigDecimal("200000")).status("PARTIAL").build();
-        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(50L, 0)).thenReturn(Optional.of(existing));
+    void generate_overlappingRange_skipsSessionsOnActiveSlips_noConflictError() {
+        enrolled(student(8L, "HS01"));
+        attendance(daily(1, 8L, OCT_1, 12).toArray(BillableAttendanceRow[]::new));
+        when(tuitionFeeSessionRepository.findActiveConflictsInClassRange(eq(CLASS_ID), eq(OCT_1), eq(OCT_31), any()))
+                .thenReturn(List.of(new FeeSessionConflictRow(1L, 8L, OCT_1, 50L, "HP-000812"),
+                        new FeeSessionConflictRow(2L, 8L, LocalDate.of(2026, 10, 2), 50L, "HP-000812")));
 
-        GenerateMonthlyInvoicesResponseDto result = service.generateMonthly(request(MONTH, YEAR));
-
-        verify(tuitionFeeRepository, never()).saveAndFlush(any());
-        assertThat(existing.getTotalAmount()).isEqualByComparingTo("240000");
-        assertThat(existing.getStatus()).isEqualTo("PARTIAL");
-        assertThat(result.getUpdatedCount()).isZero();
-        assertThat(result.getSlips()).isEmpty();
-        assertThat(result.getConflicts()).singleElement().satisfies(conflict -> {
-            assertThat(conflict.getFeeId()).isEqualTo(50L);
-            assertThat(conflict.getReason()).isEqualTo(GenerateMonthlyInvoicesResponseDto.CONFLICT_NET_BELOW_PAID);
-            assertThat(conflict.getNewTotalAmount()).isEqualByComparingTo("80000");
-            assertThat(conflict.getPaidAmount()).isEqualByComparingTo("200000");
-        });
-    }
-
-    @Test
-    void generateMonthly_discountAboveNewTotal_isCappedAtTotal() {
-        givenClassWithStudents(student(8L, "SV01"));
-        givenAttendance(attendance(8L, "PRESENT", 2));
-        when(tuitionFeeRepository.findMonthlyFeeId(8L, CLASS_ID, YEAR, MONTH)).thenReturn(Optional.of(50L));
-        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(50L, 0)).thenReturn(Optional.of(fee(50L, 8L)
-                .totalAmount(new BigDecimal("240000")).discountAmount(new BigDecimal("150000"))
-                .paidAmount(BigDecimal.ZERO).status("UNPAID").build()));
-
-        GenerateMonthlyInvoicesResponseDto result = service.generateMonthly(request(MONTH, YEAR));
-
-        TuitionFeeEntity saved = capturedSave();
-        assertThat(saved.getTotalAmount()).isEqualByComparingTo("80000");
-        assertThat(saved.getDiscountAmount()).isEqualByComparingTo("80000");
-        assertThat(saved.getDiscountAmount()).isLessThanOrEqualTo(saved.getTotalAmount());
-        assertThat(saved.getStatus()).isEqualTo("PAID");
-        assertThat(result.getSlips().getFirst().getQrPayload()).isNull();
-    }
-
-    @Test
-    void generateMonthly_oneFailingStudent_doesNotRollBackTheOthers() {
-        givenClassWithStudents(student(8L, "SV01"), student(9L, "SV02"));
-        givenAttendance(attendance(8L, "PRESENT", 2), attendance(9L, "PRESENT", 2));
-        when(tuitionFeeRepository.findMonthlyFeeId(anyLong(), eq(CLASS_ID), eq(YEAR), eq(MONTH)))
-                .thenReturn(Optional.empty());
-        when(tuitionFeeRepository.nextTuitionFeeCode()).thenReturn("HP01", "HP02");
-        doAnswer(invocation -> {
-            TuitionFeeEntity entity = invocation.getArgument(0);
-            if (entity.getStudentId() == 8L) {
-                throw new DataIntegrityViolationException("ORA-02290: check constraint (CK_FEES_DISCOUNT) violated");
-            }
-            entity.setId(92L);
-            return entity;
-        }).when(tuitionFeeRepository).saveAndFlush(any());
-
-        GenerateMonthlyInvoicesResponseDto result = service.generateMonthly(request(MONTH, YEAR));
+        GenerateInvoicesResponseDto result = service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"),
+                sel(8L)));
 
         assertThat(result.getCreatedCount()).isEqualTo(1);
-        assertThat(result.getSlips()).extracting(TuitionSlipResponseDto::getInvoiceId).containsExactly(92L);
-        assertThat(result.getErrors()).singleElement().satisfies(error -> {
-            assertThat(error.getStudentId()).isEqualTo(8L);
-            assertThat(error.getCode()).isEqualTo("FEE_GENERATE_FAILED");
+        assertThat(savedSessions()).extracting(TuitionFeeSessionEntity::getAttendanceId)
+                .containsExactly(3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L, 12L);
+        TuitionFeeEntity fee = savedFees().getFirst();
+        assertThat(fee.getPeriodFrom()).isEqualTo(LocalDate.of(2026, 10, 3));
+        assertThat(fee.getPeriodTo()).isEqualTo(LocalDate.of(2026, 10, 12));
+    }
+
+    @Test
+    void generate_billedSessionsLeaveFewerThan10_studentNotEligible_noWrites() {
+        enrolled(student(8L, "HS01"));
+        attendance(daily(1, 8L, OCT_1, 10).toArray(BillableAttendanceRow[]::new));
+        when(tuitionFeeSessionRepository.findActiveConflictsInClassRange(eq(CLASS_ID), any(), any(), any()))
+                .thenReturn(List.of(new FeeSessionConflictRow(1L, 8L, OCT_1, 50L, "HP-1")));
+
+        assertThatThrownBy(() -> service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"), sel(8L))))
+                .isInstanceOfSatisfying(BusinessDataException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(DomainConstants.STUDENT_NOT_ELIGIBLE);
+                    FeeStudentErrorDto d = details(e).getFirst();
+                    assertThat(d.getStudentId()).isEqualTo(8L);
+                    assertThat(d.getStudentName()).isEqualTo("Học sinh HS01");
+                    assertThat(d.getField()).isNull();
+                    assertThat(d.getMessage()).contains("10 buổi");
+                    assertThat(d.getUnbilledCount()).isEqualTo(9);
+                    assertThat(d.getCode()).isEqualTo(TuitionSlipServiceImpl.CODE_STUDENT_NOT_ELIGIBLE);
+                });
+        assertNoWrites();
+    }
+
+    // ---- 4. Thu chưa đủ gói (§13.2, §13.5) ------------------------------------------------------------
+
+    @Test
+    void generate_partialWithReason_takesAllSessions_isPartial1_reasonTrimmed() {
+        enrolled(student(8L, "HS01"));
+        attendance(row(1, 8L, OCT_1), row(2, 8L, LocalDate.of(2026, 10, 8)), row(3, 8L, LocalDate.of(2026, 10, 15)));
+        noConflicts();
+
+        GenerateInvoicesResponseDto result = service.generateRange(withStudents(request(OCT_1, OCT_31, "80000"),
+                partialSel(8L, "  Nghỉ giữa khóa  ")));
+
+        TuitionFeeEntity fee = savedFees().getFirst();
+        assertThat(fee.getTotalSessions()).isEqualTo(3);
+        assertThat(fee.getTotalAmount()).isEqualByComparingTo("240000");
+        assertThat(fee.getIsPartial()).isEqualTo(1);
+        assertThat(fee.getPartialReason()).isEqualTo("Nghỉ giữa khóa");
+        assertThat(fee.getPeriodFrom()).isEqualTo(OCT_1);
+        assertThat(fee.getPeriodTo()).isEqualTo(LocalDate.of(2026, 10, 15));
+        assertThat(result.getSlips().getFirst().isPartial()).isTrue();
+        assertThat(result.getSlips().getFirst().getPartialReason()).isEqualTo("Nghỉ giữa khóa");
+    }
+
+    @Test
+    void generate_allowPartialIgnoredWhenPackageFull_isPartial0_reasonDropped() {
+        enrolled(student(8L, "HS01"));
+        attendance(daily(1, 8L, OCT_1, 11).toArray(BillableAttendanceRow[]::new));
+        noConflicts();
+
+        GenerateInvoicesResponseDto result = service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"),
+                partialSel(8L, "không cần")));
+
+        TuitionFeeEntity fee = savedFees().getFirst();
+        assertThat(fee.getTotalSessions()).isEqualTo(10);
+        assertThat(fee.getIsPartial()).isZero();
+        assertThat(fee.getPartialReason()).isNull();
+        assertThat(result.getSlips().getFirst().isPartial()).isFalse();
+    }
+
+    @Test
+    void generate_allowPartialWithoutReasonEvenWhenFull_isAccepted() {
+        enrolled(student(8L, "HS01"));
+        attendance(daily(1, 8L, OCT_1, 10).toArray(BillableAttendanceRow[]::new));
+        noConflicts();
+
+        assertThat(service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"), partialSel(8L, null)))
+                .getCreatedCount()).isEqualTo(1);
+    }
+
+    @Test
+    void generate_partialMissingOrBlankOrTooLongReason_is400WithDetails_noWrites() {
+        enrolled(student(8L, "HS01"), student(9L, "HS02"), student(10L, "HS03"));
+        attendance(row(1, 8L, OCT_1), row(2, 9L, OCT_1), row(3, 9L, LocalDate.of(2026, 10, 2)),
+                row(4, 10L, OCT_1));
+        noConflicts();
+
+        assertThatThrownBy(() -> service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"),
+                partialSel(8L, null), partialSel(9L, "   "), partialSel(10L, "x".repeat(201)))))
+                .isInstanceOfSatisfying(BusinessDataException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("VALIDATION_ERROR");
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getCode).containsExactly(
+                            TuitionSlipServiceImpl.CODE_PARTIAL_REASON_REQUIRED,
+                            TuitionSlipServiceImpl.CODE_PARTIAL_REASON_REQUIRED,
+                            TuitionSlipServiceImpl.CODE_PARTIAL_REASON_TOO_LONG);
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getUnbilledCount)
+                            .containsExactly(1, 2, 1);
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getField)
+                            .containsOnly(TuitionSlipServiceImpl.FIELD_PARTIAL_REASON);
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getStudentId).containsExactly(8L, 9L, 10L);
+                    assertThat(details(e)).allSatisfy(d -> assertThat(d.getMessage()).isNotBlank());
+                });
+        assertNoWrites();
+    }
+
+    @Test
+    void generate_partialReasonExactly200Chars_isAccepted() {
+        enrolled(student(8L, "HS01"));
+        attendance(row(1, 8L, OCT_1));
+        noConflicts();
+
+        service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"), partialSel(8L, "ạ".repeat(200))));
+
+        assertThat(savedFees().getFirst().getPartialReason()).hasSize(200);
+    }
+
+    @Test
+    void generate_partialReason201AccentedChars_tooLong_noWrites() {
+        enrolled(student(8L, "HS01"));
+        attendance(row(1, 8L, OCT_1));
+        noConflicts();
+
+        assertThatThrownBy(() -> service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"),
+                partialSel(8L, "ạ".repeat(201)))))
+                .isInstanceOfSatisfying(BusinessDataException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("VALIDATION_ERROR");
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getField)
+                            .containsExactly(TuitionSlipServiceImpl.FIELD_PARTIAL_REASON);
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getCode)
+                            .containsExactly(TuitionSlipServiceImpl.CODE_PARTIAL_REASON_TOO_LONG);
+                });
+        assertNoWrites();
+    }
+
+    @Test
+    void generate_partialReason200SurrogatePairs_countedAsChars_accepted() {
+        enrolled(student(8L, "HS01"));
+        attendance(row(1, 8L, OCT_1));
+        noConflicts();
+        String reason = "\uD835\uDC00".repeat(200);
+
+        service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"), partialSel(8L, reason)));
+
+        assertThat(savedFees().getFirst().getPartialReason()).isEqualTo(reason);
+    }
+
+    @Test
+    void generate_teacherComment1000AccentedChars_saved_1001_validation_noWrites() {
+        enrolled(student(8L, "HS01"));
+        attendance(daily(1, 8L, OCT_1, 10).toArray(BillableAttendanceRow[]::new));
+        noConflicts();
+        GenerateRangeInvoicesRequestDto ok = withStudents(request(OCT_1, OCT_31, "1000"), sel(8L));
+        ok.setTeacherComment("ệ".repeat(1000));
+        ok.setFooterWish("ữ".repeat(500));
+
+        service.generateRange(ok);
+
+        assertThat(savedFees().getFirst().getTeacherComment()).hasSize(1000);
+        assertThat(savedFees().getFirst().getFooterWish()).hasSize(500);
+    }
+
+    @Test
+    void generate_teacherCommentOrFooterWishTooLong_validation_noWrites() {
+        GenerateRangeInvoicesRequestDto longComment = withStudents(request(OCT_1, OCT_31, "1000"), sel(8L));
+        longComment.setTeacherComment("ệ".repeat(1001));
+        GenerateRangeInvoicesRequestDto longWish = withStudents(request(OCT_1, OCT_31, "1000"), sel(8L));
+        longWish.setFooterWish("ữ".repeat(501));
+
+        assertValidation(() -> service.generateRange(longComment));
+        assertValidation(() -> service.generateRange(longWish));
+        assertNoWrites();
+    }
+
+    // ---- 5. Danh sách học sinh: tất cả hoặc không, details đủ mọi học sinh lỗi (§13.3, §13.6) ------------
+
+    @Test
+    void generate_mixedFailures_allListed_validationErrorWins_noWrites() {
+        enrolled(student(8L, "HS01"), student(9L, "HS02"), student(10L, "HS03"));
+        List<BillableAttendanceRow> rows = new ArrayList<>(daily(1, 8L, OCT_1, 10));
+        rows.addAll(daily(100, 9L, OCT_1, 4));
+        attendance(rows.toArray(BillableAttendanceRow[]::new));
+        noConflicts();
+
+        assertThatThrownBy(() -> service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"),
+                sel(8L), sel(9L), sel(99L), sel(10L), sel(8L))))
+                .isInstanceOfSatisfying(BusinessDataException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("VALIDATION_ERROR");
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getStudentId)
+                            .containsExactly(9L, 99L, 10L, 8L);
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getCode).containsExactly(
+                            TuitionSlipServiceImpl.CODE_STUDENT_NOT_ELIGIBLE,
+                            TuitionSlipServiceImpl.CODE_NOT_IN_CLASS,
+                            TuitionSlipServiceImpl.CODE_NO_UNBILLED_SESSION,
+                            TuitionSlipServiceImpl.CODE_DUPLICATE_STUDENT);
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getUnbilledCount)
+                            .containsExactly(4, 0, 0, 10);
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getField)
+                            .containsExactly(null, "studentId", null, "studentId");
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getStudentName)
+                            .containsExactly("Học sinh HS02", null, "Học sinh HS03", "Học sinh HS01");
+                });
+        assertNoWrites();
+    }
+
+    @Test
+    void generate_onlyEligibilityFailures_codeStudentNotEligible_okStudentNotBilled() {
+        enrolled(student(8L, "HS01"), student(9L, "HS02"));
+        List<BillableAttendanceRow> rows = new ArrayList<>(daily(1, 8L, OCT_1, 10));
+        rows.addAll(daily(100, 9L, OCT_1, 9));
+        attendance(rows.toArray(BillableAttendanceRow[]::new));
+        noConflicts();
+
+        assertThatThrownBy(() -> service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"),
+                sel(8L), sel(9L), sel(77L))))
+                .isInstanceOfSatisfying(BusinessDataException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(DomainConstants.STUDENT_NOT_ELIGIBLE);
+                    assertThat(details(e)).extracting(FeeStudentErrorDto::getStudentId)
+                            .containsExactly(9L, 77L);
+                    assertThat(details(e).getFirst().getStudentName()).isEqualTo("Học sinh HS02");
+                });
+        assertNoWrites();
+    }
+
+    @Test
+    void generate_emptyOrNullStudents_orNullStudentId_isValidationError() {
+        for (GenerateRangeInvoicesRequestDto req : List.of(request(OCT_1, OCT_31, "1000"),
+                withStudents(request(OCT_1, OCT_31, "1000")))) {
+            assertThatThrownBy(() -> service.generateRange(req))
+                    .isInstanceOfSatisfying(BusinessDataException.class, e -> {
+                        assertThat(e.getErrorCode()).isEqualTo("VALIDATION_ERROR");
+                        assertThat(details(e)).singleElement().satisfies(d -> {
+                            assertThat(d.getStudentId()).isNull();
+                            assertThat(d.getStudentName()).isNull();
+                            assertThat(d.getField()).isEqualTo("students");
+                            assertThat(d.getCode()).isEqualTo(TuitionSlipServiceImpl.CODE_STUDENTS_REQUIRED);
+                            assertThat(d.getMessage()).isNotBlank();
+                        });
+                    });
+        }
+        enrolled(student(8L, "HS01"));
+        attendance();
+        noConflicts();
+        assertThatThrownBy(() -> service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"), sel(null))))
+                .isInstanceOfSatisfying(BusinessDataException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo("VALIDATION_ERROR");
+                    assertThat(details(e).getFirst().getCode())
+                            .isEqualTo(TuitionSlipServiceImpl.CODE_STUDENT_ID_REQUIRED);
+                    assertThat(details(e).getFirst().getField()).isEqualTo("studentId");
+                });
+        assertNoWrites();
+    }
+
+    @Test
+    void generate_multipleStudents_onePerStudent_requestOrder_skippedCountsActiveWithZero() {
+        enrolled(student(8L, "HS01"), student(9L, "HS02"), student(10L, "HS03"));
+        StudentEntity left = student(7L, "HS00");
+        when(studentRepository.findById(7L)).thenReturn(Optional.of(left));
+        List<BillableAttendanceRow> rows = new ArrayList<>(daily(1, 8L, OCT_1, 15));
+        rows.addAll(daily(100, 7L, OCT_1, 10));
+        rows.addAll(daily(200, 9L, OCT_1, 2));
+        attendance(rows.toArray(BillableAttendanceRow[]::new));
+        noConflicts();
+
+        GenerateInvoicesResponseDto result = service.generateRange(withStudents(request(OCT_1, OCT_31, "1000"),
+                sel(8L), sel(7L)));
+
+        assertThat(result.getCreatedCount()).isEqualTo(2);
+        assertThat(result.getSkippedNoAttendance()).as("HS03 đang học, 0 buổi").isEqualTo(1);
+        assertThat(savedFees()).extracting(TuitionFeeEntity::getStudentId).containsExactly(8L, 7L);
+        assertThat(result.getSlips()).extracting(GenerateInvoicesResponseDto.CreatedSlip::getSessionCount)
+                .containsExactly(10, 10);
+        assertThat(result.getFeeIds()).hasSize(2);
+    }
+
+    // ---- QC-1: > 1000 buổi, không IN-list ---------------------------------------------------------------
+
+    @Test
+    void generate_moreThan1000AttendanceRows_singleJoinQuery_noIdList() {
+        enrolled(student(8L, "HS01"), student(9L, "HS02"));
+        List<BillableAttendanceRow> rows = new ArrayList<>();
+        LocalDate from = LocalDate.of(2026, 1, 1);
+        LocalDate to = LocalDate.of(2026, 12, 31);
+        for (int i = 0; i < 1200; i++) {
+            rows.add(row(10_000 + i, i % 2 == 0 ? 8L : 9L, from.plusDays(i % 365)));
+        }
+        when(attendanceRepository.findBillableInClassRange(eq(CLASS_ID), eq(from), eq(to), any())).thenReturn(rows);
+        when(tuitionFeeSessionRepository.findActiveConflictsInClassRange(eq(CLASS_ID), eq(from), eq(to), any()))
+                .thenReturn(List.of());
+
+        GenerateInvoicesResponseDto result = service.generateRange(withStudents(request(from, to, "1000"),
+                sel(8L), sel(9L)));
+
+        verify(tuitionFeeSessionRepository, times(1))
+                .findActiveConflictsInClassRange(CLASS_ID, from, to, DomainConstants.BILLABLE_ATTENDANCE_STATUSES);
+        assertThat(result.getCreatedCount()).isEqualTo(2);
+        assertThat(savedSessions()).hasSize(20);
+    }
+
+    // ---- 6. ORA-00001 (tạo đồng thời) -> 409 (§13.7) -----------------------------------------------------
+
+    @Test
+    void generate_uniqueViolationOnSessions_mapsToConflictWithEmptyDetails() {
+        twoFullStudents();
+        when(tuitionFeeSessionRepository.saveAllAndFlush(anyList()))
+                .thenAnswer(inv -> inv.getArgument(0))
+                .thenThrow(uniqueViolation());
+
+        assertThatThrownBy(() -> service.generateRange(withStudents(request(OCT_1, OCT_31, "80000"),
+                sel(8L), sel(9L))))
+                .isInstanceOfSatisfying(BusinessDataException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(DomainConstants.FEE_SESSION_CONFLICT);
+                    assertThat(e.getMessage()).isEqualTo("Có buổi học đã được thu học phí ở phiếu khác.");
+                    assertThat(((FeeStudentErrorDto.Payload) e.getData()).details()).isEmpty();
+                });
+    }
+
+    @Test
+    void generate_uniqueViolation_runsInOneTransaction_rolledBackNothingCommitted() {
+        twoFullStudents();
+        when(tuitionFeeSessionRepository.saveAllAndFlush(anyList()))
+                .thenAnswer(inv -> inv.getArgument(0))
+                .thenThrow(uniqueViolation());
+        InMemoryTransactionManager tm = new InMemoryTransactionManager();
+        ProxyFactory pf = new ProxyFactory(service);
+        pf.addAdvice(new TransactionInterceptor(tm, new AnnotationTransactionAttributeSource()));
+        TuitionSlipService proxy = (TuitionSlipService) pf.getProxy();
+
+        assertThatThrownBy(() -> proxy.generateRange(withStudents(request(OCT_1, OCT_31, "80000"),
+                sel(8L), sel(9L))))
+                .isInstanceOf(BusinessDataException.class);
+
+        // Phiếu của học sinh thứ nhất đã saveAndFlush nhưng nằm cùng transaction -> rollback hết.
+        assertThat(tm.begun).isEqualTo(1);
+        assertThat(tm.commits).isZero();
+        assertThat(tm.rollbacks).isEqualTo(1);
+        assertThat(tm.depth()).isZero();
+    }
+
+    @Test
+    void generate_studentValidationFailure_rollsBackInTransaction() {
+        enrolled(student(8L, "HS01"));
+        attendance(row(1, 8L, OCT_1));
+        noConflicts();
+        InMemoryTransactionManager tm = new InMemoryTransactionManager();
+        ProxyFactory pf = new ProxyFactory(service);
+        pf.addAdvice(new TransactionInterceptor(tm, new AnnotationTransactionAttributeSource()));
+
+        assertThatThrownBy(() -> ((TuitionSlipService) pf.getProxy())
+                .generateRange(withStudents(request(OCT_1, OCT_31, "80000"), sel(8L))))
+                .isInstanceOf(BusinessDataException.class);
+
+        assertThat(tm.commits).isZero();
+        assertThat(tm.rollbacks).isEqualTo(1);
+        assertNoWrites();
+    }
+
+    @Test
+    void generate_success_singleTransactionCommitted() {
+        twoFullStudents();
+        InMemoryTransactionManager tm = new InMemoryTransactionManager();
+        ProxyFactory pf = new ProxyFactory(service);
+        pf.addAdvice(new TransactionInterceptor(tm, new AnnotationTransactionAttributeSource()));
+
+        ((TuitionSlipService) pf.getProxy()).generateRange(withStudents(request(OCT_1, OCT_31, "80000"),
+                sel(8L), sel(9L)));
+
+        assertThat(tm.begun).isEqualTo(1);
+        assertThat(tm.commits).isEqualTo(1);
+        assertThat(tm.rollbacks).isZero();
+    }
+
+    @Test
+    void generate_otherIntegrityViolation_isNotMappedToConflict() {
+        enrolled(student(8L, "HS01"));
+        attendance(row(1, 8L, OCT_1));
+        noConflicts();
+        when(tuitionFeeSessionRepository.saveAllAndFlush(anyList()))
+                .thenThrow(new DataIntegrityViolationException("ORA-02291: integrity constraint (EDU.FK_X) violated"));
+
+        assertThatThrownBy(() -> service.generateRange(withStudents(request(OCT_1, OCT_31, "80000"),
+                partialSel(8L, "lý do"))))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void isFeeSessionUniqueViolation_searchesCauseChain() {
+        assertThat(TuitionSlipServiceImpl.isFeeSessionUniqueViolation(uniqueViolation())).isTrue();
+        assertThat(TuitionSlipServiceImpl.isFeeSessionUniqueViolation(
+                new RuntimeException("wrap", new RuntimeException("ORA-00001: unique constraint (EDU.UQ_FEES_MONTHLY)"))))
+                .isFalse();
+    }
+
+    // ---- 7. Hai khoảng rời nhau trong cùng tháng ---------------------------------------------------------
+
+    @Test
+    void generate_twoDisjointRangesSameMonth_bothSucceed_withNullMonth() {
+        enrolled(student(8L, "HS01"));
+        LocalDate oct15 = LocalDate.of(2026, 10, 15);
+        LocalDate oct16 = LocalDate.of(2026, 10, 16);
+        when(attendanceRepository.findBillableInClassRange(eq(CLASS_ID), eq(OCT_1), eq(oct15), any()))
+                .thenReturn(List.of(row(1, 8L, OCT_1)));
+        when(attendanceRepository.findBillableInClassRange(eq(CLASS_ID), eq(oct16), eq(OCT_31), any()))
+                .thenReturn(List.of(row(2, 8L, LocalDate.of(2026, 10, 20))));
+        when(tuitionFeeSessionRepository.findActiveConflictsInClassRange(eq(CLASS_ID), any(), any(), any()))
+                .thenReturn(List.of());
+
+        assertThat(service.generateRange(withStudents(request(OCT_1, oct15, "80000"), partialSel(8L, "a")))
+                .getCreatedCount()).isEqualTo(1);
+        assertThat(service.generateRange(withStudents(request(oct16, OCT_31, "80000"), partialSel(8L, "b")))
+                .getCreatedCount()).isEqualTo(1);
+
+        List<TuitionFeeEntity> fees = savedFees();
+        assertThat(fees).hasSize(2);
+        assertThat(fees).allSatisfy(f -> {
+            assertThat(f.getFeeMonth()).as("UQ_FEES_MONTHLY không áp dụng").isNull();
+            assertThat(f.getFeeYear()).isNull();
         });
-        // mỗi học sinh một transaction: một rollback (SV01), một commit (SV02)
-        verify(transactionManager, times(2)).getTransaction(any());
-        verify(transactionManager, times(1)).rollback(any());
-        verify(transactionManager, times(1)).commit(any());
     }
 
-    // ---- B4 -------------------------------------------------------------------------------------------
+    // ---- 8. Validation -> 400 VALIDATION_ERROR --------------------------------------------------------
 
     @Test
-    void generateMonthly_noBillableSessions_unpaidExistingFeeIsAutoCancelled() {
-        givenClassWithStudents(student(8L, "SV01"));
-        givenAttendance(attendance(8L, "ABSENT", 2));
-        when(tuitionFeeRepository.findMonthlyFeeId(8L, CLASS_ID, YEAR, MONTH)).thenReturn(Optional.of(50L));
-        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(50L, 0)).thenReturn(Optional.of(fee(50L, 8L)
-                .totalAmount(new BigDecimal("160000")).paidAmount(BigDecimal.ZERO).status("UNPAID").build()));
-
-        GenerateMonthlyInvoicesResponseDto result = service.generateMonthly(request(MONTH, YEAR));
-
-        TuitionFeeEntity saved = capturedSave();
-        assertThat(saved.getStatus()).isEqualTo("CANCELLED");
-        assertThat(saved.getNote()).isEqualTo("auto: không còn buổi tính phí");
-        assertThat(saved.getCancelReason()).isEqualTo("auto: không còn buổi tính phí");
-        assertThat(result.getCancelledCount()).isEqualTo(1);
-        assertThat(result.getSkippedNoAttendance()).isZero();
-        assertThat(result.getSlips()).isEmpty();
-    }
-
-    @Test
-    void generateMonthly_noBillableSessions_paidExistingFeeIsConflict() {
-        givenClassWithStudents(student(8L, "SV01"));
-        givenAttendance();
-        when(tuitionFeeRepository.findMonthlyFeeId(8L, CLASS_ID, YEAR, MONTH)).thenReturn(Optional.of(50L));
-        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(50L, 0)).thenReturn(Optional.of(fee(50L, 8L)
-                .totalAmount(new BigDecimal("160000")).paidAmount(new BigDecimal("50000")).status("PARTIAL").build()));
-
-        GenerateMonthlyInvoicesResponseDto result = service.generateMonthly(request(MONTH, YEAR));
-
-        verify(tuitionFeeRepository, never()).saveAndFlush(any());
-        assertThat(result.getConflicts()).singleElement().satisfies(conflict -> {
-            assertThat(conflict.getFeeId()).isEqualTo(50L);
-            assertThat(conflict.getReason())
-                    .isEqualTo(GenerateMonthlyInvoicesResponseDto.CONFLICT_NO_SESSIONS_HAS_PAYMENTS);
-        });
-    }
-
-    @Test
-    void generateMonthly_noBillableSessionsAndNoFee_isSkipped() {
-        givenClassWithStudents(student(8L, "SV01"));
-        givenAttendance();
-        when(tuitionFeeRepository.findMonthlyFeeId(8L, CLASS_ID, YEAR, MONTH)).thenReturn(Optional.empty());
-
-        GenerateMonthlyInvoicesResponseDto result = service.generateMonthly(request(MONTH, YEAR));
-
-        verify(tuitionFeeRepository, never()).saveAndFlush(any());
-        assertThat(result.getSkippedNoAttendance()).isEqualTo(1);
-    }
-
-    @Test
-    void generateMonthly_autoCancelledFeeWithSessionsAgain_isReopened() {
-        givenClassWithStudents(student(8L, "SV01"));
-        givenAttendance(attendance(8L, "PRESENT", 2));
-        when(tuitionFeeRepository.findMonthlyFeeId(8L, CLASS_ID, YEAR, MONTH)).thenReturn(Optional.of(50L));
-        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(50L, 0)).thenReturn(Optional.of(fee(50L, 8L)
-                .totalAmount(new BigDecimal("160000")).paidAmount(BigDecimal.ZERO).status("CANCELLED")
-                .cancelReason(DomainConstants.FEE_AUTO_CANCEL_NO_SESSION_NOTE).build()));
-
-        GenerateMonthlyInvoicesResponseDto result = service.generateMonthly(request(MONTH, YEAR));
-
-        TuitionFeeEntity saved = capturedSave();
-        assertThat(saved.getStatus()).isEqualTo("UNPAID");
-        assertThat(saved.getCancelReason()).isNull();
-        assertThat(saved.getTotalAmount()).isEqualByComparingTo("80000");
-        assertThat(result.getUpdatedCount()).isEqualTo(1);
-    }
-
-    @Test
-    void generateMonthly_manuallyCancelledFee_isLeftUnchanged() {
-        givenClassWithStudents(student(8L, "SV01"));
-        givenAttendance(attendance(8L, "PRESENT", 2));
-        when(tuitionFeeRepository.findMonthlyFeeId(8L, CLASS_ID, YEAR, MONTH)).thenReturn(Optional.of(50L));
-        when(tuitionFeeRepository.findByIdAndIsDeletedForUpdate(50L, 0)).thenReturn(Optional.of(fee(50L, 8L)
-                .totalAmount(new BigDecimal("160000")).paidAmount(BigDecimal.ZERO).status("CANCELLED")
-                .cancelReason("Học sinh chuyển lớp").build()));
-
-        GenerateMonthlyInvoicesResponseDto result = service.generateMonthly(request(MONTH, YEAR));
-
-        verify(tuitionFeeRepository, never()).saveAndFlush(any());
-        assertThat(result.getUpdatedCount()).isZero();
-        assertThat(result.getSlips()).singleElement()
-                .satisfies(slip -> assertThat(slip.getQrPayload()).isNull());
-    }
-
-    // ---- B5 -------------------------------------------------------------------------------------------
-
-    @Test
-    void resolveDueDate_pastMonthGetsGracePeriod_currentMonthKeepsEndOfMonth() {
-        LocalDate today = LocalDate.of(2026, 10, 2);
-        assertThat(TuitionSlipServiceImpl.resolveDueDate(LocalDate.of(2026, 4, 30), today))
-                .isEqualTo(LocalDate.of(2026, 10, 9));
-        assertThat(TuitionSlipServiceImpl.resolveDueDate(LocalDate.of(2026, 10, 31), today))
-                .isEqualTo(LocalDate.of(2026, 10, 31));
-        assertThat(TuitionSlipServiceImpl.resolveDueDate(today, today)).isEqualTo(today);
-    }
-
-    @Test
-    void generateMonthly_backBillingPastMonth_isNotOverdueImmediately() {
-        givenClassWithStudents(student(8L, "SV01"));
-        givenAttendance(attendance(8L, "PRESENT", 2));
-        when(tuitionFeeRepository.findMonthlyFeeId(8L, CLASS_ID, 2020, 1)).thenReturn(Optional.empty());
-        when(tuitionFeeRepository.nextTuitionFeeCode()).thenReturn("HP2020010001");
-
-        service.generateMonthly(request(1, 2020));
-
-        TuitionFeeEntity saved = capturedSave();
-        assertThat(saved.getDueDate()).isEqualTo(LocalDate.now().plusDays(DomainConstants.FEE_BACKBILL_GRACE_DAYS));
-        assertThat(saved.getStatus()).isEqualTo("UNPAID");
-    }
-
-    // ---- Miễn giảm --------------------------------------------------------------------------------------
-
-    @Test
-    void generateMonthly_appliesActiveDiscountsToDiscountAmount() {
-        givenClassWithStudents(student(8L, "SV01"));
-        givenAttendance(attendance(8L, "PRESENT", 2), attendance(8L, "PRESENT", 9));
-        when(tuitionFeeRepository.findMonthlyFeeId(8L, CLASS_ID, YEAR, MONTH)).thenReturn(Optional.empty());
-        when(tuitionFeeRepository.nextTuitionFeeCode()).thenReturn("HP01");
-        when(studentDiscountRepository.findApplicable(List.of(8L), CLASS_ID,
-                LocalDate.of(YEAR, MONTH, 1), LocalDate.of(YEAR, MONTH, 30))).thenReturn(List.of(
-                StudentDiscountEntity.builder().id(1L).studentId(8L).discountType("PERCENT")
-                        .discountValue(new BigDecimal("10")).build(),
-                StudentDiscountEntity.builder().id(2L).studentId(8L).discountType("AMOUNT")
-                        .discountValue(new BigDecimal("20000")).build()));
-
-        GenerateMonthlyInvoicesResponseDto result = service.generateMonthly(request(MONTH, YEAR));
-
-        TuitionFeeEntity saved = capturedSave();
-        assertThat(saved.getTotalAmount()).isEqualByComparingTo("160000");
-        assertThat(saved.getDiscountAmount()).isEqualByComparingTo("36000");
-        assertThat(result.getSlips().getFirst().getRemainingAmount()).isEqualByComparingTo("124000");
-        assertThat(result.getSlips().getFirst().getQrPayload()).contains("5406124000");
-    }
-
-    @Test
-    void generateMonthly_withoutBankAccount_writesNothing() {
-        when(classRepository.findByIdAndIsDeleted(CLASS_ID, 0)).thenReturn(Optional.of(ClassEntity.builder()
-                .id(CLASS_ID).classCode("LH01").className("Lớp học Sao Mai").build()));
-        when(bankAccountService.requireActive()).thenThrow(new com.education.base.exception.OracleBusinessException(
-                "BANK_ACCOUNT_NOT_CONFIGURED", "Chưa có STK"));
-
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.generateMonthly(request(MONTH, YEAR)))
-                .hasMessageContaining("STK");
+    void validation_fromAfterTo_rangeOver366_missingOrBadPrice() {
+        assertValidation(() -> service.generateRange(request(OCT_31, OCT_1, "80000")));
+        assertValidation(() -> service.generateRange(request(LocalDate.of(2026, 1, 1), LocalDate.of(2027, 1, 2), "80000")));
+        assertValidation(() -> service.generateRange(request(OCT_1, OCT_31, null)));
+        assertValidation(() -> service.generateRange(request(OCT_1, OCT_31, "0")));
+        assertValidation(() -> service.generateRange(request(OCT_1, OCT_31, "1000.555")));
+        assertValidation(() -> service.generateRange(request(null, OCT_31, "1000")));
+        assertValidation(() -> service.previewBillable(CLASS_ID, OCT_31, OCT_1, null));
+        assertValidation(() -> service.previewBillable(CLASS_ID, OCT_1, OCT_31, new BigDecimal("-1")));
         verify(tuitionFeeRepository, never()).saveAndFlush(any());
     }
 
-    // ---- B6 -------------------------------------------------------------------------------------------
+    @Test
+    void validation_exactly366DaysInclusive_isAccepted() {
+        // 2028 nhuận: 01/01/2028..31/12/2028 = 366 ngày tính cả hai đầu.
+        LocalDate from = LocalDate.of(2028, 1, 1);
+        LocalDate to = LocalDate.of(2028, 12, 31);
+        enrolled();
+        when(attendanceRepository.findBillableInClassRange(eq(CLASS_ID), eq(from), eq(to), any())).thenReturn(List.of());
+        when(tuitionFeeSessionRepository.findActiveConflictsInClassRange(eq(CLASS_ID), eq(from), eq(to), any()))
+                .thenReturn(List.of());
+
+        assertThat(service.previewBillable(CLASS_ID, from, to, null).getStudents()).isEmpty();
+        assertValidation(() -> service.previewBillable(CLASS_ID, from, to.plusDays(1), null));
+    }
 
     @Test
-    void getSlip_partiallyPaid_qrUsesRemainingAndSlipCarriesAmounts() {
-        when(tuitionFeeRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(fee(9L, 8L)
-                .totalAmount(new BigDecimal("960000")).discountAmount(new BigDecimal("60000"))
-                .paidAmount(new BigDecimal("300000")).status("PARTIAL").build()));
-        when(tuitionFeeRepository.getTuitionSlipData(9L)).thenReturn(slipData(9L));
+    void classNotFound_is404Code() {
+        when(classRepository.findByIdAndIsDeleted(999L, 0)).thenReturn(Optional.empty());
+        GenerateRangeInvoicesRequestDto req = withStudents(request(OCT_1, OCT_31, "1000"), sel(8L));
+        req.setClassId(999L);
+        assertThatThrownBy(() -> service.generateRange(req))
+                .isInstanceOf(OracleBusinessException.class).extracting("errorCode").isEqualTo("CLASS_NOT_FOUND");
+    }
+
+    // ---- 11. Xem trước chỉ đọc: unbilledCount / eligible / packageDates (v1.4 §13, §13.4) ------------------
+
+    @Test
+    void preview_unbilledOnly_eligible_packageDates_inactive_zeroSessionActive_readOnly() {
+        enrolled(student(8L, "HS01"), student(9L, "HS02"));
+        when(studentRepository.findById(7L)).thenReturn(Optional.of(student(7L, "HS00")));
+        List<BillableAttendanceRow> rows = new ArrayList<>();
+        rows.add(row(1, 7L, LocalDate.of(2026, 10, 2)));
+        rows.addAll(daily(100, 8L, OCT_1, 13));
+        attendance(rows.toArray(BillableAttendanceRow[]::new));
+        // Buổi 01/10 của HS01 đã nằm trên phiếu hiệu lực -> ẩn, không đếm lại.
+        when(tuitionFeeSessionRepository.findActiveConflictsInClassRange(eq(CLASS_ID), eq(OCT_1), eq(OCT_31), any()))
+                .thenReturn(List.of(new FeeSessionConflictRow(100L, 8L, OCT_1, 50L, "HP-1")));
+
+        BillableSessionsPreviewDto p = service.previewBillable(CLASS_ID, OCT_1, OCT_31, new BigDecimal("150000"));
+
+        assertThat(p.getStudents()).extracting(BillableSessionsPreviewDto.StudentRow::getStudentCode)
+                .containsExactly("HS00", "HS01", "HS02");
+        BillableSessionsPreviewDto.StudentRow left = p.getStudents().get(0);
+        assertThat(left.isInactive()).isTrue();
+        assertThat(left.getUnbilledCount()).isEqualTo(1);
+        assertThat(left.isEligible()).isFalse();
+        assertThat(left.getPackageDates()).containsExactly("02/10");
+        assertThat(left.getTotalAmount()).isEqualByComparingTo("150000");
+
+        BillableSessionsPreviewDto.StudentRow a = p.getStudents().get(1);
+        assertThat(a.isInactive()).isFalse();
+        assertThat(a.getUnbilledCount()).isEqualTo(12);
+        assertThat(a.getSessionCount()).isEqualTo(12);
+        assertThat(a.getSessionDates()).hasSize(12).first().isEqualTo(LocalDate.of(2026, 10, 2));
+        assertThat(a.isEligible()).isTrue();
+        assertThat(a.getPackageDates()).containsExactly("02/10", "03/10", "04/10", "05/10", "06/10",
+                "07/10", "08/10", "09/10", "10/10", "11/10");
+        assertThat(a.getTotalAmount()).as("10 buổi x giá").isEqualByComparingTo("1500000");
+        assertThat(a.getDiscountAmount()).isEqualByComparingTo("0");
+        assertThat(a.getNetAmount()).isEqualByComparingTo("1500000");
+        assertThat(a.getConflictDates()).as("buổi đã thu không hiển thị (§13.4)").isEmpty();
+        assertThat(a.getConflictFeeCodes()).isEmpty();
+
+        BillableSessionsPreviewDto.StudentRow zero = p.getStudents().get(2);
+        assertThat(zero.getUnbilledCount()).isZero();
+        assertThat(zero.isEligible()).isFalse();
+        assertThat(zero.getPackageDates()).isEmpty();
+
+        assertThat(p.getTotals().getStudentCount()).isEqualTo(3);
+        assertThat(p.getTotals().getBillableStudentCount()).isEqualTo(2);
+        assertThat(p.getTotals().getSkippedNoAttendance()).isEqualTo(1);
+        assertThat(p.getTotals().getSessionCount()).isEqualTo(13);
+        assertThat(p.getTotals().getEligibleStudentCount()).isEqualTo(1);
+        assertThat(p.getTotals().getTotalAmount()).isEqualByComparingTo("1650000");
+        assertThat(p.getTotals().getConflictStudentCount()).isZero();
+        verify(tuitionFeeRepository, never()).saveAndFlush(any());
+        verify(tuitionFeeRepository, never()).nextTuitionFeeCode();
+        verify(tuitionFeeSessionRepository, never()).saveAllAndFlush(anyList());
+    }
+
+    @Test
+    void preview_listsAllActiveStudents_includingZeroAndFullyBilled_withEmptyPackage() {
+        enrolled(student(8L, "HS01"), student(9L, "HS02"), student(10L, "HS03"));
+        List<BillableAttendanceRow> rows = new ArrayList<>(daily(1, 8L, OCT_1, 3));
+        rows.addAll(daily(100, 9L, OCT_1, 10));
+        attendance(rows.toArray(BillableAttendanceRow[]::new));
+        // HS01: cả 3 buổi đã nằm trên phiếu hiệu lực -> 0 chưa thu nhưng vẫn liệt kê (đang học).
+        when(tuitionFeeSessionRepository.findActiveConflictsInClassRange(eq(CLASS_ID), any(), any(), any()))
+                .thenReturn(List.of(new FeeSessionConflictRow(1L, 8L, OCT_1, 50L, "HP-1"),
+                        new FeeSessionConflictRow(2L, 8L, OCT_1.plusDays(1), 50L, "HP-1"),
+                        new FeeSessionConflictRow(3L, 8L, OCT_1.plusDays(2), 50L, "HP-1")));
+
+        BillableSessionsPreviewDto p = service.previewBillable(CLASS_ID, OCT_1, OCT_31, new BigDecimal("1000"));
+
+        assertThat(p.getStudents()).extracting(BillableSessionsPreviewDto.StudentRow::getStudentId)
+                .containsExactly(8L, 9L, 10L);
+        for (BillableSessionsPreviewDto.StudentRow zero : List.of(p.getStudents().get(0), p.getStudents().get(2))) {
+            assertThat(zero.getUnbilledCount()).isZero();
+            assertThat(zero.isEligible()).isFalse();
+            assertThat(zero.getPackageDates()).isNotNull().isEmpty();
+            assertThat(zero.getSessionDates()).isEmpty();
+            assertThat(zero.getTotalAmount()).isEqualByComparingTo("0");
+            assertThat(zero.isInactive()).isFalse();
+        }
+        assertThat(p.getStudents().get(1).isEligible()).isTrue();
+        assertThat(p.getStudents().get(1).getPackageDates()).hasSize(10);
+        assertThat(p.getTotals().getStudentCount()).isEqualTo(3);
+        assertThat(p.getTotals().getSkippedNoAttendance()).isEqualTo(2);
+        assertThat(p.getTotals().getEligibleStudentCount()).isEqualTo(1);
+    }
+
+    @Test
+    void preview_inactiveWithZeroOrOnlyBilledSessions_notShown_andNoPriceMeansNullMoney() {
+        ClassStudentEntity dropped = ClassStudentEntity.builder().classId(CLASS_ID).studentId(7L)
+                .status("DROPPED").isDeleted(0).build();
+        StudentEntity a = student(8L, "HS01");
+        when(studentRepository.findByIdAndIsDeleted(8L, 0)).thenReturn(Optional.of(a));
+        lenient().when(studentRepository.findById(6L)).thenReturn(Optional.of(student(6L, "HS06")));
+        when(classStudentRepository.findByClassIdAndIsDeleted(CLASS_ID, 0)).thenReturn(List.of(dropped,
+                ClassStudentEntity.builder().classId(CLASS_ID).studentId(8L).status("ENROLLED").isDeleted(0).build()));
+        attendance(row(1, 8L, OCT_1), row(2, 6L, OCT_1));
+        when(tuitionFeeSessionRepository.findActiveConflictsInClassRange(eq(CLASS_ID), any(), any(), any()))
+                .thenReturn(List.of(new FeeSessionConflictRow(2L, 6L, OCT_1, 50L, "HP-1")));
+
+        BillableSessionsPreviewDto p = service.previewBillable(CLASS_ID, OCT_1, OCT_31, null);
+
+        assertThat(p.getStudents()).extracting(BillableSessionsPreviewDto.StudentRow::getStudentId).containsExactly(8L);
+        assertThat(p.getPricePerSession()).isNull();
+        assertThat(p.getStudents().getFirst().getTotalAmount()).isNull();
+        assertThat(p.getStudents().getFirst().getDiscountAmount()).isNull();
+        assertThat(p.getStudents().getFirst().getNetAmount()).isNull();
+        assertThat(p.getTotals().getTotalAmount()).isNull();
+        assertThat(p.getTotals().getNetAmount()).isNull();
+    }
+
+    // ---- 9. Phiếu: kỳ thu, ngày từ bảng session, không "(muộn)" -----------------------------------------
+
+    @Test
+    void getSlip_rangeFee_periodTextAndSortedBadgesFromSnapshot() {
+        TuitionFeeEntity fee = rangeFee(9L, "UNPAID");
+        when(tuitionFeeRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(fee));
+        when(tuitionFeeRepository.getTuitionSlipData(9L)).thenReturn(procSlip(9L, List.of("05/10", "30/10", "31/10")));
+        when(tuitionFeeSessionRepository.findByFeeIdOrderBySessionDateAscIdAsc(9L)).thenReturn(List.of(
+                session(9L, LocalDate.of(2026, 10, 9)), session(9L, LocalDate.of(2026, 10, 2))));
 
         TuitionSlipResponseDto slip = service.getSlip(9L);
 
-        assertThat(slip.getDiscountAmount()).isEqualByComparingTo("60000");
-        assertThat(slip.getPaidAmount()).isEqualByComparingTo("300000");
-        assertThat(slip.getRemainingAmount()).isEqualByComparingTo("600000");
-        assertThat(slip.getStatus()).isEqualTo("PARTIAL");
-        assertThat(slip.getQrPayload()).contains("5406600000").doesNotContain("5406960000");
-        assertThat(slip.getQrBase64()).startsWith("data:image/png;base64,");
+        assertThat(slip.getPeriodText()).isEqualTo("Từ 01/10/2026 đến 31/10/2026");
+        assertThat(slip.getMonthYearText()).isEqualTo("Từ 01/10/2026 đến 31/10/2026");
+        assertThat(slip.getPeriodFrom()).isEqualTo(OCT_1);
+        assertThat(slip.getPeriodTo()).isEqualTo(OCT_31);
+        assertThat(slip.isRangeFee()).isTrue();
+        assertThat(slip.getAttendedDates()).containsExactly("02/10", "09/10");
+        assertThat(slip.getQrPayload()).contains("HS000123 HP 0110-3110");
+        // "Nguyễn Văn A": chỉ còn 3 chỗ, "NGUYEN" không vừa -> bỏ tên; transferContent == addInfo trong QR / quick link.
+        assertThat(slip.getTransferContent()).isEqualTo("HS000123 HP 0110-3110");
+        assertQrCarries(slip.getQrPayload(), slip.getQuickPayUrl(), slip.getTransferContent());
+        String html = service.generateSlipHtml(slip);
+        assertThat(html).contains("Từ 01/10/2026 đến 31/10/2026").contains("02/10").doesNotContain("muộn");
     }
 
     @Test
-    void getSlip_paidOrCancelledFee_hasNoQr() {
-        when(tuitionFeeRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(fee(9L, 8L)
-                .totalAmount(new BigDecimal("960000")).paidAmount(new BigDecimal("960000")).status("PAID").build()));
-        when(tuitionFeeRepository.findByIdAndIsDeleted(10L, 0)).thenReturn(Optional.of(fee(10L, 8L)
-                .totalAmount(new BigDecimal("960000")).paidAmount(BigDecimal.ZERO).status("CANCELLED").build()));
-        when(tuitionFeeRepository.getTuitionSlipData(9L)).thenReturn(slipData(9L));
-        when(tuitionFeeRepository.getTuitionSlipData(10L)).thenReturn(slipData(10L));
+    void getSlip_partialFee_exposesPartialAndReason_fullFeeIsNotPartial() {
+        TuitionFeeEntity fee = rangeFee(9L, "UNPAID");
+        fee.setIsPartial(1);
+        fee.setPartialReason("Nghỉ giữa khóa");
+        when(tuitionFeeRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(fee));
+        when(tuitionFeeRepository.getTuitionSlipData(9L)).thenReturn(procSlip(9L, List.of()));
+        when(tuitionFeeSessionRepository.findByFeeIdOrderBySessionDateAscIdAsc(9L)).thenReturn(List.of());
 
-        TuitionSlipResponseDto paid = service.getSlip(9L);
-        TuitionSlipResponseDto cancelled = service.getSlip(10L);
+        TuitionSlipResponseDto slip = service.getSlip(9L);
+        assertThat(slip.isPartial()).isTrue();
+        assertThat(slip.getPartialReason()).isEqualTo("Nghỉ giữa khóa");
 
-        assertThat(paid.getRemainingAmount()).isEqualByComparingTo("0");
-        assertThat(paid.getQrPayload()).isNull();
-        assertThat(paid.getQrBase64()).isNull();
-        assertThat(paid.getQuickPayUrl()).isNull();
-        assertThat(cancelled.getRemainingAmount()).isEqualByComparingTo("960000");
-        assertThat(cancelled.getQrPayload()).isNull();
-        assertThat(cancelled.getQrBase64()).isNull();
-        assertThat(service.generateSlipHtml(paid)).contains("Đã thanh toán đủ").doesNotContain("<img alt=\"VietQR\"");
-        assertThat(service.generateSlipHtml(cancelled)).contains("Khoản học phí đã hủy");
+        TuitionFeeEntity full = rangeFee(10L, "UNPAID");
+        when(tuitionFeeRepository.findByIdAndIsDeleted(10L, 0)).thenReturn(Optional.of(full));
+        when(tuitionFeeRepository.getTuitionSlipData(10L)).thenReturn(procSlip(10L, List.of()));
+        when(tuitionFeeSessionRepository.findByFeeIdOrderBySessionDateAscIdAsc(10L)).thenReturn(List.of());
+        assertThat(service.getSlip(10L).isPartial()).isFalse();
+        assertThat(full.getIsPartial()).as("@Builder.Default 0").isZero();
     }
 
     @Test
-    void isQrPayable_requiresPositiveRemainingAndOpenStatus() {
-        assertThat(TuitionSlipServiceImpl.isQrPayable("UNPAID", 1)).isTrue();
-        assertThat(TuitionSlipServiceImpl.isQrPayable("OVERDUE", 100)).isTrue();
-        assertThat(TuitionSlipServiceImpl.isQrPayable("PARTIAL", 0)).isFalse();
-        assertThat(TuitionSlipServiceImpl.isQrPayable("PAID", 100)).isFalse();
-        assertThat(TuitionSlipServiceImpl.isQrPayable("CANCELLED", 100)).isFalse();
+    void getSlip_cancelledRangeFee_noBadges_neverReadsAttendance() {
+        TuitionFeeEntity fee = rangeFee(9L, "CANCELLED");
+        when(tuitionFeeRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(fee));
+        when(tuitionFeeRepository.getTuitionSlipData(9L)).thenReturn(procSlip(9L, List.of("05/10")));
+
+        TuitionSlipResponseDto slip = service.getSlip(9L);
+
+        assertThat(slip.getAttendedDates()).isEmpty();
+        assertThat(slip.getStatus()).isEqualTo("CANCELLED");
+        assertThat(slip.getQrPayload()).isNull();
+        verify(tuitionFeeSessionRepository, never()).findByFeeIdOrderBySessionDateAscIdAsc(anyLong());
+        verify(attendanceRepository, never()).findBillableInClassRange(anyLong(), any(), any(), any());
+        assertThat(service.generateSlipHtml(slip)).contains("Phiếu đã hủy");
     }
 
     @Test
-    void generateSlipHtml_showsDiscountPaidRemainingAndStatus() {
-        String html = service.generateSlipHtml(TuitionSlipResponseDto.builder()
-                .studentName("Nguyễn Văn A")
-                .totalAmount(new BigDecimal("960000"))
-                .discountAmount(new BigDecimal("60000"))
-                .paidAmount(new BigDecimal("300000"))
-                .remainingAmount(new BigDecimal("600000"))
-                .status("PARTIAL")
-                .attendedDates(List.of("02/04"))
-                .qrBase64("data:image/png;base64,abc")
-                .build());
+    void getSlip_legacyMonthlyFee_keepsMonthText_andFallsBackToProcedureDates() {
+        TuitionFeeEntity fee = TuitionFeeEntity.builder().id(9L).feeCode("HP9").studentId(8L).classId(CLASS_ID)
+                .feeMonth(4).feeYear(2026).periodFrom(LocalDate.of(2026, 4, 1)).periodTo(LocalDate.of(2026, 4, 30))
+                .totalAmount(new BigDecimal("160000")).discountAmount(BigDecimal.ZERO).paidAmount(BigDecimal.ZERO)
+                .status("UNPAID").isDeleted(0).build();
+        when(tuitionFeeRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(fee));
+        TuitionSlipResponseDto data = procSlip(9L, List.of("02/04", "06/04"));
+        data.setMonth(4);
+        data.setYear(2026);
+        when(tuitionFeeRepository.getTuitionSlipData(9L)).thenReturn(data);
+        when(tuitionFeeSessionRepository.findByFeeIdOrderBySessionDateAscIdAsc(9L)).thenReturn(List.of());
 
-        assertThat(html).contains("Miễn giảm").contains("-60.000đ");
-        assertThat(html).contains("Đã thu").contains("300.000đ");
-        assertThat(html).contains("Còn phải đóng").contains("600.000đ");
-        assertThat(html).contains("Đóng một phần");
-        assertThat(html).contains("<img alt=\"VietQR\" src=\"data:image/png;base64,abc\"/>");
+        TuitionSlipResponseDto slip = service.getSlip(9L);
+
+        assertThat(slip.getPeriodText()).isEqualTo("Tháng 04/2026");
+        assertThat(slip.getMonthYearText()).isEqualTo("Tháng 04/2026");
+        assertThat(slip.isRangeFee()).isFalse();
+        assertThat(slip.getAttendedDates()).containsExactly("02/04", "06/04");
+        assertThat(slip.getQrPayload()).contains("HS000123 HP T4");
+        assertThat(slip.getTransferContent()).isEqualTo("NGUYEN VAN HS000123 HP T4");
+        assertQrCarries(slip.getQrPayload(), slip.getQuickPayUrl(), slip.getTransferContent());
     }
 
-    // ---- Không đổi ------------------------------------------------------------------------------------
+    @Test
+    void getSlip_blankStudentName_keepsOldContent_andNoQrMeansNullTransferContent() {
+        TuitionFeeEntity fee = rangeFee(9L, "UNPAID");
+        when(tuitionFeeRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(fee));
+        TuitionSlipResponseDto data = procSlip(9L, List.of());
+        data.setStudentName(" ");
+        when(tuitionFeeRepository.getTuitionSlipData(9L)).thenReturn(data);
+        when(tuitionFeeSessionRepository.findByFeeIdOrderBySessionDateAscIdAsc(9L)).thenReturn(List.of());
+
+        TuitionSlipResponseDto slip = service.getSlip(9L);
+        assertThat(slip.getTransferContent()).isEqualTo("HS000123 HP 0110-3110");
+        assertQrCarries(slip.getQrPayload(), slip.getQuickPayUrl(), slip.getTransferContent());
+
+        TuitionFeeEntity cancelled = rangeFee(10L, "CANCELLED");
+        when(tuitionFeeRepository.findByIdAndIsDeleted(10L, 0)).thenReturn(Optional.of(cancelled));
+        when(tuitionFeeRepository.getTuitionSlipData(10L)).thenReturn(procSlip(10L, List.of()));
+        TuitionSlipResponseDto none = service.getSlip(10L);
+        assertThat(none.getQrPayload()).isNull();
+        assertThat(none.getTransferContent()).isNull();
+    }
+
+    /** addInfo trong QR (tag 62 / sub-tag 08) và quick link đúng bằng {@code transferContent}. */
+    static void assertQrCarries(String payload, String quickUrl, String transferContent) {
+        String sub = "08" + String.format("%02d", transferContent.length()) + transferContent;
+        String tag62 = "62" + String.format("%02d", sub.length()) + sub;
+        assertThat(payload).contains(tag62);
+        assertThat(java.net.URLDecoder.decode(quickUrl, java.nio.charset.StandardCharsets.UTF_8))
+                .contains("addInfo=" + transferContent);
+    }
 
     @Test
-    void transferContent_isAsciiAndShort() {
+    void getSlip_manualFeeWithoutMonth_isNotRange_usesProcedureData() {
+        TuitionFeeEntity fee = TuitionFeeEntity.builder().id(9L).feeCode("HP9").studentId(8L).classId(CLASS_ID)
+                .totalAmount(new BigDecimal("160000")).discountAmount(new BigDecimal("10000"))
+                .paidAmount(BigDecimal.ZERO).status("UNPAID").isDeleted(0).build();
+        when(tuitionFeeRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(fee));
+        when(tuitionFeeRepository.getTuitionSlipData(9L)).thenReturn(procSlip(9L, List.of("03/11")));
+
+        TuitionSlipResponseDto slip = service.getSlip(9L);
+
+        assertThat(fee.getIsRange()).isZero();
+        assertThat(slip.isRangeFee()).isFalse();
+        assertThat(slip.getAttendedDates()).containsExactly("03/11");
+        assertThat(slip.getDiscountAmount()).isEqualByComparingTo("10000");
+        verify(tuitionFeeSessionRepository, never()).findByFeeIdOrderBySessionDateAscIdAsc(anyLong());
+    }
+
+    // ---- BUG-FEE-RANGE-03: khoản tạo tay không có tên trên mọi đường QR (BA §15.3) ---------------------------
+
+    @Test
+    void getSlip_manualFee_qrHasNoName_exactPreviousContent_monthlyAndRangeHaveName() {
+        TuitionFeeEntity manual = TuitionFeeEntity.builder().id(9L).feeCode("HP9").studentId(8L).classId(CLASS_ID)
+                .totalAmount(new BigDecimal("160000")).discountAmount(BigDecimal.ZERO)
+                .paidAmount(BigDecimal.ZERO).status("UNPAID").isDeleted(0).build();
+        when(tuitionFeeRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(manual));
+        when(tuitionFeeRepository.getTuitionSlipData(9L)).thenReturn(procSlip(9L, List.of("03/11")));
+
+        TuitionSlipResponseDto slip = service.getSlip(9L);
+
+        // procSlip: "Nguyễn Văn A", HS000123, tháng 11 -> trước đây "HS000123 HP T11".
+        assertThat(slip.getTransferContent()).isEqualTo("HS000123 HP T11")
+                .isEqualTo(TuitionSlipServiceImpl.transferContent("HS000123", 11));
+        assertQrCarries(slip.getQrPayload(), slip.getQuickPayUrl(), slip.getTransferContent());
+        assertThat(slip.getQrPayload()).doesNotContain("NGUYEN");
+        // PNG / bản in dùng chính dữ liệu phiếu này.
+        assertThat(service.generateSlipHtml(slip)).doesNotContain("NGUYEN VAN");
+
+        TuitionFeeEntity monthly = TuitionFeeEntity.builder().id(10L).feeCode("HP10").studentId(8L).classId(CLASS_ID)
+                .feeMonth(11).feeYear(2026).totalAmount(new BigDecimal("160000")).discountAmount(BigDecimal.ZERO)
+                .paidAmount(BigDecimal.ZERO).status("UNPAID").isDeleted(0).build();
+        when(tuitionFeeRepository.findByIdAndIsDeleted(10L, 0)).thenReturn(Optional.of(monthly));
+        when(tuitionFeeRepository.getTuitionSlipData(10L)).thenReturn(procSlip(10L, List.of("03/11")));
+        lenient().when(tuitionFeeSessionRepository.findByFeeIdOrderBySessionDateAscIdAsc(10L)).thenReturn(List.of());
+        TuitionSlipResponseDto m = service.getSlip(10L);
+        // "HS000123 HP T11" = 15 -> 9 chỗ: "NGUYEN VAN" (10) không vừa -> chỉ "NGUYEN".
+        assertThat(m.getTransferContent()).isEqualTo("NGUYEN HS000123 HP T11");
+        assertQrCarries(m.getQrPayload(), m.getQuickPayUrl(), m.getTransferContent());
+
+        TuitionFeeEntity range = rangeFee(11L, "UNPAID");
+        range.setPeriodTo(LocalDate.of(2026, 10, 10));
+        StudentEntity shortName = student(8L, "SV01");
+        assertThat(TuitionSlipServiceImpl.transferContentOf(range, "Lê Văn An", shortName.getStudentCode(), null))
+                .isEqualTo("LE VAN SV01 HP 0110-1010");
+        assertThat(TuitionSlipServiceImpl.transferContentOf(manual, "Lê Văn An", "SV01", 4)).isEqualTo("SV01 HP T4");
+        assertThat(TuitionSlipServiceImpl.transferContentOf(monthly, "Lê Văn An", "SV01", 4))
+                .isEqualTo("LE VAN AN SV01 HP T4");
+    }
+
+    // ---- 10. VietQR ------------------------------------------------------------------------------------
+
+    @Test
+    void rangeTransferContent_formatAndLimits() {
+        assertThat(FeePeriods.rangeTransferContent("HS000123", OCT_1, OCT_31)).isEqualTo("HS000123 HP 0110-3110");
+        assertThat(FeePeriods.rangeTransferContent("HS-0001/2", OCT_1, OCT_31)).isEqualTo("HS00012 HP 0110-3110");
+        assertThat(FeePeriods.rangeTransferContent("ABCDEFGHIJKL", OCT_1, OCT_31)).isEqualTo("ABCDEFGHIJKL HP 0110-3110");
+        assertThat(FeePeriods.isRangeTransferCodeTruncated("ABCDEFGHIJKL")).isFalse();
+        assertThat(FeePeriods.isRangeTransferCodeTruncated("ABCDEFGHIJKLM")).isTrue();
+        StringBuilder code = new StringBuilder();
+        for (int len = 0; len < 60; len++) {
+            String text = FeePeriods.rangeTransferContent("Học sinh " + code, LocalDate.of(2026, 1, 5),
+                    LocalDate.of(2026, 12, 25));
+            assertThat(text.length()).isLessThanOrEqualTo(25);
+            assertThat(text).endsWith(" HP 0501-2512").doesNotContain("/").matches("\\p{ASCII}+");
+            code.append((char) ('A' + len % 26));
+        }
+    }
+
+    @Test
+    void legacyTransferContent_unchanged() {
         assertThat(TuitionSlipServiceImpl.transferContent("SV20260001", 4)).isEqualTo("SV20260001 HP T4");
         assertThat(TuitionSlipServiceImpl.transferContent("Sinh Viên", 12)).isEqualTo("SinhVien HP T12");
         assertThat(TuitionSlipServiceImpl.transferContent("THISCODEISTOOLONGFORNAPASXX", 4).length())
                 .isLessThanOrEqualTo(25);
     }
 
-    @Test
-    void generateSlipHtml_containsEmeraldCardAndPresentDates() {
-        String html = service.generateSlipHtml(TuitionSlipResponseDto.builder()
-                .invoiceCode("HP2026040001")
-                .monthYearText("Tháng 04/2026")
-                .className("Lớp học Sao Mai")
-                .studentName("Nguyễn Văn A")
-                .studentCode("SV01")
-                .slipLabel("Mặc Định")
-                .pricePerSession(new BigDecimal("80000"))
-                .totalSessions(12)
-                .totalAmount(new BigDecimal("960000"))
-                .attendedDates(List.of("02/04", "04/04"))
-                .teacherComment("Bé ngoan")
-                .footerWish("Chúc em học tốt!")
-                .bankName("Vietcombank")
-                .accountNo("1234567890")
-                .accountName("TRUONG EDUCATION")
-                .qrBase64("data:image/png;base64,abc")
-                .build());
+    // ---- Không đổi -------------------------------------------------------------------------------------
 
-        assertThat(html).contains("PHIẾU HỌC PHÍ");
-        assertThat(html).contains("Lớp học Sao Mai");
-        assertThat(html).contains("Mặc Định");
-        assertThat(html).contains("960.000đ");
-        assertThat(html).contains("80.000đ");
-        assertThat(html).contains("02/04");
-        assertThat(html).contains("#0f766e");
-        assertThat(html).contains("dashed");
-        assertThat(html).doesNotContain("<script>");
+    @Test
+    void resolveDueDate_pastPeriodGetsGracePeriod() {
+        LocalDate today = LocalDate.of(2026, 10, 2);
+        assertThat(TuitionSlipServiceImpl.resolveDueDate(LocalDate.of(2026, 4, 30), today))
+                .isEqualTo(LocalDate.of(2026, 10, 9));
+        assertThat(TuitionSlipServiceImpl.resolveDueDate(OCT_31, today)).isEqualTo(OCT_31);
+    }
+
+    @Test
+    void isQrPayable_requiresPositiveRemainingAndOpenStatus() {
+        assertThat(TuitionSlipServiceImpl.isQrPayable("UNPAID", 1)).isTrue();
+        assertThat(TuitionSlipServiceImpl.isQrPayable("PARTIAL", 0)).isFalse();
+        assertThat(TuitionSlipServiceImpl.isQrPayable("PAID", 100)).isFalse();
+        assertThat(TuitionSlipServiceImpl.isQrPayable("CANCELLED", 100)).isFalse();
+    }
+
+    @Test
+    void getSlip_partiallyPaid_qrUsesRemaining() {
+        TuitionFeeEntity fee = rangeFee(9L, "PARTIAL");
+        fee.setTotalAmount(new BigDecimal("960000"));
+        fee.setPaidAmount(new BigDecimal("300000"));
+        when(tuitionFeeRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(fee));
+        when(tuitionFeeRepository.getTuitionSlipData(9L)).thenReturn(procSlip(9L, List.of()));
+        when(tuitionFeeSessionRepository.findByFeeIdOrderBySessionDateAscIdAsc(9L)).thenReturn(List.of());
+
+        TuitionSlipResponseDto slip = service.getSlip(9L);
+
+        assertThat(slip.getRemainingAmount()).isEqualByComparingTo("660000");
+        assertThat(slip.getQrPayload()).contains("5406660000");
     }
 
     @Test
@@ -496,94 +990,136 @@ class TuitionSlipServiceImplTest {
                 .totalAmount(BigDecimal.ZERO)
                 .attendedDates(List.of())
                 .build());
-        assertThat(html).doesNotContain("<script>alert(1)</script>");
-        assertThat(html).contains("&lt;script&gt;");
-        assertThat(html).doesNotContain("<b>");
+        assertThat(html).doesNotContain("<script>alert(1)</script>").contains("&lt;script&gt;").doesNotContain("<b>");
     }
 
     @Test
-    void formatMonthYear_padsMonth() {
+    void formatMonthYear_padsMonth_andQrPayloadContainsAmount() {
         assertThat(TuitionSlipServiceImpl.formatMonthYear(4, 2026)).isEqualTo("Tháng 04/2026");
-    }
-
-    @Test
-    void totalAmount_matchesSessionsTimesPrice() {
-        BigDecimal price = new BigDecimal("80000");
-        int sessions = 12;
-        assertThat(price.multiply(BigDecimal.valueOf(sessions))).isEqualByComparingTo("960000");
         String payload = VietQrHelper.buildVietQrPayload("970436", "1234567890", 960000L, "SV01 HP T4");
         assertThat(payload).contains("5406960000");
-        assertThat(payload).startsWith("000201010212");
-        assertThat(payload).contains("SV01 HP T4");
     }
 
-    // ---- helpers --------------------------------------------------------------------------------------
+    // ---- helpers ---------------------------------------------------------------------------------------
 
-    private void givenClassWithStudents(StudentEntity... students) {
-        when(classRepository.findByIdAndIsDeleted(CLASS_ID, 0)).thenReturn(Optional.of(ClassEntity.builder()
-                .id(CLASS_ID).classCode("LH01").className("Lớp học Sao Mai").build()));
+    static void assertValidation(org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+        assertThatThrownBy(call).isInstanceOf(OracleBusinessException.class)
+                .extracting("errorCode").isEqualTo("VALIDATION_ERROR");
+    }
+
+    static DataIntegrityViolationException uniqueViolation() {
+        return new DataIntegrityViolationException("could not execute statement",
+                new RuntimeException("ORA-00001: unique constraint (EDUCATION.UQ_FEE_SESSIONS_ATTENDANCE) violated"));
+    }
+
+    void enrolled(StudentEntity... students) {
         List<ClassStudentEntity> enrollments = new ArrayList<>();
-        for (StudentEntity student : students) {
-            enrollments.add(ClassStudentEntity.builder().classId(CLASS_ID).studentId(student.getId())
+        for (StudentEntity s : students) {
+            enrollments.add(ClassStudentEntity.builder().classId(CLASS_ID).studentId(s.getId())
                     .status("ENROLLED").isDeleted(0).build());
-            when(studentRepository.findByIdAndIsDeleted(student.getId(), 0)).thenReturn(Optional.of(student));
+            lenient().when(studentRepository.findByIdAndIsDeleted(s.getId(), 0)).thenReturn(Optional.of(s));
         }
         when(classStudentRepository.findByClassIdAndIsDeleted(CLASS_ID, 0)).thenReturn(enrollments);
     }
 
-    private void givenAttendance(AttendanceEntity... rows) {
-        when(attendanceRepository.findByClassIdAndAttendanceDateBetweenAndIsDeleted(
-                eq(CLASS_ID), any(), any(), eq(0))).thenReturn(List.of(rows));
+    void attendance(BillableAttendanceRow... rows) {
+        when(attendanceRepository.findBillableInClassRange(eq(CLASS_ID), any(), any(), any()))
+                .thenReturn(List.of(rows));
     }
 
-    private TuitionFeeEntity capturedSave() {
+    void noConflicts() {
+        when(tuitionFeeSessionRepository.findActiveConflictsInClassRange(eq(CLASS_ID), any(), any(), any()))
+                .thenReturn(List.of());
+    }
+
+    List<TuitionFeeEntity> savedFees() {
         ArgumentCaptor<TuitionFeeEntity> captor = ArgumentCaptor.forClass(TuitionFeeEntity.class);
-        verify(tuitionFeeRepository).saveAndFlush(captor.capture());
-        return captor.getValue();
+        verify(tuitionFeeRepository, org.mockito.Mockito.atLeastOnce()).saveAndFlush(captor.capture());
+        return captor.getAllValues();
     }
 
-    private static StudentEntity student(long id, String code) {
+    @SuppressWarnings("unchecked")
+    List<List<TuitionFeeSessionEntity>> sessionBatches() {
+        ArgumentCaptor<List<TuitionFeeSessionEntity>> captor = ArgumentCaptor.forClass(List.class);
+        verify(tuitionFeeSessionRepository, org.mockito.Mockito.atLeastOnce()).saveAllAndFlush(captor.capture());
+        return captor.getAllValues();
+    }
+
+    List<TuitionFeeSessionEntity> savedSessions() {
+        List<TuitionFeeSessionEntity> all = new ArrayList<>();
+        sessionBatches().forEach(all::addAll);
+        return all;
+    }
+
+    static BillableAttendanceRow row(long attendanceId, long studentId, LocalDate date) {
+        return new BillableAttendanceRow(attendanceId, studentId, date);
+    }
+
+    static StudentEntity student(long id, String code) {
         return StudentEntity.builder().id(id).studentCode(code).fullName("Học sinh " + code)
                 .status("ACTIVE").isDeleted(0).build();
     }
 
-    private static AttendanceEntity attendance(long studentId, String status, int day) {
-        return AttendanceEntity.builder().studentId(studentId).status(status)
-                .attendanceDate(LocalDate.of(YEAR, MONTH, day)).build();
+    static GenerateRangeInvoicesRequestDto request(LocalDate from, LocalDate to, String price) {
+        return GenerateRangeInvoicesRequestDto.builder().classId(CLASS_ID).fromDate(from).toDate(to)
+                .pricePerSession(price == null ? null : new BigDecimal(price)).build();
     }
 
-    private static TuitionFeeEntity.TuitionFeeEntityBuilder fee(long id, long studentId) {
-        return TuitionFeeEntity.builder()
-                .id(id)
-                .feeCode("HP" + id)
-                .studentId(studentId)
-                .classId(CLASS_ID)
-                .feeMonth(MONTH)
-                .feeYear(YEAR)
-                .discountAmount(BigDecimal.ZERO)
-                .isDeleted(0);
+    static GenerateRangeInvoicesRequestDto withStudents(GenerateRangeInvoicesRequestDto req,
+                                                        GenerateRangeInvoicesRequestDto.StudentSelection... sels) {
+        req.setStudents(new ArrayList<>(java.util.Arrays.asList(sels)));
+        return req;
     }
 
-    private static TuitionSlipResponseDto slipData(long id) {
-        return TuitionSlipResponseDto.builder()
-                .invoiceId(id)
-                .invoiceCode("HP" + id)
-                .month(MONTH)
-                .year(YEAR)
-                .studentCode("SV01")
-                .studentName("Nguyễn Văn A")
-                .totalSessions(12)
-                .totalAmount(new BigDecimal("960000"))
-                .attendedDates(new ArrayList<>(List.of("02/04")))
-                .build();
+    static GenerateRangeInvoicesRequestDto.StudentSelection sel(Long studentId) {
+        return GenerateRangeInvoicesRequestDto.StudentSelection.builder().studentId(studentId).build();
     }
 
-    private static CreateMonthlyInvoiceRequestDto request(int month, int year) {
-        return CreateMonthlyInvoiceRequestDto.builder()
-                .classId(CLASS_ID)
-                .month(month)
-                .year(year)
-                .pricePerSession(new BigDecimal("80000"))
-                .build();
+    static GenerateRangeInvoicesRequestDto.StudentSelection partialSel(Long studentId, String reason) {
+        return GenerateRangeInvoicesRequestDto.StudentSelection.builder().studentId(studentId).allowPartial(true)
+                .partialReason(reason).build();
+    }
+
+    /** {@code count} buổi liên tiếp mỗi ngày từ {@code start}, attendanceId tăng dần từ {@code firstId}. */
+    static List<BillableAttendanceRow> daily(long firstId, long studentId, LocalDate start, int count) {
+        List<BillableAttendanceRow> rows = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            rows.add(row(firstId + i, studentId, start.plusDays(i)));
+        }
+        return rows;
+    }
+
+    void twoFullStudents() {
+        enrolled(student(8L, "HS01"), student(9L, "HS02"));
+        List<BillableAttendanceRow> rows = new ArrayList<>(daily(1, 8L, OCT_1, 10));
+        rows.addAll(daily(100, 9L, OCT_1, 10));
+        attendance(rows.toArray(BillableAttendanceRow[]::new));
+        noConflicts();
+    }
+
+    static List<FeeStudentErrorDto> details(BusinessDataException e) {
+        return ((FeeStudentErrorDto.Payload) e.getData()).details();
+    }
+
+    void assertNoWrites() {
+        verify(tuitionFeeRepository, never()).saveAndFlush(any());
+        verify(tuitionFeeRepository, never()).nextTuitionFeeCode();
+        verify(tuitionFeeSessionRepository, never()).saveAllAndFlush(anyList());
+    }
+
+    static TuitionFeeEntity rangeFee(long id, String status) {
+        return TuitionFeeEntity.builder().id(id).feeCode("HP" + id).studentId(8L).classId(CLASS_ID)
+                .periodFrom(OCT_1).periodTo(OCT_31).isRange(1).totalAmount(new BigDecimal("160000"))
+                .discountAmount(BigDecimal.ZERO).paidAmount(BigDecimal.ZERO).status(status).isDeleted(0).build();
+    }
+
+    static TuitionSlipResponseDto procSlip(long id, List<String> procDates) {
+        return TuitionSlipResponseDto.builder().invoiceId(id).invoiceCode("HP" + id).month(11).year(2026)
+                .studentCode("HS000123").studentName("Nguyễn Văn A").totalSessions(2)
+                .totalAmount(new BigDecimal("160000")).attendedDates(new ArrayList<>(procDates)).build();
+    }
+
+    static TuitionFeeSessionEntity session(long feeId, LocalDate date) {
+        return TuitionFeeSessionEntity.builder().feeId(feeId).sessionDate(date).build();
     }
 }

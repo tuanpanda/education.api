@@ -48,6 +48,7 @@ public class QrPaymentController {
                         params.getDescription(),
                         firstNonBlank(params.getAccountName(), account.getAccountName())))
                 .qrPayload(qrPayload)
+                .transferContent(VietQrHelper.addInfoOf(params.getDescription()))
                 .base64Image(VietQrHelper.generateQrBase64(qrPayload, QR_WIDTH, QR_HEIGHT))
                 .build();
 

@@ -211,7 +211,7 @@ class PaymentServiceImplTest {
         TuitionFeeServiceImpl tuitionFeeService = new TuitionFeeServiceImpl(tuitionFeeRepository,
                 paymentTransactionRepository, mock(StudentRepository.class), mock(ClassRepository.class),
                 mock(FileStorageService.class), new FileMapperImpl(), new FinanceAcademicMapperImpl(),
-                bankAccountService, paymentService);
+                bankAccountService, paymentService, mock(com.education.base.repository.TuitionFeeSessionRepository.class));
         ConfirmPaymentRequest request = new ConfirmPaymentRequest();
         PaymentTransactionDto expected = PaymentTransactionDto.builder().id(33L).status("SUCCESS").build();
         when(paymentService.confirmPayment(4L, request)).thenReturn(expected);

@@ -198,6 +198,36 @@ public class DomainConstants {
     /** Tiền tố lý do hủy do hệ thống tự sinh (phân biệt với hủy thủ công). */
     public static final String FEE_AUTO_CANCEL_PREFIX = "auto:";
 
+    /** Thu theo khoảng ngày: khoảng {@code fromDate..toDate} tối đa (số ngày, tính cả hai đầu). */
+    public static final int FEE_RANGE_MAX_DAYS = 366;
+
+    /** 409: có buổi đã nằm trên phiếu chưa hủy / chưa xóa (contract fee-range-api v1.3 mục 3). */
+    public static final String FEE_SESSION_CONFLICT = "FEE_SESSION_CONFLICT";
+
+    /** Gói cố định số buổi trên một phiếu theo khoảng ngày (contract v1.4 §13, không cấu hình theo lớp). */
+    public static final int FEE_PACKAGE_SIZE = 10;
+
+    /** Độ dài tối đa lý do thu chưa đủ gói ({@code PARTIAL_REASON VARCHAR2(200 CHAR)}, V24_1). */
+    public static final int FEE_PARTIAL_REASON_MAX = 200;
+
+    /** Nhận xét giáo viên trên phiếu: tối đa 1000 ký tự (contract §16; {@code TEACHER_COMMENT VARCHAR2(1000 CHAR)}). */
+    public static final int FEE_TEACHER_COMMENT_MAX = 1000;
+
+    /** Lời chúc cuối phiếu: tối đa 500 ký tự (contract §16; {@code FOOTER_WISH VARCHAR2(500 CHAR)}). */
+    public static final int FEE_FOOTER_WISH_MAX = 500;
+
+    /** 400 khi Oracle báo ORA-12899 (giá trị quá dài cho cột) - phòng hờ, thường đã chặn ở validation. */
+    public static final String VALUE_TOO_LONG_MESSAGE = "Nội dung vượt quá độ dài cho phép.";
+
+    /** 400: học sinh được chọn không đủ điều kiện tạo phiếu (contract v1.4 §13). */
+    public static final String STUDENT_NOT_ELIGIBLE = "STUDENT_NOT_ELIGIBLE";
+
+    /** Unique {@code FIN_TUITION_FEE_SESSIONS(ATTENDANCE_ID)} (V23_4): ORA-00001 trên ràng buộc này -> 409. */
+    public static final String FEE_SESSIONS_UNIQUE_CONSTRAINT = "UQ_FEE_SESSIONS_ATTENDANCE";
+
+    /** Thông báo chung của {@link #FEE_SESSION_CONFLICT}. */
+    public static final String FEE_SESSION_CONFLICT_MESSAGE = "Có buổi học đã được thu học phí ở phiếu khác.";
+
     /** Loại miễn giảm - {@code CK_DISCOUNTS_TYPE} ({@code FIN_STUDENT_DISCOUNTS}, V14_1). */
     public static final String DISCOUNT_TYPE_PATTERN = "PERCENT|AMOUNT";
 

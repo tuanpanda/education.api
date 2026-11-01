@@ -31,6 +31,20 @@ public class PortalFeeListItemDto {
 
     private Integer feeYear;
 
+    /** Kỳ thu theo khoảng ngày ({@code null} với phiếu cũ chưa backfill). */
+    private java.time.LocalDate periodFrom;
+
+    private java.time.LocalDate periodTo;
+
+    /** {@code "Từ dd/MM/yyyy đến dd/MM/yyyy"} hoặc {@code "Tháng MM/yyyy"} (phiếu cũ). */
+    private String periodText;
+
+    /**
+     * {@code true} khi phiếu tạo bởi "thu theo khoảng ngày" (DB {@code FEE_MONTH IS NULL AND PERIOD_FROM IS NOT NULL});
+     * phiếu tháng cũ (kể cả đã backfill PERIOD_*) = {@code false}. FE dùng để ẩn dòng giảm giá.
+     */
+    private boolean rangeFee;
+
     private BigDecimal totalAmount;
 
     private BigDecimal discountAmount;

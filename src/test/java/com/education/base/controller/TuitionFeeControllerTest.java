@@ -3,7 +3,12 @@ package com.education.base.controller;
 import com.education.base.support.WebMvcSecurityTestConfig;
 import com.education.base.support.WithAuthUser;
 import org.springframework.context.annotation.Import;
-import com.education.base.dto.response.GenerateMonthlyInvoicesResponseDto;
+import com.education.base.common.DomainConstants;
+import com.education.base.dto.response.BillableSessionsPreviewDto;
+import com.education.base.dto.response.FeeStudentErrorDto;
+import com.education.base.dto.response.GenerateInvoicesResponseDto;
+import com.education.base.exception.BusinessDataException;
+import org.springframework.dao.DataIntegrityViolationException;
 import com.education.base.dto.response.PageResponse;
 import com.education.base.dto.response.PaymentTransactionDto;
 import com.education.base.dto.response.TuitionFeeDetailResponse;
@@ -19,6 +24,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -116,29 +122,6 @@ class TuitionFeeControllerTest {
     }
 
     @Test
-    void generateMonthly_returnsCreatedSlips() throws Exception {
-        when(tuitionSlipService.generateMonthly(any())).thenReturn(GenerateMonthlyInvoicesResponseDto.builder()
-                .createdCount(1)
-                .updatedCount(0)
-                .skippedNoAttendance(0)
-                .slips(List.of(TuitionSlipResponseDto.builder()
-                        .invoiceId(9L)
-                        .invoiceCode("HP2026040001")
-                        .totalSessions(12)
-                        .totalAmount(new BigDecimal("960000"))
-                        .build()))
-                .build());
-
-        mockMvc.perform(post("/api/v1/tuition-fees/generate-monthly")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"classId\":3,\"month\":4,\"year\":2026,\"pricePerSession\":80000}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value("00"))
-                .andExpect(jsonPath("$.data.createdCount").value(1))
-                .andExpect(jsonPath("$.data.slips[0].invoiceId").value(9));
-    }
-
-    @Test
     void getSlip_returnsJsonCard() throws Exception {
         when(tuitionSlipService.getSlip(9L)).thenReturn(TuitionSlipResponseDto.builder()
                 .invoiceId(9L)
@@ -164,28 +147,332 @@ class TuitionFeeControllerTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("PHIẾU HỌC PHÍ")));
     }
 
+    // ---- Thu theo khoảng ngày (contract fee-range-api v1.4 §13 gói 10 buổi) ----------------------------------
+
+    private static final String RANGE_BODY =
+            "{\"classId\":3,\"fromDate\":\"2026-10-01\",\"toDate\":\"2026-10-31\",\"pricePerSession\":80000,"
+                    + "\"students\":[{\"studentId\":8},"
+                    + "{\"studentId\":9,\"allowPartial\":true,\"partialReason\":\"Nghỉ giữa khóa\"}]}";
+
     @Test
-    void generateMonthly_returnsConflictsAndErrors() throws Exception {
-        when(tuitionSlipService.generateMonthly(any())).thenReturn(GenerateMonthlyInvoicesResponseDto.builder()
-                .updatedCount(0)
-                .cancelledCount(1)
-                .conflicts(List.of(GenerateMonthlyInvoicesResponseDto.FeeConflict.builder()
-                        .feeId(50L)
-                        .reason(GenerateMonthlyInvoicesResponseDto.CONFLICT_NET_BELOW_PAID)
-                        .paidAmount(new BigDecimal("200000"))
-                        .build()))
-                .errors(List.of(GenerateMonthlyInvoicesResponseDto.StudentError.builder()
-                        .studentId(8L).code("FEE_LOCKED").build()))
+    void generateRange_bindsStudents_andReturnsSlipsWithPartialFlags() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenReturn(GenerateInvoicesResponseDto.builder()
+                .createdCount(2).feeIds(new java.util.ArrayList<>(List.of(9L, 10L)))
+                .slips(new java.util.ArrayList<>(List.of(
+                        GenerateInvoicesResponseDto.CreatedSlip.builder().feeId(9L).studentId(8L).sessionCount(10)
+                                .periodFrom(LocalDate.of(2026, 10, 1)).periodTo(LocalDate.of(2026, 10, 20))
+                                .totalAmount(new BigDecimal("800000")).partial(false).build(),
+                        GenerateInvoicesResponseDto.CreatedSlip.builder().feeId(10L).studentId(9L).sessionCount(3)
+                                .partial(true).partialReason("Nghỉ giữa khóa").build())))
                 .build());
 
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.slips[0].partial").value(false))
+                .andExpect(jsonPath("$.data.slips[0].periodTo").value("2026-10-20"))
+                .andExpect(jsonPath("$.data.slips[1].partial").value(true))
+                .andExpect(jsonPath("$.data.slips[1].partialReason").value("Nghỉ giữa khóa"));
+
+        org.mockito.ArgumentCaptor<com.education.base.dto.request.GenerateRangeInvoicesRequestDto> captor =
+                org.mockito.ArgumentCaptor.forClass(com.education.base.dto.request.GenerateRangeInvoicesRequestDto.class);
+        org.mockito.Mockito.verify(tuitionSlipService).generateRange(captor.capture());
+        var students = captor.getValue().getStudents();
+        org.assertj.core.api.Assertions.assertThat(students).hasSize(2);
+        org.assertj.core.api.Assertions.assertThat(students.get(0).getStudentId()).isEqualTo(8L);
+        org.assertj.core.api.Assertions.assertThat(students.get(0).getAllowPartial()).isNull();
+        org.assertj.core.api.Assertions.assertThat(students.get(1).getAllowPartial()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(students.get(1).getPartialReason()).isEqualTo("Nghỉ giữa khóa");
+    }
+
+    @Test
+    void generateRange_studentNotEligible_returns400_detailsLockedShape() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenThrow(new BusinessDataException(
+                DomainConstants.STUDENT_NOT_ELIGIBLE, "Có học sinh không đủ điều kiện tạo phiếu.",
+                new FeeStudentErrorDto.Payload(List.of(
+                        FeeStudentErrorDto.builder().studentId(8L).studentName("Học sinh A").field(null)
+                                .code("STUDENT_NOT_ELIGIBLE").message("Chưa đủ 10 buổi (hiện 4 buổi).")
+                                .unbilledCount(4).build(),
+                        FeeStudentErrorDto.builder().studentId(9L).field("studentId").code("NOT_IN_CLASS")
+                                .message("Học sinh không thuộc lớp.").unbilledCount(0).build()))));
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("STUDENT_NOT_ELIGIBLE"))
+                .andExpect(jsonPath("$.data.details[0].studentId").value(8))
+                .andExpect(jsonPath("$.data.details[0].studentName").value("Học sinh A"))
+                .andExpect(jsonPath("$.data.details[0].code").value("STUDENT_NOT_ELIGIBLE"))
+                .andExpect(jsonPath("$.data.details[0].message").value("Chưa đủ 10 buổi (hiện 4 buổi)."))
+                .andExpect(jsonPath("$.data.details[0].unbilledCount").value(4))
+                .andExpect(jsonPath("$.data.details[1].field").value("studentId"))
+                .andExpect(jsonPath("$.data.details[1].code").value("NOT_IN_CLASS"));
+    }
+
+    @Test
+    void generateRange_emptyStudents_returns400_oneDetailOnFieldStudents() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenThrow(new BusinessDataException(
+                "VALIDATION_ERROR", "Chọn ít nhất một học sinh để tạo phiếu.",
+                new FeeStudentErrorDto.Payload(List.of(FeeStudentErrorDto.builder().field("students")
+                        .code("STUDENTS_REQUIRED").message("Chọn ít nhất một học sinh để tạo phiếu.").build()))));
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.data.details.length()").value(1))
+                .andExpect(jsonPath("$.data.details[0].field").value("students"))
+                .andExpect(jsonPath("$.data.details[0].code").value("STUDENTS_REQUIRED"));
+    }
+
+    @Test
+    void generateRange_partialReasonMissing_returns400_fieldPartialReason() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenThrow(new BusinessDataException(
+                "VALIDATION_ERROR", "Danh sách học sinh không hợp lệ.",
+                new FeeStudentErrorDto.Payload(List.of(FeeStudentErrorDto.builder().studentId(9L)
+                        .studentName("Học sinh B").field("partialReason").code("PARTIAL_REASON_REQUIRED")
+                        .message("Thu chưa đủ gói (3 buổi) phải nhập lý do.").unbilledCount(3).build()))));
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.data.details[0].field").value("partialReason"))
+                .andExpect(jsonPath("$.data.details[0].code").value("PARTIAL_REASON_REQUIRED"));
+    }
+
+    @Test
+    void generateRange_created_returns201WithFeeIds() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenReturn(GenerateInvoicesResponseDto.builder()
+                .createdCount(2).skippedNoAttendance(1).feeIds(new java.util.ArrayList<>(List.of(9L, 10L))).build());
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.code").value("00"))
+                .andExpect(jsonPath("$.data.createdCount").value(2))
+                .andExpect(jsonPath("$.data.skippedNoAttendance").value(1))
+                .andExpect(jsonPath("$.data.feeIds[1]").value(10));
+    }
+
+    @Test
+    void generateRange_nothingCreated_returns200() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenReturn(GenerateInvoicesResponseDto.builder()
+                .createdCount(0).skippedNoAttendance(3).build());
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.createdCount").value(0))
+                .andExpect(jsonPath("$.data.feeIds").isEmpty());
+    }
+
+    @Test
+    void generateRange_conflict_returns409_detailsLockedShape() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenThrow(new BusinessDataException(
+                DomainConstants.FEE_SESSION_CONFLICT, DomainConstants.FEE_SESSION_CONFLICT_MESSAGE,
+                new FeeStudentErrorDto.Payload(List.of(FeeStudentErrorDto.builder()
+                        .studentId(8L).studentName("A").code("FEE_SESSION_CONFLICT")
+                        .message("Có buổi học đã được thu học phí ở phiếu khác.").build()))));
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("FEE_SESSION_CONFLICT"))
+                .andExpect(jsonPath("$.data.details[0].studentId").value(8))
+                .andExpect(jsonPath("$.data.details[0].code").value("FEE_SESSION_CONFLICT"));
+    }
+
+    @Test
+    void generateRange_uniqueViolationEscapingService_returns409EmptyDetails() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenThrow(new DataIntegrityViolationException("x",
+                new RuntimeException("ORA-00001: unique constraint (EDU.UQ_FEE_SESSIONS_ATTENDANCE) violated")));
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("FEE_SESSION_CONFLICT"))
+                .andExpect(jsonPath("$.data.details").isArray())
+                .andExpect(jsonPath("$.data.details").isEmpty());
+    }
+
+    @Test
+    void generateRange_otherIntegrityViolation_returns500() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenThrow(new DataIntegrityViolationException(
+                "ORA-02291: integrity constraint (EDU.FK_X) violated"));
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.code").value("DATA_ACCESS_ERROR"));
+    }
+
+    // ---- BUG-FEE-RANGE-04: giới hạn theo KÝ TỰ (contract §16) -----------------------------------------------
+
+    private static String rangeBodyWith(String field, String value) {
+        return "{\"classId\":3,\"fromDate\":\"2026-10-01\",\"toDate\":\"2026-10-31\",\"pricePerSession\":80000,"
+                + "\"" + field + "\":\"" + value + "\",\"students\":[{\"studentId\":8}]}";
+    }
+
+    private void stubCreated() {
+        when(tuitionSlipService.generateRange(any())).thenReturn(GenerateInvoicesResponseDto.builder()
+                .createdCount(1).feeIds(new java.util.ArrayList<>(List.of(9L))).build());
+    }
+
+    @Test
+    void generateRange_teacherComment1000AccentedChars_returns201() throws Exception {
+        stubCreated();
+        String comment = "ệ".repeat(1000);
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(rangeBodyWith("teacherComment", comment)))
+                .andExpect(status().isCreated());
+        verify(tuitionSlipService).generateRange(org.mockito.ArgumentMatchers.argThat(
+                r -> comment.equals(r.getTeacherComment())));
+    }
+
+    @Test
+    void generateRange_teacherComment1001AccentedChars_returns400Validation() throws Exception {
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(rangeBodyWith("teacherComment", "ệ".repeat(1001))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("teacherComment")));
+        verifyNoInteractions(tuitionSlipService);
+    }
+
+    @Test
+    void generateRange_footerWish500AccentedChars_returns201_501_returns400() throws Exception {
+        stubCreated();
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(rangeBodyWith("footerWish", "ữ".repeat(500))))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(rangeBodyWith("footerWish", "ữ".repeat(501))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("footerWish")));
+        verify(tuitionSlipService, org.mockito.Mockito.times(1)).generateRange(any());
+    }
+
+    @Test
+    void generateRange_ora12899IntegrityViolation_returns400Validation_noSchemaLeak() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenThrow(new DataIntegrityViolationException(
+                "could not execute statement", new java.sql.SQLException(
+                "ORA-12899: value too large for column \"EDU\".\"FIN_TUITION_FEES\".\"TEACHER_COMMENT\" "
+                        + "(actual: 2000, maximum: 1000)", "72000", 12899)));
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value(DomainConstants.VALUE_TOO_LONG_MESSAGE));
+    }
+
+    @Test
+    void generateRange_ora12899AsJpaSystemException_returns400Validation() throws Exception {
+        when(tuitionSlipService.generateRange(any())).thenThrow(new org.springframework.orm.jpa.JpaSystemException(
+                new RuntimeException("could not execute statement",
+                        new java.sql.SQLException("value too large", "72000", 12899))));
+
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value(DomainConstants.VALUE_TOO_LONG_MESSAGE));
+    }
+
+    @Test
+    void generateRange_invalidBody_returns400() throws Exception {
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"classId\":3,\"fromDate\":\"2026-10-01\",\"toDate\":\"2026-10-31\",\"pricePerSession\":0}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"classId\":3,\"toDate\":\"2026-10-31\",\"pricePerSession\":1000}"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(tuitionSlipService);
+    }
+
+    @Test
+    @WithAuthUser(roles = "ROLE_ACCOUNTANT", permissions = "MENU_TUITION_FEE:VIEW")
+    void generateRangeAndPreview_withoutCreatePermission_areForbidden() throws Exception {
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON).content(RANGE_BODY))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/tuition-fees/billable-sessions").param("classId", "3")
+                        .param("fromDate", "2026-10-01").param("toDate", "2026-10-31"))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(tuitionSlipService);
+    }
+
+    @Test
+    void generateMonthly_removed_returns405() throws Exception {
         mockMvc.perform(post("/api/v1/tuition-fees/generate-monthly")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"classId\":3,\"month\":4,\"year\":2026,\"pricePerSession\":80000}"))
+                .andExpect(status().isMethodNotAllowed());
+        verifyNoInteractions(tuitionSlipService);
+    }
+
+    @Test
+    void previewBillable_withoutPrice_moneyFieldsAreJsonNull() throws Exception {
+        when(tuitionSlipService.previewBillable(3L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31), null))
+                .thenReturn(BillableSessionsPreviewDto.builder()
+                        .classId(3L).fromDate(LocalDate.of(2026, 10, 1)).toDate(LocalDate.of(2026, 10, 31))
+                        .students(List.of(BillableSessionsPreviewDto.StudentRow.builder()
+                                .studentId(8L).studentCode("HS01").sessionDates(List.of(LocalDate.of(2026, 10, 2)))
+                                .sessionCount(1).conflictDates(List.of()).conflictFeeCodes(List.of())
+                                .unbilledCount(1).eligible(false).packageDates(List.of("02/10"))
+                                .inactive(true).build()))
+                        .totals(BillableSessionsPreviewDto.Totals.builder().studentCount(1).billableStudentCount(1)
+                                .sessionCount(1).build())
+                        .build());
+
+        mockMvc.perform(get("/api/v1/tuition-fees/billable-sessions").param("classId", "3")
+                        .param("fromDate", "2026-10-01").param("toDate", "2026-10-31"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.cancelledCount").value(1))
-                .andExpect(jsonPath("$.data.conflicts[0].feeId").value(50))
-                .andExpect(jsonPath("$.data.conflicts[0].reason").value("NET_BELOW_PAID"))
-                .andExpect(jsonPath("$.data.errors[0].code").value("FEE_LOCKED"));
+                .andExpect(jsonPath("$.data.students[0].inactive").value(true))
+                .andExpect(jsonPath("$.data.students[0].sessionDates[0]").value("2026-10-02"))
+                .andExpect(jsonPath("$.data.students[0].unbilledCount").value(1))
+                .andExpect(jsonPath("$.data.students[0].eligible").value(false))
+                .andExpect(jsonPath("$.data.students[0].packageDates[0]").value("02/10"))
+                .andExpect(jsonPath("$.data.totals.eligibleStudentCount").value(0))
+                // exists() của jsonPath coi null là không có: kiểm tra chuỗi JSON để chắc trường có mặt với giá trị null
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"pricePerSession\":null")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"totalAmount\":null")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"netAmount\":null")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("\"discountAmount\":null")));
+    }
+
+    @Test
+    void previewBillable_passesPriceThrough() throws Exception {
+        when(tuitionSlipService.previewBillable(eq(3L), any(), any(), eq(new BigDecimal("150000"))))
+                .thenReturn(BillableSessionsPreviewDto.builder().classId(3L).students(List.of()).build());
+
+        mockMvc.perform(get("/api/v1/tuition-fees/billable-sessions").param("classId", "3")
+                        .param("fromDate", "2026-10-01").param("toDate", "2026-10-31")
+                        .param("pricePerSession", "150000"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.classId").value(3));
+    }
+
+    @Test
+    void getSlip_rangeFee_exposesPeriodAndRangeFlag() throws Exception {
+        when(tuitionSlipService.getSlip(9L)).thenReturn(TuitionSlipResponseDto.builder()
+                .invoiceId(9L).periodFrom(LocalDate.of(2026, 10, 1)).periodTo(LocalDate.of(2026, 10, 31))
+                .periodText("Từ 01/10/2026 đến 31/10/2026").rangeFee(true).partial(true).partialReason("Nghỉ giữa khóa").attendedDates(List.of("02/10")).build());
+
+        mockMvc.perform(get("/api/v1/tuition-fees/9/slip"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.periodFrom").value("2026-10-01"))
+                .andExpect(jsonPath("$.data.periodText").value("Từ 01/10/2026 đến 31/10/2026"))
+                .andExpect(jsonPath("$.data.rangeFee").value(true))
+                .andExpect(jsonPath("$.data.partial").value(true))
+                .andExpect(jsonPath("$.data.partialReason").value("Nghỉ giữa khóa"))
+                .andExpect(jsonPath("$.data.attendedDates[0]").value("02/10"));
     }
 
     // ---- B9: MENU_DASHBOARD:VIEW không còn mở được dữ liệu khoản phí -----------------------------------

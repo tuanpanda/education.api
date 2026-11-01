@@ -27,6 +27,25 @@ public class TuitionSlipResponseDto {
     private String monthYearText;
     private Integer month;
     private Integer year;
+
+    /** Kỳ thu theo khoảng ngày; {@code null} với phiếu cũ chưa backfill (V23_8). */
+    private LocalDate periodFrom;
+    private LocalDate periodTo;
+
+    /** {@code "Từ dd/MM/yyyy đến dd/MM/yyyy"} hoặc {@code "Tháng MM/yyyy"} (phiếu cũ). */
+    private String periodText;
+
+    /**
+     * {@code true} khi phiếu tạo bởi "thu theo khoảng ngày" (DB {@code FEE_MONTH IS NULL AND PERIOD_FROM IS NOT NULL});
+     * phiếu tháng cũ (kể cả đã backfill PERIOD_*) = {@code false}. FE dùng để ẩn dòng giảm giá.
+     */
+    private boolean rangeFee;
+
+    /** {@code true}: phiếu gói chưa đủ 10 buổi ({@code IS_PARTIAL = 1}, contract v1.4 §13.2). */
+    private boolean partial;
+
+    /** Lý do thu chưa đủ gói ({@code null} nếu không phải phiếu partial). */
+    private String partialReason;
     private String className;
     private String classCode;
     private String studentCode;
@@ -54,6 +73,10 @@ public class TuitionSlipResponseDto {
 
     private LocalDate dueDate;
 
+    /**
+     * Ngày trên phiếu dạng {@code dd/MM}, tăng dần, không đánh dấu muộn. Phiếu khoảng ngày đọc từ
+     * {@code FIN_TUITION_FEE_SESSIONS}; phiếu đã hủy không có ngày.
+     */
     @Builder.Default
     private List<String> attendedDates = new ArrayList<>();
 
@@ -65,6 +88,9 @@ public class TuitionSlipResponseDto {
     private String accountNo;
     private String accountName;
     private String qrPayload;
+
+    /** Nội dung chuyển khoản đúng như addInfo trong QR (tag 62/08) và quick link; {@code null} khi không có QR / không có nội dung. */
+    private String transferContent;
     private String qrBase64;
     private String quickPayUrl;
 }
