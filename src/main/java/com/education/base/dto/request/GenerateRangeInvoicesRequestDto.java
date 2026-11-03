@@ -37,7 +37,7 @@ public class GenerateRangeInvoicesRequestDto {
     @NotNull(message = "Đến ngày không được để trống")
     private LocalDate toDate;
 
-    @NotNull(message = "Đơn giá mỗi buổi không được để trống")
+    /** Không gửi (null) -> {@link com.education.base.common.FeePeriods#DEFAULT_SESSION_PRICE} (50.000 VND). */
     @DecimalMin(value = "0", inclusive = false, message = "Đơn giá mỗi buổi phải lớn hơn 0")
     @Digits(integer = 13, fraction = 2, message = "Đơn giá tối đa 13 chữ số phần nguyên và 2 chữ số thập phân")
     private BigDecimal pricePerSession;

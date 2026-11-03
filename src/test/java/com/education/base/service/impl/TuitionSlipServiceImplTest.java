@@ -143,6 +143,99 @@ class TuitionSlipServiceImplTest {
         assertThat(slip.getPartialReason()).isNull();
     }
 
+    // ---- Đơn giá mặc định 50.000 VND/buổi khi không gửi pricePerSession ----------------------------------
+
+    @Test
+    void generate_missingPrice_singleStudent_usesDefault50000() {
+        enrolled(student(8L, "HS01"));
+        attendance(daily(1, 8L, OCT_1, 10).toArray(BillableAttendanceRow[]::new));
+        noConflicts();
+
+        service.generateRange(withStudents(request(OCT_1, OCT_31, null), sel(8L)));
+
+        TuitionFeeEntity fee = savedFees().getFirst();
+        assertThat(FeePeriods.DEFAULT_SESSION_PRICE).isEqualByComparingTo("50000");
+        assertThat(fee.getPricePerSession()).isEqualByComparingTo("50000.00");
+        assertThat(fee.getPricePerSession().scale()).isEqualTo(2);
+        assertThat(fee.getTotalAmount()).as("10 buổi x 50.000").isEqualByComparingTo("500000.00");
+    }
+
+    @Test
+    void generate_missingPrice_bulk_everySlipUsesDefault_partialToo() {
+        enrolled(student(8L, "HS01"), student(9L, "HS02"));
+        List<BillableAttendanceRow> rows = new ArrayList<>(daily(1, 8L, OCT_1, 10));
+        rows.addAll(daily(100, 9L, OCT_1, 3));
+        attendance(rows.toArray(BillableAttendanceRow[]::new));
+        noConflicts();
+
+        service.generateRange(withStudents(request(OCT_1, OCT_31, null), sel(8L), partialSel(9L, "Nghỉ giữa khóa")));
+
+        List<TuitionFeeEntity> fees = savedFees();
+        assertThat(fees).hasSize(2);
+        assertThat(fees).extracting(TuitionFeeEntity::getPricePerSession)
+                .allSatisfy(p -> assertThat(p).isEqualByComparingTo("50000"));
+        assertThat(fees).extracting(TuitionFeeEntity::getTotalAmount)
+                .usingElementComparator(BigDecimal::compareTo)
+                .containsExactly(new BigDecimal("500000"), new BigDecimal("150000"));
+    }
+
+    @Test
+    void generate_explicitPrice_respected_notReplacedByDefault() {
+        enrolled(student(8L, "HS01"));
+        attendance(daily(1, 8L, OCT_1, 10).toArray(BillableAttendanceRow[]::new));
+        noConflicts();
+
+        service.generateRange(withStudents(request(OCT_1, OCT_31, "120000"), sel(8L)));
+
+        TuitionFeeEntity fee = savedFees().getFirst();
+        assertThat(fee.getPricePerSession()).isEqualByComparingTo("120000.00");
+        assertThat(fee.getTotalAmount()).isEqualByComparingTo("1200000.00");
+    }
+
+    @Test
+    void generate_explicitZeroOrNegativePrice_stillValidationError_noDefault() {
+        assertValidation(() -> service.generateRange(withStudents(request(OCT_1, OCT_31, "0"), sel(8L))));
+        assertValidation(() -> service.generateRange(withStudents(request(OCT_1, OCT_31, "-1"), sel(8L))));
+        assertNoWrites();
+    }
+
+    @Test
+    void generate_defaultPrice_neverLoadsOrRepricesExistingSlips() {
+        enrolled(student(8L, "HS01"));
+        attendance(daily(1, 8L, OCT_1, 10).toArray(BillableAttendanceRow[]::new));
+        noConflicts();
+
+        service.generateRange(withStudents(request(OCT_1, OCT_31, null), sel(8L)));
+
+        // Chỉ INSERT phiếu mới: không đọc phiếu cũ để sửa, không save/saveAll nào khác ngoài phiếu vừa tạo.
+        verify(tuitionFeeRepository, org.mockito.Mockito.times(1)).saveAndFlush(any());
+        verify(tuitionFeeRepository, never()).save(any());
+        verify(tuitionFeeRepository, never()).saveAll(anyList());
+        verify(tuitionFeeRepository, never()).findByIdAndIsDeleted(any(), any());
+        verify(tuitionFeeRepository, never()).findByIdAndIsDeletedForUpdate(any(), any());
+        verify(tuitionFeeRepository, never()).findByStudentIdAndIsDeleted(any(), any());
+    }
+
+    @Test
+    void getSlip_existingSlip_keepsStoredOrDerivedPrice_notDefault() {
+        TuitionFeeEntity stored = rangeFee(9L, "UNPAID");
+        stored.setPricePerSession(new BigDecimal("80000.00"));
+        when(tuitionFeeRepository.findByIdAndIsDeleted(9L, 0)).thenReturn(Optional.of(stored));
+        TuitionSlipResponseDto withPrice = procSlip(9L, List.of());
+        withPrice.setPricePerSession(new BigDecimal("80000.00"));
+        when(tuitionFeeRepository.getTuitionSlipData(9L)).thenReturn(withPrice);
+        lenient().when(tuitionFeeSessionRepository.findByFeeIdOrderBySessionDateAscIdAsc(any())).thenReturn(List.of());
+
+        assertThat(service.getSlip(9L).getPricePerSession()).isEqualByComparingTo("80000.00");
+
+        // Phiếu cũ không lưu đơn giá: suy từ tổng tiền / số buổi (160000 / 2), không dùng 50.000.
+        when(tuitionFeeRepository.findByIdAndIsDeleted(10L, 0)).thenReturn(Optional.of(rangeFee(10L, "UNPAID")));
+        when(tuitionFeeRepository.getTuitionSlipData(10L)).thenReturn(procSlip(10L, List.of()));
+
+        assertThat(service.getSlip(10L).getPricePerSession()).isEqualByComparingTo("80000.00");
+        verify(tuitionFeeRepository, never()).saveAndFlush(any());
+    }
+
     // ---- 2. Tiền = số buổi x đơn giá, scale 2, không giảm giá ------------------------------------------
 
     @Test

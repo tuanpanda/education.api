@@ -26,6 +26,12 @@ public final class FeePeriods {
     private FeePeriods() {
     }
 
+    /**
+     * Đơn giá mặc định mỗi buổi (VND) cho phiếu khoảng ngày khi request không gửi {@code pricePerSession}
+     * ({@code POST /generate-range}, 1 hay nhiều học sinh). Chỉ áp khi tạo phiếu mới; phiếu đã tạo giữ nguyên đơn giá.
+     */
+    public static final java.math.BigDecimal DEFAULT_SESSION_PRICE = java.math.BigDecimal.valueOf(50_000L);
+
     /** Giá trị {@code FIN_TUITION_FEES.IS_RANGE} của phiếu sinh theo khoảng ngày (V23_1). */
     public static final int RANGE_FLAG = 1;
 

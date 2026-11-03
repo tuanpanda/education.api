@@ -205,7 +205,9 @@ public class TuitionSlipServiceImpl implements TuitionSlipService {
     public GenerateInvoicesResponseDto generateRange(GenerateRangeInvoicesRequestDto request) {
         GenerateRangeInvoicesRequestDto payload = request == null ? new GenerateRangeInvoicesRequestDto() : request;
         validateRange(payload.getFromDate(), payload.getToDate());
-        BigDecimal price = validatePrice(payload.getPricePerSession());
+        // Không gửi đơn giá -> mặc định 50.000 VND/buổi (một chỗ: FeePeriods.DEFAULT_SESSION_PRICE).
+        BigDecimal price = validatePrice(payload.getPricePerSession() == null
+                ? FeePeriods.DEFAULT_SESSION_PRICE : payload.getPricePerSession());
         // Giới hạn theo ký tự (code point), contract §16 - kiểm trước mọi truy vấn/ghi.
         requireMaxChars(payload.getTeacherComment(), DomainConstants.FEE_TEACHER_COMMENT_MAX, "Nhận xét giáo viên");
         requireMaxChars(payload.getFooterWish(), DomainConstants.FEE_FOOTER_WISH_MAX, "Lời chúc");

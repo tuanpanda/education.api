@@ -116,7 +116,7 @@ Format rules (sqlplus pitfalls seen before):
   - It returns per student: `{studentId, studentCode, studentName, sessionDates:[...], sessionCount, totalAmount?, discountAmount?, netAmount?, conflictDates:[...], conflictFeeCodes:[...]}`, plus totals.
   - The amount fields are filled only when `pricePerSession` is passed; otherwise they are JSON `null` (v1.1). Each row also has `inactive` (§0 V7). Totals: `studentCount, billableStudentCount, skippedNoAttendance, sessionCount, totalAmount, discountAmount, netAmount, conflictStudentCount`.
 - **Generate:** `POST /api/v1/tuition-fees/generate-range`
-  - Body: `{classId, fromDate, toDate, pricePerSession, teacherComment?, footerWish?}`.
+  - Body: `{classId, fromDate, toDate, pricePerSession?, teacherComment?, footerWish?}`. **v1.4:** `pricePerSession` omitted/null → default **50000 VND** (`FeePeriods.DEFAULT_SESSION_PRICE`); explicit value is used as sent (still `> 0`, 13.2 digits).
   - It returns the `GenerateMonthlyInvoicesResponseDto` shape, renamed to `GenerateInvoicesResponseDto`, with created/skipped counts and fee IDs. A conflict returns 409 (see §2).
   - **Remove `POST /generate-monthly`** and `CreateMonthlyInvoiceRequestDto` (D4).
   - Audit: the same audit action as today, with `fromDate`/`toDate` in the payload.
@@ -245,3 +245,12 @@ Format rules (sqlplus pitfalls seen before):
 | T1 | Limits are **characters** (Unicode code points, = Oracle `CHAR` semantics in AL32UTF8): `teacherComment` ≤ 1000, `footerWish` ≤ 500, `partialReason` ≤ 200. Checked by `@MaxCodePoints` on the request (and again in `TuitionSlipServiceImpl` before any write); overflow → 400 `VALIDATION_ERROR`. `partialReason` keeps the §13 `details[]` shape (`PARTIAL_REASON_TOO_LONG`). |
 | T2 | V25_1 switches user-text columns from BYTE to CHAR (same `n`, only when `CHAR_USED = 'B'`): `FIN_TUITION_FEES.NOTE/CANCEL_REASON/TEACHER_COMMENT/FOOTER_WISH/SLIP_LABEL`, `FIN_PAYMENT_TRANSACTIONS.NOTE/PAYER_NAME/VOID_REASON`; verifies `PARTIAL_REASON` is 200 CHAR. Owner runs it (`docs/RUN-V25-fee-text-char.md`). |
 | T3 | Defensive: any ORA-12899 reaching `GlobalExceptionHandler` (`DataIntegrityViolationException` or other `DataAccessException`) → 400 `VALIDATION_ERROR` "Nội dung vượt quá độ dài cho phép." instead of 500. |
+
+## 17. v1.4: default price per session
+
+| # | Rule |
+|---|------|
+| P1 | `POST /generate-range` (one or many students): `pricePerSession` omitted or `null` → **50000 VND/session**, defined once in `FeePeriods.DEFAULT_SESSION_PRICE`. An explicit value is used as sent and validated as before (`> 0`, max 13.2 digits; `0`/negative → 400). |
+| P2 | Applies only when creating new slips: the price is stored in `FIN_TUITION_FEES.PRICE_PER_SESSION` of the new rows. Existing slips are never re-priced (no UPDATE). |
+| P3 | No DB change: the price has never come from config/course/class tables (it was request-only), so there is no V26 migration. |
+| P4 | Preview (`GET /billable-sessions`) is unchanged: without `pricePerSession` the money fields stay `null` (§ preview v1.1). |

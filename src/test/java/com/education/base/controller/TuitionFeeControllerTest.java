@@ -384,6 +384,18 @@ class TuitionFeeControllerTest {
     }
 
     @Test
+    void generateRange_missingPrice_passesValidation_reachesServiceWithNull() throws Exception {
+        stubCreated();
+        mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"classId\":3,\"fromDate\":\"2026-10-01\",\"toDate\":\"2026-10-31\","
+                                + "\"students\":[{\"studentId\":8}]}"))
+                .andExpect(status().isCreated());
+        verify(tuitionSlipService).generateRange(org.mockito.ArgumentMatchers.argThat(
+                r -> r.getPricePerSession() == null));
+    }
+
+    @Test
     void generateRange_invalidBody_returns400() throws Exception {
         mockMvc.perform(post("/api/v1/tuition-fees/generate-range")
                         .contentType(MediaType.APPLICATION_JSON)

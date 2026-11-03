@@ -141,7 +141,8 @@ public class TuitionFeeController {
     }
 
     @Operation(summary = "Sinh phiếu học phí theo khoảng ngày (PRESENT + LATE)",
-            description = "totalAmount = số buổi x pricePerSession, chưa áp giảm giá. Tất cả hoặc không: có buổi đã nằm"
+            description = "totalAmount = số buổi x pricePerSession, chưa áp giảm giá. Không gửi pricePerSession thì"
+                    + " dùng mặc định 50000 VND/buổi. Tất cả hoặc không: có buổi đã nằm"
                     + " trên phiếu chưa hủy/chưa xóa thì 409 FEE_SESSION_CONFLICT (data.details) và không tạo phiếu nào.")
     @PostMapping("/generate-range")
     @RequirePermission(Permissions.TUITION_FEE_CREATE)
